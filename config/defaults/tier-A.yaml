@@ -1,0 +1,150 @@
+risk: "high"
+
+lifecycle_scope: ["planning", "prompting", "coding", "testing", "governance"]
+
+budget:
+  max_tokens: 2000000
+  max_usd: 200.00
+  currency: "USD"
+
+plan:
+  - type: "human"
+    name: "Requirements Review"
+    description: "Human reviews and approves detailed requirements document"
+    output_artifacts: ["requirements.md"]
+
+prompt:
+  - type: "agent"
+    name: "Technical Design"
+    description: "Agent creates detailed technical design with architecture diagrams"
+    models: ["claude-3-5-sonnet"]
+    output_artifacts: ["design.md", "architecture.svg"]
+
+code:
+  - type: "agent"
+    name: "Implementation"
+    description: "Agent implements the solution following approved design"
+    models: ["claude-3-5-sonnet"]
+    tools: ["pytest", "ruff", "mypy"]
+    output_artifacts: ["src/**/*.py", "tests/**/*.py"]
+
+test:
+  - type: "agent"
+    name: "Testing & Validation"
+    description: "Agent runs comprehensive test suite and validation checks"
+    models: ["gpt-4"]
+    tools: ["pytest", "coverage"]
+    output_artifacts: ["coverage.xml", "test-results.xml"]
+
+govern:
+  - type: "human"
+    name: "Production Deployment"
+    description: "Human performs final production deployment with monitoring"
+    output_artifacts: ["deployment-log.txt"]
+
+gates:
+  G0:
+    name: "Plan Approval Gate"
+    description: "Formal approval of implementation plan, design, and resource allocation"
+    sla_hours: 72
+    deliverables:
+      - "requirements.md"
+      - "design.md"
+      - "architecture.svg"
+      - "risk-assessment.md"
+      - "resource-plan.md"
+    approver: "tech-lead"
+    approval_type: "formal"
+    criteria:
+      - "Requirements complete and unambiguous"
+      - "Technical design reviewed and approved"
+      - "Risk assessment completed"
+      - "Resources allocated"
+      - "Timeline approved"
+
+  G1:
+    name: "Code Readiness Gate"
+    description: "Code review, static analysis, and unit test validation before integration"
+    sla_hours: 48
+    deliverables:
+      - "src/**/*.py"
+      - "tests/**/*.py"
+      - "code-review.md"
+      - "static-analysis-report.xml"
+      - "unit-test-results.xml"
+    approver: "senior-developer"
+    approval_type: "formal"
+    criteria:
+      - "Code review completed with no critical issues"
+      - "Static analysis passed (ruff, mypy)"
+      - "Unit test coverage ≥90%"
+      - "All unit tests passing"
+      - "Code follows style guide"
+
+  G2:
+    name: "Pre-Release Gate"
+    description: "Integration testing, security scanning, and compliance validation"
+    sla_hours: 48
+    deliverables:
+      - "integration-test-results.xml"
+      - "security-scan-report.pdf"
+      - "compliance-checklist.md"
+      - "performance-test-results.xml"
+    approver: "qa-lead"
+    approval_type: "formal"
+    criteria:
+      - "Integration tests passing"
+      - "Security scan shows no critical vulnerabilities"
+      - "Compliance requirements met (ISO42001, NIST-AI-RMF)"
+      - "Performance benchmarks met"
+      - "Documentation complete"
+
+  G3:
+    name: "Deployment Approval Gate"
+    description: "Final deployment authorization with rollback plan and monitoring strategy"
+    sla_hours: 24
+    deliverables:
+      - "deployment-plan.md"
+      - "rollback-plan.md"
+      - "monitoring-strategy.md"
+      - "communication-plan.md"
+    approver: "product-owner"
+    approval_type: "formal"
+    criteria:
+      - "Deployment plan reviewed and approved"
+      - "Rollback plan tested and ready"
+      - "Monitoring and alerting configured"
+      - "Stakeholders notified"
+      - "Sign-off obtained"
+
+  G4:
+    name: "Post-Implementation Gate"
+    description: "Verification of successful deployment, monitoring results, and lessons learned"
+    sla_hours: 72
+    deliverables:
+      - "deployment-log.txt"
+      - "monitoring-report.md"
+      - "incident-log.md"
+      - "lessons-learned.md"
+    approver: "tech-lead"
+    approval_type: "formal"
+    criteria:
+      - "Deployment successful with no critical issues"
+      - "Monitoring shows healthy system state"
+      - "No critical incidents in first 48 hours"
+      - "Lessons learned documented"
+      - "Knowledge transfer complete"
+
+metrics:
+  targets:
+    coverage_min: 0.90
+    override_rate_max: 0.05
+    time_to_green_hours: 12
+    defect_density_max: 1.0
+  emit: ["coverage", "override_rate", "time_to_green", "defect_density", "plan_vs_actual"]
+
+governance:
+  approval_required: true
+  compliance_frameworks: ["ISO42001", "NIST-AI-RMF"]
+  audit_trail: true
+  rollback_plan: true

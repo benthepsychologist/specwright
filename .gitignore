@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+.env
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Linting
+.ruff_cache/
+
+# Spec artifacts
+.aip_artifacts/
+artifacts/
+*.compiled.yaml
+
+# Generated specs (keep templates, ignore compiled)
+specs/*.compiled.yaml
+aips/*.yaml
+!aips/.gitkeep
+
+# Temporary files
+*.tmp
+*.bak
+*.pdf

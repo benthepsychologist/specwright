@@ -1,0 +1,130 @@
+risk: "moderate"
+
+lifecycle_scope: ["planning", "prompting", "coding", "testing", "governance"]
+
+budget:
+  max_tokens: 1000000
+  max_usd: 100.00
+  currency: "USD"
+
+plan:
+  - type: "agent"
+    name: "Requirements Analysis"
+    description: "Agent analyzes requirements and creates implementation plan"
+    models: ["claude-3-5-sonnet"]
+    output_artifacts: ["requirements.md", "plan.md"]
+
+prompt:
+  - type: "agent"
+    name: "Design"
+    description: "Agent creates technical design"
+    models: ["claude-3-5-sonnet"]
+    output_artifacts: ["design.md"]
+
+code:
+  - type: "agent"
+    name: "Implementation"
+    description: "Agent implements solution"
+    models: ["claude-3-5-sonnet"]
+    tools: ["pytest", "ruff"]
+    output_artifacts: ["src/**/*.py", "tests/**/*.py"]
+
+test:
+  - type: "agent"
+    name: "Testing"
+    description: "Agent runs tests and validation"
+    models: ["gpt-4"]
+    tools: ["pytest"]
+    output_artifacts: ["test-results.xml"]
+
+govern:
+  - type: "human"
+    name: "Deployment Review"
+    description: "Human reviews and approves deployment"
+    output_artifacts: ["deployment-approval.md"]
+
+gates:
+  G0:
+    name: "Plan Approval Gate"
+    description: "Lightweight approval of implementation plan and design"
+    sla_hours: 48
+    deliverables:
+      - "requirements.md"
+      - "plan.md"
+      - "design.md"
+    approver: "senior-developer"
+    approval_type: "peer-review"
+    criteria:
+      - "Plan is clear and complete"
+      - "Design approach is sound"
+      - "Risks identified"
+
+  G1:
+    name: "Code Readiness Gate"
+    description: "Code review and basic validation before integration"
+    sla_hours: 24
+    deliverables:
+      - "src/**/*.py"
+      - "tests/**/*.py"
+      - "code-review.md"
+    approver: "peer-developer"
+    approval_type: "peer-review"
+    criteria:
+      - "Code review completed"
+      - "Static analysis passed"
+      - "Unit test coverage ≥85%"
+      - "Tests passing"
+
+  G2:
+    name: "Pre-Release Gate"
+    description: "Integration testing and basic security checks"
+    sla_hours: 24
+    deliverables:
+      - "test-results.xml"
+      - "security-scan.md"
+    approver: "senior-developer"
+    approval_type: "peer-review"
+    criteria:
+      - "Integration tests passing"
+      - "No high-severity security issues"
+      - "Basic compliance checks passed"
+
+  G3:
+    name: "Deployment Approval Gate"
+    description: "Lightweight deployment authorization"
+    sla_hours: 8
+    deliverables:
+      - "deployment-plan.md"
+      - "rollback-plan.md"
+    approver: "team-lead"
+    approval_type: "peer-review"
+    criteria:
+      - "Deployment plan reviewed"
+      - "Rollback plan ready"
+      - "Stakeholders informed"
+
+  G4:
+    name: "Post-Implementation Gate"
+    description: "Quick verification of deployment success"
+    sla_hours: 48
+    deliverables:
+      - "deployment-log.txt"
+      - "monitoring-summary.md"
+    approver: "senior-developer"
+    approval_type: "peer-review"
+    criteria:
+      - "Deployment successful"
+      - "No critical issues"
+      - "Basic monitoring in place"
+
+metrics:
+  targets:
+    coverage_min: 0.85
+    override_rate_max: 0.10
+    time_to_green_hours: 24
+    defect_density_max: 1.5
+  emit: ["coverage", "override_rate", "time_to_green", "defect_density"]
+
+governance:
+  approval_required: true
+  audit_trail: true

@@ -1,0 +1,109 @@
+# Tier A AIP Template
+# High-risk, full governance workflow
+
+version: "0.1"
+schema_url: "https://specplatform.org/schemas/aip-v0.1.schema.json"
+aip_id: "PLACEHOLDER"
+title: "PLACEHOLDER"
+tier: "A"
+
+lifecycle_scope: ["planning", "prompting", "coding", "testing", "fine_tuning", "governance"]
+
+repo:
+  url: "PLACEHOLDER"
+  default_branch: "main"
+  working_branch: "PLACEHOLDER"
+
+objective:
+  goal: "PLACEHOLDER"
+  acceptance_criteria:
+    - "TODO: Define measurable outcomes"
+    - "Security tests passing"
+    - "Privacy impact assessment complete"
+
+context:
+  background: ""
+  constraints:
+    - "No PHI exposure"
+    - "Threat model reviewed"
+
+data_classification:
+  confidentiality: "restricted"
+  contains_phi: true
+  notes: "Contains or processes protected health information"
+
+paths:
+  allowed: ["src/**", "tests/**"]
+
+models_tools:
+  tools: ["bash", "pytest", "ruff", "mypy", "bandit"]
+
+governance:
+  iso42001_controls: ["Policy", "RiskAssessment", "Competence", "OperationalControls", "Monitoring"]
+  nist_ai_rmf_functions: ["Govern", "Map", "Measure", "Manage"]
+
+plan:
+  - step_id: "plan-01"
+    role: "planning_agent"
+    kind: "plan"
+    description: "Detailed WBS with security/compliance checkpoints."
+    prompt: "Produce comprehensive plan including threat model considerations."
+    outputs:
+      - "artifacts/plan/wbs.md"
+      - "artifacts/plan/threat-model.md"
+
+  - step_id: "prompt-01"
+    role: "prompting_agent"
+    kind: "prompt"
+    description: "Generate domain-specific prompts with guardrails."
+    outputs:
+      - "artifacts/prompts/coding-prompts.md"
+
+  - step_id: "code-01"
+    role: "coding_agent"
+    kind: "code"
+    description: "Implement with security best practices."
+    commands:
+      - "ruff ."
+      - "mypy ."
+      - "bandit -r src/"
+      - "pytest -q"
+    verify:
+      require_green: true
+      coverage_min: 0.9
+
+  - step_id: "test-01"
+    role: "testing_agent"
+    kind: "test"
+    description: "Full test suite + security validation."
+    commands:
+      - "pytest --cov=src --cov-report=xml --cov-report=html"
+      - "bandit -r src/ -f json -o artifacts/test/bandit.json"
+    outputs:
+      - "artifacts/test/coverage.xml"
+      - "artifacts/test/bandit.json"
+
+  - step_id: "govern-01"
+    role: "planning_agent"
+    kind: "plan"
+    description: "Generate governance artifacts and evidence pack."
+    outputs:
+      - "artifacts/governance/decision-log.md"
+      - "artifacts/governance/privacy-impact-assessment.md"
+
+orchestrator_contract:
+  state_machine:
+    states: ["pending", "running", "awaiting_human", "failed", "succeeded", "rolled_back"]
+    events: ["run_step", "await_gate", "approve", "reject", "retry", "escalate", "complete"]
+  artifacts_dir: "PLACEHOLDER"
+  state_file: "artifacts/state.json"
+  logging: "jsonl"
+
+pull_request:
+  required: true
+  title: "PLACEHOLDER"
+  reviewers: ["Human Orchestrator", "Security Lead", "Governance Officer"]
+  merge_policy:
+    strategy: "squash"
+    require_status_checks: true
+    block_on_paths: ["src/core/**", "infra/**"]

@@ -1,0 +1,28 @@
+# Security-sensitive paths policy pack
+# Import into AIPs that touch security-critical code
+
+paths:
+  protected:
+    - "src/auth/**"
+    - "src/security/**"
+    - "infra/secrets/**"
+    - "config/production/**"
+  
+  allowed:
+    - "tests/**"
+    - "docs/**"
+    - "src/utils/**"
+  
+  require_review:
+    - "src/auth/**"
+    - "src/security/**"
+
+governance:
+  approval_required: true
+  audit_trail: true
+  compliance_frameworks: ["ISO42001", "SOC2"]
+  
+metrics:
+  targets:
+    coverage_min: 0.95
+    override_rate_max: 0.0  # Zero tolerance for overrides on security code

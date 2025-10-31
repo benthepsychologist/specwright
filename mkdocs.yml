@@ -1,0 +1,28 @@
+site_name: Specwright Documentation
+site_description: Specification-driven self-building scaffolding engine
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Architecture: ARCHITECTURE.md
+  - Domains: DOMAINS.md
+  - Bootstrap: BOOTSTRAP.md
+  - CLI Reference: CLI.md
+  - Manifolds: MANIFOLDS.md
+  - Policies:
+    - Policy Guide: POLICIES.md
+    - Policies & Contracts: POLICIES_AND_CONTRACTS.md
+  - Roadmap: ROADMAP.md
+  - Registries:
+    - Registry Overview: registry/README.md
+    - Index YAML: registry/registry.yaml
+  - Specs:
+    - Feature Specs: feature_specs/README.md
+  - Governance:
+    - Decision Backlog: DECISION_BACKLOG.md
+    - ADR Index: ADR_INDEX.md
+  - Archive:
+    - Legacy README: archive/README.md
+    - Monorepo Context: archive/monorepo.md
+plugins:
+  - search

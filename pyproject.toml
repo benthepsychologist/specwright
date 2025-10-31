@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "specwright"
+version = "0.3.0"
+description = "The architect of agentic workflows. Defines, validates, and executes AIPs."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Benjamin Armstrong", email = "bfarmstrong@example.com"}
+]
+requires-python = ">=3.12"
+keywords = [
+    "agentic",
+    "orchestration",
+    "governance",
+    "agentsway",
+    "implementation-plans",
+    "specwright",
+    "aip",
+    "tiered-governance",
+    "compliance",
+    "iso42001",
+    "nist-ai-rmf"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Code Generators",
+]
+
+dependencies = [
+    "pyyaml>=6.0.1",
+    "jsonschema>=4.20.0",
+    "typer>=0.9.0",
+    "jinja2>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "types-pyyaml>=6.0.12",
+]
+
+[project.urls]
+Repository = "https://github.com/bfarmstrong/specwright"
+Issues = "https://github.com/bfarmstrong/specwright/issues"
+Documentation = "https://specwright.dev"
+Homepage = "https://specwright.dev"
+
+[project.scripts]
+spec = "spec.cli.spec:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["yaml.*", "typer.*", "jsonschema.*"]
+ignore_missing_imports = true

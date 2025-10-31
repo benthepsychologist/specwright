@@ -1,0 +1,53 @@
+version: "0.1"
+schema_url: "https://specplatform.org/schemas/aip-v0.1.schema.json"
+
+lifecycle_scope: ["planning", "coding", "testing"]
+
+repo:
+  url: "git@github.com:org/spec-core.git"
+  default_branch: "main"
+
+models_tools:
+  models: ["claude-3-5-sonnet"]
+  tools: ["bash", "pytest", "ruff", "mypy"]
+
+paths:
+  protected: ["src/core/**", "infra/**"]
+  allowed: ["src/spec/**", "tests/**", "docs/**"]
+
+metrics:
+  targets:
+    coverage_min: 0.80
+    override_rate_max: 0.10
+    time_to_green_hours: 24
+    defect_density_max: 2.0
+  emit: ["override_rate", "time_to_green", "coverage"]
+
+governance:
+  privacy:
+    touches_phi: false
+    notes: ""
+
+data_classification:
+  confidentiality: "internal"
+  contains_phi: false
+
+pull_request:
+  required: true
+  merge_policy:
+    strategy: "squash"
+    require_status_checks: true
+
+notifications:
+  on_events:
+    - event: "awaiting_human"
+      channel: "slack://#spec-orchestration"
+    - event: "failed"
+      channel: "slack://#spec-incidents"
+
+orchestrator_contract:
+  state_machine:
+    states: ["pending", "running", "awaiting_human", "failed", "succeeded", "rolled_back"]
+    events: ["run_step", "await_gate", "approve", "reject", "retry", "escalate", "complete"]
+  logging: "jsonl"
+  state_file: "artifacts/state.json"

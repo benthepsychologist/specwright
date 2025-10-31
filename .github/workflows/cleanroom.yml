@@ -1,0 +1,50 @@
+name: cleanroom
+
+on: [push, pull_request]
+
+jobs:
+  cleanroom:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: life
+          POSTGRES_PASSWORD: life
+          POSTGRES_DB: life
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U life -d life"
+          --health-interval=3s
+          --health-timeout=2s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install --upgrade pip
+      - run: pip install -e .
+      - run: pip install -e plugins/core_verbs
+      - name: migrate
+        env:
+          DATABASE_URL: postgresql://life:life@localhost:5432/life
+        run: python scripts/db_migrate.py
+      - name: smoke plugins
+        run: machina list | tee /dev/stderr | grep "finance.ingest@v1"
+      - name: plan golden
+        run: machina run finance.ingest@v1 --plan -i tests/golden/finance_ingest_input.json | diff -u - tests/golden/finance_ingest_plan.json
+      - name: apply writes outbox
+        env:
+          DATABASE_URL: postgresql://life:life@localhost:5432/life
+        run: |
+          before=$(psql "$DATABASE_URL" -t -c "select count(*) from outbox;")
+          machina run finance.ingest@v1 --apply -i tests/golden/finance_ingest_input.json
+          after=$(psql "$DATABASE_URL" -t -c "select count(*) from outbox;")
+          test $((after-before)) -eq 1
+      - name: assert outbox row shape
+        env:
+          DATABASE_URL: postgresql://life:life@localhost:5432/life
+        run: |
+          psql "$DATABASE_URL" -t -c "select type, payload_json is not null as has_payload, idempotency_key is null as idem_null, correlation_id is null as corr_null from outbox order by id desc limit 1;" | tee /dev/stderr | grep "Command.finance.ingest@v1"
+
+

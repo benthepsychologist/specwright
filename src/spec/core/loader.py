@@ -1,0 +1,139 @@
+"""Deep merge utility for hierarchical YAML defaults.
+
+Implements precedence: AIP → tier defaults → project defaults → policy packs
+"""
+
+from typing import Any, Dict, List, Optional
+from pathlib import Path
+import yaml  # type: ignore[import]
+
+
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep merge two dictionaries, with override taking precedence.
+    
+    Args:
+        base: Base dictionary (lower precedence)
+        override: Override dictionary (higher precedence)
+        
+    Returns:
+        Merged dictionary
+        
+    Example:
+        >>> base = {"a": 1, "b": {"c": 2, "d": 3}}
+        >>> override = {"b": {"c": 99}, "e": 5}
+        >>> deep_merge(base, override)
+        {"a": 1, "b": {"c": 99, "d": 3}, "e": 5}
+    """
+    result = base.copy()
+    
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+            
+    return result
+
+
+def load_defaults(
+    tier: str,
+    policy_packs: Optional[List[str]] = None,
+    project_root: Optional[Path] = None
+) -> Dict[str, Any]:
+    """Load hierarchical defaults for a given tier.
+    
+    Args:
+        tier: Risk tier ("A", "B", or "C")
+        policy_packs: Optional list of policy pack names to merge
+        project_root: Root directory of the project (defaults to cwd)
+        
+    Returns:
+        Merged defaults dictionary
+        
+    Precedence (highest to lowest):
+        1. Tier-specific defaults (tier-{A,B,C}.yaml)
+        2. Project defaults (project.yaml)
+        3. Policy packs (policies/*.yaml)
+    """
+    if project_root is None:
+        project_root = Path.cwd()
+        
+    defaults_dir = project_root / "defaults"
+    policies_dir = project_root / "policies"
+    
+    # Start with empty base
+    merged = {}
+    
+    # Layer 1: Policy packs (lowest precedence)
+    if policy_packs:
+        for pack_name in policy_packs:
+            pack_path = policies_dir / f"{pack_name}.yaml"
+            if pack_path.exists():
+                with open(pack_path) as f:
+                    pack_data = yaml.safe_load(f) or {}
+                merged = deep_merge(merged, pack_data)
+    
+    # Layer 2: Project defaults
+    project_path = defaults_dir / "project.yaml"
+    if project_path.exists():
+        with open(project_path) as f:
+            project_data = yaml.safe_load(f) or {}
+        merged = deep_merge(merged, project_data)
+    
+    # Layer 3: Tier-specific defaults (highest precedence)
+    tier_path = defaults_dir / f"tier-{tier}.yaml"
+    if tier_path.exists():
+        with open(tier_path) as f:
+            tier_data = yaml.safe_load(f) or {}
+        merged = deep_merge(merged, tier_data)
+    
+    return merged
+
+
+def merge_aip_with_defaults(
+    aip: Dict[str, Any],
+    project_root: Optional[Path] = None
+) -> Dict[str, Any]:
+    """Merge a sparse AIP with appropriate defaults.
+    
+    Args:
+        aip: The sparse AIP dictionary
+        project_root: Root directory of the project (defaults to cwd)
+        
+    Returns:
+        Fully resolved AIP with all defaults applied
+        
+    Example:
+        >>> aip = {
+        ...     "metadata": {"risk": "high", "title": "My Feature"},
+        ...     "budget": {"max_usd": 150.00}
+        ... }
+        >>> resolved = merge_aip_with_defaults(aip)
+        >>> resolved["plan"]  # Will contain full Tier A plan from defaults
+    """
+    # Extract tier from risk level
+    risk_to_tier = {
+        "high": "A",
+        "moderate": "B",
+        "low": "C"
+    }
+    
+    risk = aip.get("metadata", {}).get("risk", "moderate")
+    tier = risk_to_tier.get(risk, "B")
+    
+    # Get policy packs if specified
+    policy_packs = aip.get("policy_packs", [])
+    
+    # Load hierarchical defaults
+    defaults = load_defaults(tier, policy_packs, project_root)
+    
+    # Merge AIP over defaults (AIP has highest precedence)
+    resolved = deep_merge(defaults, aip)
+    
+    return resolved
+
+
+if __name__ == "__main__":
+    # Simple test
+    import doctest
+    doctest.testmod()

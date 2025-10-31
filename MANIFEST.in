@@ -1,0 +1,18 @@
+# Include documentation
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include VERSION
+
+# Include configuration templates
+recursive-include config *.yaml *.json *.md
+
+# Include documentation
+recursive-include docs *.md *.yaml
+
+# Exclude build artifacts
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
+global-exclude *.swp

@@ -1,0 +1,13 @@
+# AIPs directory
+# Agentic Implementation Plans live here
+
+This directory contains your project's AIPs (Agentic Implementation Plans).
+
+## Usage
+
+Create a new AIP:
+```bash
+spec create --tier C --title "My task" --owner yourname
+```
+
+This generates a file like `aips/my-task.yaml` that you can edit, validate, and execute.

@@ -1,0 +1,34 @@
+name: Architecture Validation
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Validate architecture
+        run: machina "dev.validate.architecture@v1"
+        
+  cli_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install package
+        run: pip install -e .
+      - name: Test machina CLI
+        run: MACHINA_CLI_ALLOWED=1 python L4-engine/machina.py dev validate
+      - name: Test life CLI
+        run: python L5-cockpit/life.py version
