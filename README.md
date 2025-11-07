@@ -610,11 +610,12 @@ This is meta-engineering: **tools that build the builders, then build the world.
 
 Contributions welcome! Please:
 
-1. Read [CONTRIBUTING.md](CONTRIBUTING.md)
-2. Check [open issues](https://github.com/yourusername/spec-core/issues)
-3. Submit PRs against `main` branch
-4. Ensure tests pass: `pytest tests/`
-5. Run linter: `ruff check src/`
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines
+2. See [DEVELOPMENT.md](DEVELOPMENT.md) for local development workflow (dogfooding while building)
+3. Check [open issues](https://github.com/yourusername/spec-core/issues)
+4. Submit PRs against `main` branch
+5. Ensure tests pass: `pytest tests/`
+6. Run linter: `ruff check src/`
 
 ---
 
