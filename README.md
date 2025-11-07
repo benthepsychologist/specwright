@@ -53,12 +53,12 @@ Specwright is part of a larger experimental toolchain:
 
 | Tool | Purpose | Status |
 |------|---------|--------|
-| **Specwright** | Defines AIPs, enforces governance | Production-ready |
+| **Specwright** | Defines AIPs, enforces governance | Alpha (v0.3.0) |
 | **Dogfold** | Recursive Python scaffolding | Experimental |
 | **Gorch** | Google Cloud orchestration | Future |
 | **LifeOS** | Personal operating system | Future |
 
-> **Note:** Specwright is a standalone tool. The other tools in this ecosystem are independent experimental projects that complement it but are not required.
+> **Note:** All tools in this ecosystem are early-stage and actively evolving. Specwright is functional but should be considered alpha software.
 
 ---
 
