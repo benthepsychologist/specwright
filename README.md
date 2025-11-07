@@ -24,7 +24,8 @@ Specwright is a **meta-engineering orchestration layer** that ensures AI-driven 
 
 ```bash
 # Install
-pip install specwright
+pip install uv
+uv pip install specwright
 
 # Define a new plan (human-friendly Markdown)
 spec new --tier B --title "Add OAuth login" --owner alice --goal "Implement secure authentication"

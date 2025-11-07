@@ -11,7 +11,12 @@ Thanks for your interest in contributing to Specwright! This guide will help you
 ```bash
 git clone https://github.com/yourusername/spec-core.git
 cd spec-core
-pip install -e ".[dev]"
+
+# Install uv (if not already installed)
+pip install uv
+
+# Install Specwright with dev dependencies
+uv pip install -e ".[dev]"
 ```
 
 ### 2. Verify Installation
@@ -251,7 +256,7 @@ def compile_spec(
 ### Before Opening an Issue
 
 1. Search existing issues
-2. Try latest version: `pip install -U -e .`
+2. Try latest version: `uv pip install -U -e .`
 3. Check docs: README.md, docs/
 
 ### Good Issue Template
@@ -399,7 +404,8 @@ Releases are automated via GitHub Actions. When a GitHub release is created, the
 
    ## Installation
    \`\`\`bash
-   pip install specwright
+   pip install uv
+   uv pip install specwright
    \`\`\`
    "
    ```
@@ -412,7 +418,7 @@ Releases are automated via GitHub Actions. When a GitHub release is created, the
 6. **Verify the release:**
    ```bash
    # Check PyPI
-   pip install --upgrade specwright
+   uv pip install --upgrade specwright
    spec --version  # Should show new version
 
    # Check GitHub Actions

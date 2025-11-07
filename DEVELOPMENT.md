@@ -32,7 +32,12 @@ This workflow is ideal when you want to:
 cd /home/user/specwright
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+
+# Install uv (if not already installed)
+pip install uv
+
+# Install Specwright with dev dependencies
+uv pip install -e ".[dev]"
 
 # Verify installation
 spec --help
@@ -45,8 +50,11 @@ cd /home/user/your-project
 python -m venv .venv
 source .venv/bin/activate
 
+# Install uv (if not already installed)
+pip install uv
+
 # Install Specwright in EDITABLE mode from local path
-pip install -e /home/user/specwright
+uv pip install -e /home/user/specwright
 
 # Verify it works
 spec --help
@@ -273,14 +281,14 @@ git tag v0.4.0  # After 10-20 commits
 ```bash
 cd /home/user/your-project
 source .venv/bin/activate
-pip show specwright | grep Location
+uv pip show specwright | grep Location
 # Should show: /home/user/specwright/src
 ```
 
 If not, reinstall in editable mode:
 ```bash
-pip uninstall specwright
-pip install -e /home/user/specwright
+uv pip uninstall specwright
+uv pip install -e /home/user/specwright
 ```
 
 ### Import Errors
@@ -291,7 +299,7 @@ pip install -e /home/user/specwright
 ```bash
 cd /home/user/your-project
 source .venv/bin/activate
-pip install -e /home/user/specwright --force-reinstall
+uv pip install -e /home/user/specwright --force-reinstall
 ```
 
 ### Want to Test PyPI Version vs Local?
@@ -299,14 +307,14 @@ pip install -e /home/user/specwright --force-reinstall
 **Switch to PyPI version:**
 ```bash
 cd /home/user/your-project
-pip uninstall specwright
-pip install specwright  # From PyPI
+uv pip uninstall specwright
+uv pip install specwright  # From PyPI
 ```
 
 **Switch back to local dev:**
 ```bash
-pip uninstall specwright
-pip install -e /home/user/specwright
+uv pip uninstall specwright
+uv pip install -e /home/user/specwright
 ```
 
 ---
@@ -374,6 +382,6 @@ This workflow enables:
 - **Organic feature development:** Build what you actually need
 - **Quality improvements:** Catch edge cases during real use
 
-The key is **editable install** (`pip install -e`), which makes your local Specwright source code the live version used in your project.
+The key is **editable install** (`uv pip install -e`), which makes your local Specwright source code the live version used in your project.
 
 Happy building! 🚀

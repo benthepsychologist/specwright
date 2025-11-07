@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration with Dogfold scaffolding
 - Full Gorch orchestration integration
 
+## [0.3.2] - 2025-11-07
+
+### Changed
+- **Dependency management**: Migrated from pip to uv for faster, more reliable installs
+- Updated all documentation (DEVELOPMENT.md, CONTRIBUTING.md, README.md) with uv commands
+- Updated all GitHub Actions workflows to use uv for package installation
+- Installation now requires: `pip install uv && uv pip install specwright`
+
 ## [0.3.1] - 2025-11-07
 
 ### Changed
@@ -75,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.0
 [0.1.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.1.0

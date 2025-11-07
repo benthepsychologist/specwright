@@ -22,9 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - run: pip install --upgrade pip
-      - run: pip install -e .
-      - run: pip install -e plugins/core_verbs
+      - run: pip install --upgrade pip uv
+      - run: uv pip install -e .
+      - run: uv pip install -e plugins/core_verbs
       - name: migrate
         env:
           DATABASE_URL: postgresql://life:life@localhost:5432/life

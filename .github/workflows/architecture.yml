@@ -15,7 +15,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt
+        run: |
+          pip install uv
+          uv pip install -r requirements-dev.txt
       - name: Validate architecture
         run: machina "dev.validate.architecture@v1"
         
@@ -27,7 +29,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install package
-        run: pip install -e .
+        run: |
+          pip install uv
+          uv pip install -e .
       - name: Test machina CLI
         run: MACHINA_CLI_ALLOWED=1 python L4-engine/machina.py dev validate
       - name: Test life CLI
