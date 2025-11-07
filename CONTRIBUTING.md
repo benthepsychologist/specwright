@@ -359,6 +359,89 @@ We use **Semantic Versioning** (SemVer):
 
 ---
 
+## 🚢 Release Process
+
+### For Maintainers
+
+Releases are automated via GitHub Actions. When a GitHub release is created, the package is automatically built and published to PyPI.
+
+**Steps to release a new version:**
+
+1. **Update version numbers:**
+   ```bash
+   # Edit version in two places:
+   # - pyproject.toml (line 7)
+   # - src/spec/__init__.py (line 3)
+
+   # Example: bumping from 0.3.0 to 0.3.1
+   ```
+
+2. **Commit and push to main:**
+   ```bash
+   git add pyproject.toml src/spec/__init__.py
+   git commit -m "Bump version to 0.3.1"
+   git push origin main
+   ```
+
+3. **Create and push git tag:**
+   ```bash
+   git tag v0.3.1
+   git push origin v0.3.1
+   ```
+
+4. **Create GitHub release (triggers automatic PyPI publish):**
+   ```bash
+   gh release create v0.3.1 \
+     --title "Specwright v0.3.1" \
+     --notes "## What's New
+   - Bug fixes and improvements
+   - Updated documentation
+
+   ## Installation
+   \`\`\`bash
+   pip install specwright
+   \`\`\`
+   "
+   ```
+
+5. **GitHub Actions will automatically:**
+   - Build the source distribution (`.tar.gz`) and wheel (`.whl`)
+   - Upload to PyPI using the `PYPI_API_TOKEN` secret
+   - Package will be live at https://pypi.org/project/specwright/
+
+6. **Verify the release:**
+   ```bash
+   # Check PyPI
+   pip install --upgrade specwright
+   spec --version  # Should show new version
+
+   # Check GitHub Actions
+   gh run list --limit 1
+   ```
+
+### Release Checklist
+
+Before creating a release, ensure:
+
+- [ ] All tests pass on `main` branch
+- [ ] CHANGELOG.md is updated with release notes
+- [ ] Version bumped in `pyproject.toml` and `src/spec/__init__.py`
+- [ ] Documentation is up to date
+- [ ] No open critical bugs or security issues
+
+### Troubleshooting Releases
+
+**If GitHub Action fails:**
+- Check the workflow run: `gh run view <run-id> --log-failed`
+- Verify `PYPI_API_TOKEN` secret is set correctly in repo settings
+- Ensure version number doesn't already exist on PyPI
+
+**If you need to re-release:**
+- You cannot re-upload the same version to PyPI
+- Bump the patch version (e.g., 0.3.1 → 0.3.2) and try again
+
+---
+
 ## 📜 License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
