@@ -68,7 +68,7 @@ Implement feature per plan with standard best practices.
 **Commands:**
 
 ```bash
-ruff .
+ruff check .
 mypy .
 pytest -q
 ```

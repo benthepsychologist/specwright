@@ -49,16 +49,16 @@ spec run specs/add-oauth-login.compiled.yaml --plan
 
 ## 🌟 The Ecosystem
 
-Specwright is part of a larger toolchain:
+Specwright is part of a larger experimental toolchain:
 
-| Tool | Purpose | Relationship |
-|------|---------|--------------|
-| **Specwright** | Defines AIPs, enforces governance | The brain |
-| **Dogfold** | Recursive scaffolding, learning from builds | The hands |
-| **Gorch** | Google Cloud orchestration | The infrastructure |
-| **LifeOS** | Personal operating system | The interface |
+| Tool | Purpose | Status |
+|------|---------|--------|
+| **Specwright** | Defines AIPs, enforces governance | Production-ready |
+| **Dogfold** | Recursive Python scaffolding | Experimental |
+| **Gorch** | Google Cloud orchestration | Future |
+| **LifeOS** | Personal operating system | Future |
 
-**Specwright defines the plan. Dogfold builds it. Gorch runs it. LifeOS presents it.**
+> **Note:** Specwright is a standalone tool. The other tools in this ecosystem are independent experimental projects that complement it but are not required.
 
 ---
 

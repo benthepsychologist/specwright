@@ -61,7 +61,7 @@ Implement small change; keep diff small and isolated.
 **Commands:**
 
 ```bash
-ruff .
+ruff check .
 pytest -q
 ```
 
