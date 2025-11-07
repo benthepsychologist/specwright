@@ -15,6 +15,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration with Dogfold scaffolding
 - Full Gorch orchestration integration
 
+## [0.3.1] - 2025-11-07
+
+### Changed
+- **Ecosystem positioning**: Updated README to clarify Specwright is Alpha (v0.3.1), not production-ready
+- **Tool separation**: Dogfold acknowledged as experimental, independent companion tool
+- **Documentation clarity**: Emphasized standalone nature of Specwright
+
+### Added
+- **DEVELOPMENT.md**: Complete guide for dogfooding workflow (dual-repo development)
+- **Release process docs**: Automated PyPI publishing instructions in CONTRIBUTING.md
+
+### Fixed
+- GitHub Actions workflow now correctly triggers on releases from `main` branch
+- Consolidated branch naming from `master` to `main` for consistency
+
 ## [0.3.0] - 2025-10-31
 
 ### Added
@@ -60,7 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.0
 [0.1.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.1.0
 
