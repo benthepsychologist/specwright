@@ -27,23 +27,30 @@ Specwright is a **meta-engineering orchestration layer** that ensures AI-driven 
 pip install uv
 uv pip install specwright
 
-# Define a new plan (human-friendly Markdown)
-spec new --tier B --title "Add OAuth login" --owner alice --goal "Implement secure authentication"
+# Initialize config in your project
+cd /path/to/your/project
+spec init
+
+# Create a new spec (generates Markdown by default)
+spec create --tier B --title "Add OAuth login" --owner alice --goal "Implement secure authentication"
 
 # Edit the generated Markdown spec
 # specs/add-oauth-login.md
 
-# Compile to validated YAML
+# Compile Markdown to validated YAML
 spec compile specs/add-oauth-login.md
 
-# Validate against schema
-spec validate specs/add-oauth-login.compiled.yaml
+# Validate the compiled AIP
+spec validate aips/add-oauth-login.yaml
 
-# Execute with governance
-spec run specs/add-oauth-login.compiled.yaml
+# Execute the plan in guided mode
+spec run aips/add-oauth-login.yaml
+```
 
-# Or preview without execution
-spec run specs/add-oauth-login.compiled.yaml --plan
+**Power users:** Use `--yaml` flag to generate YAML directly:
+```bash
+spec create --tier B --title "Quick Fix" --owner bob --goal "Hotfix production bug" --yaml
+# Edits aips/quick-fix.yaml directly, skipping Markdown
 ```
 
 ---

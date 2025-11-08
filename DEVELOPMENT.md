@@ -75,9 +75,11 @@ cd /home/user/your-project
 source .venv/bin/activate
 
 # Use Specwright normally
-spec create --tier B --title "New Feature"
-spec validate aips/my-aip.yaml
-spec run aips/my-aip.yaml
+spec create --tier B --title "New Feature" --owner alice --goal "Build new feature"
+# Edit specs/new-feature.md
+spec compile specs/new-feature.md
+spec validate aips/new-feature.yaml
+spec run aips/new-feature.yaml
 
 # Discover a missing feature or bug?
 # → Switch to Terminal 2
