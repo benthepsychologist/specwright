@@ -15,6 +15,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration with Dogfold scaffolding
 - Full Gorch orchestration integration
 
+## [0.4.0] - 2025-11-08
+
+### Added
+- **`spec init`**: Initialize `.specwright.yaml` config in project directory
+- **`spec config`**: Display current effective configuration
+- **`spec compile`**: Compile Markdown specs to validated YAML AIPs
+- **Config auto-discovery**: Commands now walk up directory tree to find config
+- **Jinja2 template rendering**: Markdown templates now properly use Jinja2 variables
+
+### Changed
+- **`spec create` defaults to Markdown**: Now generates `.md` files in `specs/` by default
+- **`--yaml` flag**: Added to `spec create` for legacy direct YAML generation
+- **Workflow updated**: Full Markdown-first workflow now functional (init → create → compile → validate → run)
+- **Documentation**: Updated README.md and DEVELOPMENT.md with new workflow examples
+
+### Fixed
+- Template path resolution now uses config-aware discovery
+- Output directories now created automatically when missing
+
 ## [0.3.2] - 2025-11-07
 
 ### Changed
@@ -83,7 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.4.0
 [0.3.2]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.1
 [0.3.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.0
