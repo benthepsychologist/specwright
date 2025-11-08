@@ -8,6 +8,11 @@ from pathlib import Path
 import typer
 import yaml  # type: ignore[import]
 
+try:
+    from importlib.resources import files  # type: ignore[attr-defined]
+except ImportError:
+    from importlib_resources import files  # type: ignore[import-untyped]
+
 app = typer.Typer(help="Specwright CLI for managing Agentic Implementation Plans")
 
 
@@ -50,15 +55,70 @@ def get_git_remote_url() -> str:
         return "git@github.com:org/repo.git"  # Placeholder if no git
 
 
+def get_template_path(tier: str) -> Path:
+    """Get path to template file for given tier (from package resources)."""
+    try:
+        # Try package resources (installed mode)
+        package_files = files("spec")
+        template_file = package_files / "templates" / f"tier-{tier.lower()}-template.md"
+        if hasattr(template_file, "read_text"):
+            # Return a temporary path that we can read from
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir()) / "specwright-templates"
+            temp_dir.mkdir(exist_ok=True)
+            temp_file = temp_dir / f"tier-{tier.lower()}-template.md"
+            temp_file.write_text(template_file.read_text())  # type: ignore[attr-defined]
+            return temp_file
+    except Exception:
+        pass
+
+    # Fallback: Development mode - look relative to project root
+    # Walk up to find project root (where config/ or src/ exists)
+    current = Path(__file__).parent
+    while current != current.parent:
+        dev_template = current.parent.parent / "config" / "templates" / "specs" / f"tier-{tier.lower()}-template.md"
+        if dev_template.exists():
+            return dev_template
+        current = current.parent
+
+    raise FileNotFoundError(f"Could not find template for tier {tier}")
+
+
+def get_schema_path() -> Path:
+    """Get path to AIP schema (from package resources)."""
+    try:
+        # Try package resources (installed mode)
+        package_files = files("spec")
+        schema_file = package_files / "schemas" / "aip.schema.json"
+        if hasattr(schema_file, "read_text"):
+            # Return a temporary path
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir()) / "specwright-schemas"
+            temp_dir.mkdir(exist_ok=True)
+            temp_file = temp_dir / "aip.schema.json"
+            temp_file.write_text(schema_file.read_text())  # type: ignore[attr-defined]
+            return temp_file
+    except Exception:
+        pass
+
+    # Fallback: Development mode
+    current = Path(__file__).parent
+    while current != current.parent:
+        dev_schema = current.parent.parent / "config" / "schemas" / "aip.schema.json"
+        if dev_schema.exists():
+            return dev_schema
+        current = current.parent
+
+    raise FileNotFoundError("Could not find aip.schema.json")
+
+
 def get_default_config() -> dict:
     """Get default Specwright configuration."""
     return {
         "version": "0.1",
         "paths": {
-            "specs": "specs",
-            "aips": "aips",
-            "templates": "config/templates/specs",
-            "schemas": "config/schemas",
+            "specs": ".specwright/specs",
+            "aips": ".specwright/aips",
         },
         "repo": {
             "default_branch": "main"
@@ -153,14 +213,23 @@ def create(
         if output is None:
             output = Path(cfg["paths"]["aips"]) / f"{slug}.yaml"
 
-        template_path = project_root / "config" / "templates" / "aips" / f"tier-{tier.value.lower()}-template.yaml"
+        # Try to find YAML template (for backward compatibility)
+        try:
+            package_files = files("spec")
+            template_file = package_files / "templates" / "aips" / f"tier-{tier.value.lower()}-template.yaml"
+            if hasattr(template_file, "read_text"):
+                template_content = template_file.read_text()  # type: ignore[attr-defined]
+            else:
+                raise FileNotFoundError
+        except Exception:
+            # Fallback to development mode
+            template_path = project_root / "config" / "templates" / "aips" / f"tier-{tier.value.lower()}-template.yaml"
+            if not template_path.exists():
+                typer.echo("Error: YAML template not found", err=True)
+                raise typer.Exit(1)
+            template_content = template_path.read_text()
 
-        if not template_path.exists():
-            typer.echo(f"Error: Template not found at {template_path}", err=True)
-            raise typer.Exit(1)
-
-        with open(template_path) as f:
-            aip = yaml.safe_load(f)
+        aip = yaml.safe_load(template_content)
 
         # Replace PLACEHOLDER values
         aip["aip_id"] = aip_id
@@ -173,7 +242,7 @@ def create(
         aip["pull_request"]["title"] = f"[{aip_id}] {title}"
         aip["meta"] = {
             "created_by": owner,
-            "created_at": datetime.utcnow().isoformat() + "Z"
+            "created_at": datetime.now().astimezone().isoformat()
         }
 
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -193,10 +262,11 @@ def create(
         if output is None:
             output = Path(cfg["paths"]["specs"]) / f"{slug}.md"
 
-        template_path = project_root / cfg["paths"]["templates"] / f"tier-{tier.value.lower()}-template.md"
-
-        if not template_path.exists():
-            typer.echo(f"Error: Template not found at {template_path}", err=True)
+        # Get template using helper function (works in both dev and installed mode)
+        try:
+            template_path = get_template_path(tier.value)
+        except FileNotFoundError as e:
+            typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1)
 
         # Use Jinja2 to render template
@@ -238,21 +308,53 @@ def compile(
 
     # Get config for default output path
     config_path, cfg = find_config()
+    project_root = config_path.parent if config_path else Path.cwd()
 
     if output is None:
-        # Default: specs/foo.md → aips/foo.yaml
-        output = Path(cfg["paths"]["aips"]) / (spec_path.stem + ".yaml")
+        # Default: specs/foo.md → aips/foo.yaml (relative to project root)
+        aips_path = Path(cfg["paths"]["aips"])
+        if not aips_path.is_absolute():
+            aips_path = project_root / aips_path
+        output = aips_path / (spec_path.stem + ".yaml")
 
     # Create parent directory if it doesn't exist
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         do_compile(spec_path, output, overwrite=overwrite, validate=True)
-        typer.echo(f"✓ Compiled {spec_path} → {output}")
+
+        # Validate compiled YAML against schema
+        with open(output) as f:
+            aip = yaml.safe_load(f)
+
+        schema_path = get_schema_path()
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        from jsonschema import Draft7Validator  # type: ignore[import]
+        validator = Draft7Validator(schema)
+        errors = list(validator.iter_errors(aip))
+
+        if errors:
+            typer.secho(f"\n✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
+            typer.secho(f"✗ But validation failed with {len(errors)} error(s):\n", fg=typer.colors.RED, bold=True, err=True)
+            for i, error in enumerate(errors, 1):
+                typer.secho(f"  [{i}] {error.message}", fg=typer.colors.RED, err=True)
+                if error.path:
+                    path_str = ' → '.join(str(p) for p in error.path)
+                    typer.secho(f"      at: {path_str}", fg=typer.colors.YELLOW, err=True)
+                if error.validator and error.validator != 'required':
+                    typer.secho(f"      validator: {error.validator}", fg=typer.colors.BLUE, dim=True, err=True)
+                typer.echo("", err=True)
+            raise typer.Exit(1)
+
+        typer.secho(f"✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
+        typer.secho(f"✓ Validation passed", fg=typer.colors.GREEN)
         typer.echo("  Next steps:")
-        typer.echo(f"    1. Run: spec validate {output}")
-        typer.echo(f"    2. Run: spec run {output}")
+        typer.echo(f"    1. Run: spec run {output}")
     except Exception as e:
+        if isinstance(e, typer.Exit):
+            raise
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
@@ -271,37 +373,40 @@ def validate(
     with open(aip_path) as f:
         aip = yaml.safe_load(f)
 
-    # Load schema (look in config/ directory relative to project root)
-    project_root = Path.cwd()
-    schema_path = project_root / "config" / "schemas" / "aip.schema.json"
-
-    if not schema_path.exists():
-        typer.echo(f"Error: Schema not found at {schema_path}", err=True)
+    # Load schema using helper function (works in both dev and installed mode)
+    try:
+        schema_path = get_schema_path()
+    except FileNotFoundError as e:
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
     with open(schema_path) as f:
         schema = json.load(f)
 
-    # Validate
+    # Validate and collect ALL errors
     try:
-        from jsonschema import validate  # type: ignore[import]
-        validate(instance=aip, schema=schema)
-        typer.echo(f"✓ {aip_path} is valid")
-    except Exception as e:
-        # Check if it's a ValidationError
-        if type(e).__name__ == "ValidationError":
-            typer.echo("✗ Validation failed:", err=True)
-            typer.echo(f"  {getattr(e, 'message', str(e))}", err=True)
-            if hasattr(e, 'path') and e.path:  # type: ignore[attr-defined]
-                typer.echo(f"  Path: {' → '.join(str(p) for p in e.path)}", err=True)  # type: ignore[attr-defined]
-            raise typer.Exit(1)
-        # Check if it's an ImportError
-        elif isinstance(e, ImportError):
-            typer.echo("Error: jsonschema package not installed", err=True)
-            typer.echo("  Install with: pip install jsonschema", err=True)
+        from jsonschema import Draft7Validator  # type: ignore[import]
+
+        validator = Draft7Validator(schema)
+        errors = list(validator.iter_errors(aip))
+
+        if errors:
+            typer.secho(f"\n✗ Validation failed with {len(errors)} error(s):\n", fg=typer.colors.RED, bold=True, err=True)
+            for i, error in enumerate(errors, 1):
+                typer.secho(f"  [{i}] {error.message}", fg=typer.colors.RED, err=True)
+                if error.path:
+                    path_str = ' → '.join(str(p) for p in error.path)
+                    typer.secho(f"      at: {path_str}", fg=typer.colors.YELLOW, err=True)
+                if error.validator and error.validator != 'required':
+                    typer.secho(f"      validator: {error.validator}", fg=typer.colors.BLUE, dim=True, err=True)
+                typer.echo("", err=True)  # Blank line between errors
             raise typer.Exit(1)
         else:
-            raise
+            typer.secho(f"✓ {aip_path} is valid", fg=typer.colors.GREEN, bold=True)
+    except ImportError:
+        typer.echo("Error: jsonschema package not installed", err=True)
+        typer.echo("  Install with: pip install jsonschema", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()

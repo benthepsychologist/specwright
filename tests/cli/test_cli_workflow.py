@@ -70,7 +70,7 @@ def test_config_discovery_uses_defaults_when_not_found(tmp_path):
         found_path, found_config = find_config()
         assert found_path is None
         assert "paths" in found_config
-        assert found_config["paths"]["specs"] == "specs"
+        assert found_config["paths"]["specs"] == ".specwright/specs"
     finally:
         os.chdir(old_cwd)
 
@@ -188,9 +188,9 @@ def test_create_generates_markdown_by_default(temp_project):
         ])
 
         assert result.exit_code == 0
-        assert "Created Tier C spec at specs/test-feature.md" in result.stdout
+        assert "Created Tier C spec at .specwright/specs/test-feature.md" in result.stdout
 
-        spec_path = temp_project / "specs" / "test-feature.md"
+        spec_path = temp_project / ".specwright" / "specs" / "test-feature.md"
         assert spec_path.exists()
 
         content = spec_path.read_text()
@@ -220,9 +220,9 @@ def test_create_with_yaml_flag_generates_yaml(temp_project):
         ])
 
         assert result.exit_code == 0
-        assert "Created Tier C AIP at aips/legacy-test.yaml" in result.stdout
+        assert "Created Tier C AIP at .specwright/aips/legacy-test.yaml" in result.stdout
 
-        aip_path = temp_project / "aips" / "legacy-test.yaml"
+        aip_path = temp_project / ".specwright" / "aips" / "legacy-test.yaml"
         assert aip_path.exists()
 
         aip = yaml.safe_load(aip_path.read_text())
@@ -250,15 +250,21 @@ def test_compile_converts_md_to_yaml(temp_project):
             "--goal", "Test compilation"
         ])
 
-        # Compile it
-        result = runner.invoke(app, ["compile", "specs/compile-test.md"])
+        # Compile it - should fail validation since template is incomplete
+        result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
 
-        assert result.exit_code == 0
-        assert "Compiled specs/compile-test.md → aips/compile-test.yaml" in result.stdout
+        # Compilation creates the file but validation fails
+        assert result.exit_code == 1
+        assert "Compiled .specwright/specs/compile-test.md" in result.stdout
+        # Validation errors go to stderr
+        full_output = result.stdout + (result.stderr or "")
+        assert "validation failed" in full_output.lower()
 
-        yaml_path = temp_project / "aips" / "compile-test.yaml"
+        # File should still be created
+        yaml_path = temp_project / ".specwright" / "aips" / "compile-test.yaml"
         assert yaml_path.exists()
 
+        # Check content is correct even though validation failed
         aip = yaml.safe_load(yaml_path.read_text())
         assert "meta" in aip
         assert aip["meta"]["goal"] == "Test compilation"
@@ -283,16 +289,18 @@ def test_compile_creates_output_directory(temp_project):
             "--goal", "Test dir creation"
         ])
 
-        # Ensure aips/ doesn't exist
-        aips_dir = temp_project / "aips"
+        # Ensure .specwright/aips/ doesn't exist
+        aips_dir = temp_project / ".specwright" / "aips"
         if aips_dir.exists():
             import shutil
             shutil.rmtree(aips_dir)
 
-        # Compile should create the directory
-        result = runner.invoke(app, ["compile", "specs/dir-test.md"])
+        # Compile should create the directory (but validation will fail)
+        result = runner.invoke(app, ["compile", ".specwright/specs/dir-test.md"])
 
-        assert result.exit_code == 0
-        assert (temp_project / "aips" / "dir-test.yaml").exists()
+        # Exit code 1 because validation fails, but directory and file should be created
+        assert result.exit_code == 1
+        assert (temp_project / ".specwright" / "aips" / "dir-test.yaml").exists()
+        assert (temp_project / ".specwright" / "aips").exists()
     finally:
         os.chdir(old_cwd)

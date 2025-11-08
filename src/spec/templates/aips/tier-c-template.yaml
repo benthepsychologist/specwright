@@ -1,0 +1,107 @@
+# Tier C AIP Template
+# Low-risk, fast-lane workflow
+
+version: "0.1"
+schema_url: "https://specplatform.org/schemas/aip-v0.1.schema.json"
+aip_id: "PLACEHOLDER"
+title: "PLACEHOLDER"
+tier: "C"
+
+lifecycle_scope: ["planning", "prompting", "coding", "testing", "governance"]
+
+repo:
+  url: "PLACEHOLDER"
+  default_branch: "main"
+  working_branch: "PLACEHOLDER"
+
+objective:
+  goal: "PLACEHOLDER"
+  acceptance_criteria:
+    - "CI green (lint + unit)"
+    - "No protected paths modified"
+
+context:
+  background: ""
+  constraints:
+    - "No edits under protected paths"
+
+paths:
+  allowed: ["src/**", "tests/**", "docs/**"]
+
+models_tools:
+  tools: ["bash", "pytest", "ruff"]
+
+fast_lane:
+  enabled: true
+  limits:
+    tests: ["lint", "unit"]
+    max_changed_files: 6
+    blocked_paths: ["src/core/**", "infra/**"]
+
+plan:
+  - step_id: "plan-01"
+    role: "planning_agent"
+    kind: "plan"
+    description: "Outline minimal file-touch set and quick test plan. (Prepares for G0: Plan Approval Gate - auto-approved)"
+    prompt: "Produce a one-paragraph plan and list of files to touch (<= 5)."
+    outputs:
+      - "artifacts/plan/plan-01.md"
+    gate_reference: "G0"
+
+  - step_id: "prompt-01"
+    role: "design_agent"
+    kind: "prompt"
+    description: "Quick design notes. (Prepares for G0: Plan Approval Gate - auto-approved)"
+    prompt: "Create brief design notes for the change."
+    outputs:
+      - "artifacts/design/design-notes.md"
+    gate_reference: "G0"
+
+  - step_id: "code-01"
+    role: "coding_agent"
+    kind: "code"
+    description: "Implement small change; keep diff small and isolated. (Prepares for G1: Code Readiness Gate - auto-approved)"
+    commands:
+      - "ruff ."
+      - "pytest -q"
+    verify:
+      require_green: true
+      assertions:
+        - "No changes under protected paths"
+        - "Changed files <= fast_lane.limits.max_changed_files"
+    gate_reference: "G1"
+
+  - step_id: "test-01"
+    role: "testing_agent"
+    kind: "test"
+    description: "Run automated tests. (Prepares for G2: Pre-Release Gate - peer review)"
+    commands:
+      - "pytest --cov=src --cov-report=xml"
+    outputs:
+      - "artifacts/test/coverage.xml"
+    gate_reference: "G2"
+
+  - step_id: "govern-01"
+    role: "governance_agent"
+    kind: "govern"
+    description: "Auto-deploy and verify. (Prepares for G3: Deployment Approval Gate and G4: Post-Implementation Gate - auto-approved)"
+    outputs:
+      - "artifacts/governance/deployment-log.txt"
+      - "artifacts/governance/health-check.md"
+    gate_reference: "G3,G4"
+
+orchestrator_contract:
+  state_machine:
+    states: ["pending", "running", "awaiting_human", "failed", "succeeded", "rolled_back"]
+    events: ["run_step", "await_gate", "approve", "reject", "retry", "escalate", "complete"]
+  artifacts_dir: "PLACEHOLDER"
+  state_file: "artifacts/state.json"
+  logging: "jsonl"
+
+pull_request:
+  required: true
+  title: "PLACEHOLDER"
+  reviewers: ["Human Orchestrator"]
+  merge_policy:
+    strategy: "squash"
+    require_status_checks: true

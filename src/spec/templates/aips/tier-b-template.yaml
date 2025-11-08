@@ -1,0 +1,98 @@
+# Tier B AIP Template
+# Moderate-risk, balanced workflow
+
+version: "0.1"
+schema_url: "https://specplatform.org/schemas/aip-v0.1.schema.json"
+aip_id: "PLACEHOLDER"
+title: "PLACEHOLDER"
+tier: "B"
+
+lifecycle_scope: ["planning", "prompting", "coding", "testing", "governance"]
+
+repo:
+  url: "PLACEHOLDER"
+  default_branch: "main"
+  working_branch: "PLACEHOLDER"
+
+objective:
+  goal: "PLACEHOLDER"
+  acceptance_criteria:
+    - "TODO: Define measurable outcomes"
+
+context:
+  background: ""
+  constraints: []
+
+paths:
+  allowed: ["src/**", "tests/**", "docs/**"]
+
+models_tools:
+  tools: ["bash", "pytest", "ruff", "mypy"]
+
+plan:
+  - step_id: "plan-01"
+    role: "planning_agent"
+    kind: "plan"
+    description: "Produce detailed work breakdown and file-touch map. (Prepares for G0: Plan Approval Gate)"
+    prompt: "Given the objective, produce a WBS and identify all files to modify."
+    outputs:
+      - "artifacts/plan/wbs.md"
+      - "artifacts/plan/file-touch-map.yaml"
+    gate_reference: "G0"
+
+  - step_id: "prompt-01"
+    role: "design_agent"
+    kind: "prompt"
+    description: "Create technical design. (Prepares for G0: Plan Approval Gate)"
+    prompt: "Create technical design based on the approved plan."
+    outputs:
+      - "artifacts/design/design.md"
+    gate_reference: "G0"
+
+  - step_id: "code-01"
+    role: "coding_agent"
+    kind: "code"
+    description: "Implement feature per plan. (Prepares for G1: Code Readiness Gate)"
+    commands:
+      - "ruff ."
+      - "mypy ."
+      - "pytest -q"
+    verify:
+      require_green: true
+      coverage_min: 0.85
+    gate_reference: "G1"
+
+  - step_id: "test-01"
+    role: "testing_agent"
+    kind: "test"
+    description: "Run full test suite and generate coverage report. (Prepares for G2: Pre-Release Gate)"
+    commands:
+      - "pytest --cov=src --cov-report=xml"
+    outputs:
+      - "artifacts/test/coverage.xml"
+    gate_reference: "G2"
+
+  - step_id: "govern-01"
+    role: "governance_agent"
+    kind: "govern"
+    description: "Deployment review and approval. (Prepares for G3: Deployment Approval Gate and G4: Post-Implementation Gate)"
+    outputs:
+      - "artifacts/governance/deployment-approval.md"
+      - "artifacts/governance/deployment-log.txt"
+    gate_reference: "G3,G4"
+
+orchestrator_contract:
+  state_machine:
+    states: ["pending", "running", "awaiting_human", "failed", "succeeded", "rolled_back"]
+    events: ["run_step", "await_gate", "approve", "reject", "retry", "escalate", "complete"]
+  artifacts_dir: "PLACEHOLDER"
+  state_file: "artifacts/state.json"
+  logging: "jsonl"
+
+pull_request:
+  required: true
+  title: "PLACEHOLDER"
+  reviewers: ["Human Orchestrator", "Senior Engineer"]
+  merge_policy:
+    strategy: "squash"
+    require_status_checks: true

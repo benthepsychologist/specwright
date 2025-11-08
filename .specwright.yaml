@@ -1,0 +1,8 @@
+version: '0.1'
+paths:
+  specs: specs
+  aips: aips
+  templates: config/templates/specs
+  schemas: config/schemas
+repo:
+  default_branch: main

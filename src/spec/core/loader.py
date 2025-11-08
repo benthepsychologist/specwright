@@ -3,12 +3,13 @@
 Implements precedence: AIP → tier defaults → project defaults → policy packs
 """
 
-from typing import Any, Dict, List, Optional
 from pathlib import Path
+from typing import Any
+
 import yaml  # type: ignore[import]
 
 
-def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Deep merge two dictionaries, with override taking precedence.
     
     Args:
@@ -25,21 +26,21 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
         {"a": 1, "b": {"c": 99, "d": 3}, "e": 5}
     """
     result = base.copy()
-    
+
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = deep_merge(result[key], value)
         else:
             result[key] = value
-            
+
     return result
 
 
 def load_defaults(
     tier: str,
-    policy_packs: Optional[List[str]] = None,
-    project_root: Optional[Path] = None
-) -> Dict[str, Any]:
+    policy_packs: list[str] | None = None,
+    project_root: Path | None = None
+) -> dict[str, Any]:
     """Load hierarchical defaults for a given tier.
     
     Args:
@@ -57,13 +58,13 @@ def load_defaults(
     """
     if project_root is None:
         project_root = Path.cwd()
-        
+
     defaults_dir = project_root / "defaults"
     policies_dir = project_root / "policies"
-    
+
     # Start with empty base
     merged = {}
-    
+
     # Layer 1: Policy packs (lowest precedence)
     if policy_packs:
         for pack_name in policy_packs:
@@ -72,28 +73,28 @@ def load_defaults(
                 with open(pack_path) as f:
                     pack_data = yaml.safe_load(f) or {}
                 merged = deep_merge(merged, pack_data)
-    
+
     # Layer 2: Project defaults
     project_path = defaults_dir / "project.yaml"
     if project_path.exists():
         with open(project_path) as f:
             project_data = yaml.safe_load(f) or {}
         merged = deep_merge(merged, project_data)
-    
+
     # Layer 3: Tier-specific defaults (highest precedence)
     tier_path = defaults_dir / f"tier-{tier}.yaml"
     if tier_path.exists():
         with open(tier_path) as f:
             tier_data = yaml.safe_load(f) or {}
         merged = deep_merge(merged, tier_data)
-    
+
     return merged
 
 
 def merge_aip_with_defaults(
-    aip: Dict[str, Any],
-    project_root: Optional[Path] = None
-) -> Dict[str, Any]:
+    aip: dict[str, Any],
+    project_root: Path | None = None
+) -> dict[str, Any]:
     """Merge a sparse AIP with appropriate defaults.
     
     Args:
@@ -117,19 +118,19 @@ def merge_aip_with_defaults(
         "moderate": "B",
         "low": "C"
     }
-    
+
     risk = aip.get("metadata", {}).get("risk", "moderate")
     tier = risk_to_tier.get(risk, "B")
-    
+
     # Get policy packs if specified
     policy_packs = aip.get("policy_packs", [])
-    
+
     # Load hierarchical defaults
     defaults = load_defaults(tier, policy_packs, project_root)
-    
+
     # Merge AIP over defaults (AIP has highest precedence)
     resolved = deep_merge(defaults, aip)
-    
+
     return resolved
 
 
