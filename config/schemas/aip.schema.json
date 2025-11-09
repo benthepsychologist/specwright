@@ -335,7 +335,7 @@
           "description": "Audit log format"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "provenance": {
       "type": "object",

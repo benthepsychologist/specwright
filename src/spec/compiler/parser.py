@@ -253,57 +253,130 @@ class SpecParser:
 
         return repo
 
+    def _convert_steps_to_schema_format(self, steps: list[dict]) -> list[dict]:
+        """Convert our parsed step format to schema-compliant format."""
+        schema_steps = []
+        for step in steps:
+            # Map our fields to schema fields
+            schema_step = {
+                "step_id": f"step-{step['index']:03d}",
+                "role": "coding_agent",  # Default role
+                "kind": "code",  # Default kind
+                "description": step.get("title", ""),
+            }
+
+            # Add optional fields if present
+            if step.get("prompts"):
+                schema_step["prompt"] = "\n".join(step["prompts"])
+
+            if step.get("outputs"):
+                schema_step["outputs"] = step["outputs"]
+
+            if step.get("commands"):
+                # Commands aren't in the schema, so we'll add them as a prompt note
+                pass
+
+            schema_steps.append(schema_step)
+
+        return schema_steps
+
     def _build_aip(self) -> dict[str, Any]:
-        """Build final AIP structure."""
-        # Compute source hash
-        source_hash = hashlib.sha256(self.content.encode('utf-8')).hexdigest()
+        """Build final AIP structure matching the schema."""
+        from datetime import datetime
 
         # Parse context (use normalized keys)
         context_text = self.sections.get("context", "")
         background = re.search(r'### Background\s+(.+?)(?=###|$)', context_text, re.DOTALL)
-        constraints = re.search(r'### Constraints\s+(.+?)(?=###|$)', context_text, re.DOTALL)
+        constraints_match = re.search(r'### Constraints\s+(.+?)(?=###|$)', context_text, re.DOTALL)
 
-        # Parse tools and models
-        tools, models = self._parse_tools_models()
+        # Parse constraints as list (extract bullet points)
+        constraints = []
+        if constraints_match:
+            constraint_text = constraints_match.group(1).strip()
+            # Extract list items (lines starting with -)
+            for line in constraint_text.split('\n'):
+                line = line.strip()
+                if line.startswith('-') or line.startswith('*'):
+                    constraints.append(line.lstrip('-* ').strip())
 
-        # Parse repo
-        repo = self._parse_repo()
+        # Parse acceptance criteria
+        acceptance_criteria = [c["text"] for c in self._parse_acceptance_criteria()]
 
-        # Compute relative path if source_path provided
-        source_md_rel = None
-        if self.source_path:
-            try:
-                source_md_rel = str(self.source_path.relative_to(self.repo_root))
-            except ValueError:
-                source_md_rel = str(self.source_path)
+        # Get repo info from frontmatter or defaults
+        import subprocess
+        try:
+            repo_url = subprocess.check_output(
+                ['git', 'config', '--get', 'remote.origin.url'],
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            repo_url = "git@github.com:org/repo.git"
+
+        # Generate AIP ID from frontmatter or create one
+        aip_id = self.frontmatter.get("aip_id")
+        if not aip_id:
+            from datetime import date
+            today = date.today()
+            aip_id = f"AIP-{today.year}-{today.month:02d}-{today.day:02d}-001"
+
+        # Parse orchestrator_contract from frontmatter or use default
+        orchestrator = self.frontmatter.get("orchestrator_contract", "standard")
+
+        # Handle various forms of orchestrator_contract
+        if orchestrator == "standard" or (isinstance(orchestrator, dict) and orchestrator.get("name") == "standard"):
+            # Expand "standard" shorthand or partial object into full contract
+            orchestrator_contract = {
+                "state_machine": {
+                    "states": ["pending", "running", "awaiting_human", "failed", "succeeded", "rolled_back"],
+                    "events": ["run_step", "await_gate", "approve", "reject", "retry", "escalate", "complete"]
+                },
+                "artifacts_dir": f".aip_artifacts/{aip_id}",
+                "logging": "jsonl"
+            }
+            # If orchestrator was a dict, merge in any additional fields
+            if isinstance(orchestrator, dict):
+                orchestrator_contract.update({k: v for k, v in orchestrator.items() if k != "name"})
+        else:
+            orchestrator_contract = orchestrator  # Assume it's already a complete object
 
         aip = {
+            # Required top-level fields
+            "version": self.frontmatter.get("version", "0.1"),
+            "aip_id": aip_id,
+            "title": self.frontmatter["title"],
+            "tier": self.frontmatter["tier"],
+
+            # Meta (required: created_by, created_at)
             "meta": {
-                "source_md_path": str(self.source_path) if self.source_path else None,
-                "source_md_rel": source_md_rel,
-                "source_md_sha256": source_hash,
-                "compiler_version": "spec-compiler/0.1.0",
-                "compiled_at": None,  # Intentionally null for determinism
-                "tier": self.frontmatter["tier"],
-                "title": self.frontmatter["title"],
-                "owner": self.frontmatter["owner"],
-                "goal": self.frontmatter["goal"],
-                "labels": self.frontmatter.get("labels", [])
+                "created_by": self.frontmatter.get("owner"),
+                "created_at": self.frontmatter.get("created_at", datetime.now().astimezone().isoformat())
             },
-            "objective": self.sections.get("objective", "").strip(),
-            "acceptance": {
-                "criteria": self._parse_acceptance_criteria()
+
+            # Repo (required: url, default_branch, working_branch)
+            "repo": {
+                "url": self.frontmatter.get("repo", {}).get("url", repo_url),
+                "default_branch": self.frontmatter.get("repo", {}).get("default_branch", "main"),
+                "working_branch": self.frontmatter.get("repo", {}).get("working_branch", f"feat/{self.frontmatter['title'].lower().replace(' ', '-')}")
             },
+
+            # Objective (required: goal, acceptance_criteria)
+            "objective": {
+                "goal": self.frontmatter.get("goal", ""),
+                "acceptance_criteria": acceptance_criteria
+            },
+
+            # Context (optional)
             "context": {
                 "background": background.group(1).strip() if background else "",
-                "constraints": constraints.group(1).strip() if constraints else ""
+                "constraints": constraints
             },
-            "plan": {
-                "steps": self.plan_steps
-            },
-            "tools": tools,
-            "models": models,
-            "repo": repo
+
+            # Plan (array of steps, not {steps: [...]}  - convert our parsed steps)
+            "plan": self._convert_steps_to_schema_format(self.plan_steps),
+
+            # Orchestrator contract (required)
+            "orchestrator_contract": orchestrator_contract
         }
 
         return aip

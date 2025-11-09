@@ -250,24 +250,24 @@ def test_compile_converts_md_to_yaml(temp_project):
             "--goal", "Test compilation"
         ])
 
-        # Compile it - should fail validation since template is incomplete
+        # Compile it - should now succeed with fixed templates
         result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
 
-        # Compilation creates the file but validation fails
-        assert result.exit_code == 1
+        # Compilation and validation should both succeed
+        assert result.exit_code == 0
         assert "Compiled .specwright/specs/compile-test.md" in result.stdout
-        # Validation errors go to stderr
-        full_output = result.stdout + (result.stderr or "")
-        assert "validation failed" in full_output.lower()
+        assert "Validation passed" in result.stdout
 
         # File should still be created
         yaml_path = temp_project / ".specwright" / "aips" / "compile-test.yaml"
         assert yaml_path.exists()
 
-        # Check content is correct even though validation failed
+        # Check content is correct (new schema-compliant structure)
         aip = yaml.safe_load(yaml_path.read_text())
         assert "meta" in aip
-        assert aip["meta"]["goal"] == "Test compilation"
+        assert "objective" in aip
+        assert aip["objective"]["goal"] == "Test compilation"
+        assert aip["meta"]["created_by"] == "charlie"
     finally:
         os.chdir(old_cwd)
 
@@ -295,11 +295,11 @@ def test_compile_creates_output_directory(temp_project):
             import shutil
             shutil.rmtree(aips_dir)
 
-        # Compile should create the directory (but validation will fail)
+        # Compile should create the directory and succeed
         result = runner.invoke(app, ["compile", ".specwright/specs/dir-test.md"])
 
-        # Exit code 1 because validation fails, but directory and file should be created
-        assert result.exit_code == 1
+        # Should succeed and create directory
+        assert result.exit_code == 0
         assert (temp_project / ".specwright" / "aips" / "dir-test.yaml").exists()
         assert (temp_project / ".specwright" / "aips").exists()
     finally:

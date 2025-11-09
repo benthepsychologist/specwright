@@ -1,9 +1,13 @@
 ---
+version: "0.1"
 tier: {{ tier }}
 title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+orchestrator_contract: "standard"
+repo:
+  working_branch: "{{ branch }}"
 ---
 
 # {{ title }}
@@ -30,7 +34,7 @@ labels: []
 
 ## Plan
 
-### Step 1: Planning [G0: Plan Approval]
+### Step 1: Planning Phase [G0: Plan Approval]
 
 **Prompt:**
 
@@ -69,7 +73,7 @@ pytest -q
 
 - `artifacts/code/quick-release-note.md`
 
-### Step 4: Testing [G2: Pre-Release]
+### Step 4: Testing & Validation [G2: Pre-Release]
 
 **Prompt:**
 

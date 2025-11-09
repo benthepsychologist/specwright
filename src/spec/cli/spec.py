@@ -371,7 +371,7 @@ def validate(
 
     # Detect file type and handle accordingly
     if spec_path.suffix == '.md':
-        # Validate Markdown spec structure
+        # Parse Markdown spec and validate the resulting AIP structure
         typer.echo(f"Validating Markdown spec: {spec_path}")
         from spec.compiler.parser import SpecParser
 
@@ -379,22 +379,22 @@ def validate(
             content = spec_path.read_text(encoding='utf-8')
             parser = SpecParser(content, source_path=spec_path)
             aip = parser.parse()
-            typer.secho(f"✓ Markdown structure is valid", fg=typer.colors.GREEN)
-            typer.echo(f"\nNote: To validate against the full AIP schema, compile first:")
-            typer.echo(f"  spec compile {spec_path}")
-            return
+            typer.secho(f"✓ Markdown parsed successfully", fg=typer.colors.GREEN)
         except (ValueError, KeyError, AttributeError) as e:
-            typer.secho(f"\n✗ Markdown validation failed:", fg=typer.colors.RED, bold=True, err=True)
+            typer.secho(f"\n✗ Markdown parsing failed:", fg=typer.colors.RED, bold=True, err=True)
             typer.secho(f"  {str(e)}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1)
+
+        # Now validate the parsed AIP against the schema
+        # (Don't return early - fall through to schema validation below)
 
     elif spec_path.suffix not in ['.yaml', '.yml']:
         typer.echo(f"Error: File must be .md, .yaml, or .yml (got {spec_path.suffix})", err=True)
         raise typer.Exit(1)
-
-    # Load YAML AIP
-    with open(spec_path) as f:
-        aip = yaml.safe_load(f)
+    else:
+        # Load YAML AIP
+        with open(spec_path) as f:
+            aip = yaml.safe_load(f)
 
     # Load schema using helper function (works in both dev and installed mode)
     try:

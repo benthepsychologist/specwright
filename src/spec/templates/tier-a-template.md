@@ -1,9 +1,13 @@
 ---
+version: "0.1"
 tier: {{ tier }}
 title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+orchestrator_contract: "standard"
+repo:
+  working_branch: "{{ branch }}"
 ---
 
 # {{ title }}
