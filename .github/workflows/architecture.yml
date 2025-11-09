@@ -13,26 +13,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-      - name: Install dependencies
+          python-version: '3.12'
+      - name: Install package
         run: |
           pip install uv
-          uv pip install -r requirements-dev.txt
-      - name: Validate architecture
-        run: machina "dev.validate.architecture@v1"
-        
+          uv pip install --system -e ".[dev]"
+      - name: Run linter
+        run: ruff check src/ tests/
+
   cli_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.12'
       - name: Install package
         run: |
           pip install uv
-          uv pip install -e .
-      - name: Test machina CLI
-        run: MACHINA_CLI_ALLOWED=1 python L4-engine/machina.py dev validate
-      - name: Test life CLI
-        run: python L5-cockpit/life.py version
+          uv pip install --system -e .
+      - name: Test spec CLI
+        run: spec --help
