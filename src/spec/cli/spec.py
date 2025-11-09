@@ -361,16 +361,39 @@ def compile(
 
 @app.command()
 def validate(
-    aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
+    spec_path: Path = typer.Argument(..., help="Path to spec (.md) or AIP (.yaml) file"),
 ):
-    """Validate an AIP against the JSON schema."""
+    """Validate a Markdown spec or compiled YAML AIP."""
 
-    if not aip_path.exists():
-        typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
+    if not spec_path.exists():
+        typer.echo(f"Error: File not found: {spec_path}", err=True)
         raise typer.Exit(1)
 
-    # Load AIP
-    with open(aip_path) as f:
+    # Detect file type and handle accordingly
+    if spec_path.suffix == '.md':
+        # Validate Markdown spec structure
+        typer.echo(f"Validating Markdown spec: {spec_path}")
+        from spec.compiler.parser import SpecParser
+
+        try:
+            content = spec_path.read_text(encoding='utf-8')
+            parser = SpecParser(content, source_path=spec_path)
+            aip = parser.parse()
+            typer.secho(f"✓ Markdown structure is valid", fg=typer.colors.GREEN)
+            typer.echo(f"\nNote: To validate against the full AIP schema, compile first:")
+            typer.echo(f"  spec compile {spec_path}")
+            return
+        except (ValueError, KeyError, AttributeError) as e:
+            typer.secho(f"\n✗ Markdown validation failed:", fg=typer.colors.RED, bold=True, err=True)
+            typer.secho(f"  {str(e)}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+
+    elif spec_path.suffix not in ['.yaml', '.yml']:
+        typer.echo(f"Error: File must be .md, .yaml, or .yml (got {spec_path.suffix})", err=True)
+        raise typer.Exit(1)
+
+    # Load YAML AIP
+    with open(spec_path) as f:
         aip = yaml.safe_load(f)
 
     # Load schema using helper function (works in both dev and installed mode)
@@ -402,7 +425,7 @@ def validate(
                 typer.echo("", err=True)  # Blank line between errors
             raise typer.Exit(1)
         else:
-            typer.secho(f"✓ {aip_path} is valid", fg=typer.colors.GREEN, bold=True)
+            typer.secho(f"✓ {spec_path} is valid", fg=typer.colors.GREEN, bold=True)
     except ImportError:
         typer.echo("Error: jsonschema package not installed", err=True)
         typer.echo("  Install with: pip install jsonschema", err=True)
