@@ -128,6 +128,7 @@ def prompt_approval_decision() -> dict[str, Any]:
             questionary.Choice("❌ Reject - Stop execution", value="rejected"),
             questionary.Choice("⏸️  Defer - Mark for later review", value="deferred"),
             questionary.Choice("⚠️  Conditional - Approve with conditions", value="conditional"),
+            questionary.Choice("🚪 Cancel - Exit without decision", value="cancelled"),
         ]
     ).ask()
 

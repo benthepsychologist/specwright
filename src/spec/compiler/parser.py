@@ -269,16 +269,34 @@ class SpecParser:
         }
 
     def _parse_acceptance_criteria(self) -> list[dict[str, str]]:
-        """Parse acceptance criteria checkboxes."""
+        """Parse acceptance criteria checkboxes or bullet points."""
         criteria = []
-        # Use normalized section key
-        objective_text = self.sections.get("acceptance criteria", "")
+        # Get objective section and look for Acceptance Criteria H3
+        objective_text = self.sections.get("objective", "")
 
+        # Find Acceptance Criteria subsection
+        ac_match = re.search(r'### Acceptance Criteria\s*\n(.*?)(?=\n###|$)', objective_text, re.DOTALL | re.IGNORECASE)
+        if not ac_match:
+            # Try looking for it as standalone H2 section (legacy)
+            objective_text = self.sections.get("acceptance criteria", "")
+            ac_text = objective_text
+        else:
+            ac_text = ac_match.group(1)
+
+        # Parse checkbox format: - [ ] or - [x]
         checkbox_pattern = re.compile(r'^- \[([ x])\] (.+)$', re.MULTILINE)
-        for match in checkbox_pattern.finditer(objective_text):
+        for match in checkbox_pattern.finditer(ac_text):
             status = "done" if match.group(1) == 'x' else "pending"
             text = match.group(2).strip()
             criteria.append({"text": text, "status": status})
+
+        # If no checkboxes found, parse plain bullet points: -
+        if not criteria:
+            bullet_pattern = re.compile(r'^- (?!\[)(.+)$', re.MULTILINE)
+            for match in bullet_pattern.finditer(ac_text):
+                text = match.group(1).strip()
+                if text:  # Ignore empty bullets
+                    criteria.append({"text": text, "status": "pending"})
 
         return criteria
 
