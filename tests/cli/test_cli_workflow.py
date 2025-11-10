@@ -206,8 +206,8 @@ def test_create_without_owner_uses_default(temp_project):
         # Create without --owner flag
         result = runner.invoke(app, [
             "create",
+            "Test Feature",
             "--tier", "C",
-            "--title", "Test Feature",
             "--goal", "Test default owner"
         ])
         assert result.exit_code == 0
@@ -233,10 +233,11 @@ def test_create_without_owner_fails_when_no_default(temp_project):
         # Try to create without --owner and no default
         result = runner.invoke(app, [
             "create",
+            "Test Feature",
             "--tier", "C",
-            "--title", "Test Feature",
             "--goal", "Test error handling"
-        ])
+        
+])
         assert result.exit_code == 1
         # Error messages go to stderr, but typer.testing combines them into output
         output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
@@ -256,11 +257,12 @@ def test_create_generates_markdown_by_default(temp_project):
 
         result = runner.invoke(app, [
             "create",
+            "Test Feature",
             "--tier", "C",
-            "--title", "Test Feature",
             "--owner", "alice",
             "--goal", "Test MD generation"
-        ])
+        
+])
 
         assert result.exit_code == 0
         assert "Created Tier C spec at .specwright/specs/test-feature.md" in result.stdout
@@ -287,11 +289,12 @@ def test_create_with_yaml_flag_generates_yaml(temp_project):
 
         result = runner.invoke(app, [
             "create",
+            "Legacy Test",
             "--tier", "C",
-            "--title", "Legacy Test",
             "--owner", "bob",
             "--goal", "Test YAML generation",
-            "--yaml"
+            
+"--yaml"
         ])
 
         assert result.exit_code == 0
@@ -319,11 +322,12 @@ def test_compile_converts_md_to_yaml(temp_project):
         # Create MD spec
         runner.invoke(app, [
             "create",
+            "Compile Test",
             "--tier", "C",
-            "--title", "Compile Test",
             "--owner", "charlie",
             "--goal", "Test compilation"
-        ])
+        
+])
 
         # Compile it - should now succeed with fixed templates
         result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
@@ -358,11 +362,12 @@ def test_compile_creates_output_directory(temp_project):
         # Create MD spec
         runner.invoke(app, [
             "create",
+            "Dir Test",
             "--tier", "C",
-            "--title", "Dir Test",
             "--owner", "dave",
             "--goal", "Test dir creation"
-        ])
+        
+])
 
         # Ensure .specwright/aips/ doesn't exist
         aips_dir = temp_project / ".specwright" / "aips"
@@ -392,11 +397,12 @@ def test_validate_md_spec(temp_project):
         # Create MD spec
         runner.invoke(app, [
             "create",
+            "Validate Test",
             "--tier", "C",
-            "--title", "Validate Test",
             "--owner", "eve",
             "--goal", "Test validation"
-        ])
+        
+])
 
         # Validate MD file directly
         result = runner.invoke(app, ["validate", ".specwright/specs/validate-test.md"])
@@ -418,11 +424,12 @@ def test_validate_yaml_aip(temp_project):
         # Create and compile
         runner.invoke(app, [
             "create",
+            "YAML Validate",
             "--tier", "C",
-            "--title", "YAML Validate",
             "--owner", "frank",
             "--goal", "Test YAML validation"
-        ])
+        
+])
         runner.invoke(app, ["compile", ".specwright/specs/yaml-validate.md"])
 
         # Validate compiled YAML
@@ -445,11 +452,12 @@ def test_validate_uses_current_spec(temp_project):
         # Create spec and set as current
         runner.invoke(app, [
             "create",
+            "Current Validate",
             "--tier", "C",
-            "--title", "Current Validate",
             "--owner", "grace",
             "--goal", "Test current validation"
-        ])
+        
+])
         runner.invoke(app, ["config", "current.spec", ".specwright/specs/current-validate.md"])
 
         # Validate without arguments

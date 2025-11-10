@@ -295,15 +295,21 @@ def config(
 
 @app.command()
 def create(
+    title: str = typer.Argument(..., help="Spec title"),
     tier: RiskTier = typer.Option(..., "--tier", "-t", help="Risk tier (A/B/C)"),
-    title: str = typer.Option(..., "--title", help="Spec title"),
-    goal: str = typer.Option(..., "--goal", "-g", help="Objective (what are we building?)"),
+    goal: str | None = typer.Option(None, "--goal", "-g", help="Objective (what are we building?)"),
     owner: str | None = typer.Option(None, "--owner", help="GitHub username or team"),
     branch: str | None = typer.Option(None, "--branch", "-b", help="Working branch name"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
+    set_current: bool = typer.Option(False, "--set-current", help="Set as current working spec"),
     yaml_mode: bool = typer.Option(False, "--yaml", help="Generate YAML directly (legacy mode)"),
 ):
-    """Create a new spec from template (Markdown by default, YAML with --yaml flag)."""
+    """Create a new spec from template (Markdown by default, YAML with --yaml flag).
+
+    Examples:
+        spec create "Add User Avatars" --tier C --goal "Allow profile pictures"
+        spec create "Refactor Auth" --tier C --set-current
+    """
 
     # Get config
     config_path, cfg = find_config()
@@ -317,6 +323,11 @@ def create(
             typer.echo("  Use --owner flag or set default owner with: spec config user <username>", err=True)
             raise typer.Exit(1)
         typer.echo(f"Using default owner: {owner}")
+
+    # Default goal if not provided
+    if goal is None:
+        goal = f"Implement {title}"
+        typer.echo(f"Using default goal: {goal}")
 
     # Generate slug and branch
     slug = slugify(title)
@@ -403,11 +414,23 @@ def create(
 
         typer.echo(f"✓ Created Tier {tier.value} spec at {output}")
         typer.echo(f"  Branch: {branch}")
-        typer.echo("  Next steps:")
-        typer.echo(f"    1. Edit {output}")
-        typer.echo(f"    2. Run: spec compile {output}")
-        typer.echo("    3. Run: spec validate <compiled-yaml>")
-        typer.echo("    4. Run: spec run <compiled-yaml>")
+
+        # Set as current if requested
+        if set_current and config_path:
+            if "current" not in cfg:
+                cfg["current"] = {"spec": None, "aip": None}
+            cfg["current"]["spec"] = str(output)
+            save_config(config_path, cfg)
+            typer.secho(f"✓ Set as current spec", fg=typer.colors.GREEN)
+            typer.echo("  Next steps:")
+            typer.echo("    1. Edit the spec")
+            typer.echo("    2. Run: spec compile")
+            typer.echo("    3. Run: spec validate")
+        else:
+            typer.echo("  Next steps:")
+            typer.echo(f"    1. Edit {output}")
+            typer.echo(f"    2. Run: spec compile {output}")
+            typer.echo("    3. Run: spec validate <compiled-yaml>")
 
 
 @app.command()

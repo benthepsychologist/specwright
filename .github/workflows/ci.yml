@@ -61,7 +61,6 @@ jobs:
           cd /tmp/test-spec
           spec init
           spec config user test
-          spec create --tier C --title "Test" --goal "Test install"
-          spec config current.spec .specwright/specs/test.md
+          spec create "Test Install" --tier C --set-current
           spec compile
           spec validate
