@@ -247,15 +247,199 @@ ruff check src/
 
 For Tier A and B specs, you can add detailed review checklists to gate steps. These checklists are displayed interactively during `spec run` and require approval before proceeding.
 
-**Format:**
+**When to Add Gate Reviews:**
+- **Always for Tier A/B**: Add gate review blocks to steps with gate references (`[G0: ...]`, `[G1: ...]`, etc.)
+- **Optional for Tier C**: Can be added but will auto-approve
+
+**Where to Place:**
+- After `**Outputs:**` section in each step
+- Before the `---` separator (if present)
+- Must be within the step content (between step headers)
+
+**Exact Format (Copy This Template):**
 ```markdown
 ### Step N: Step Title [G0: Plan Approval]
 
 **Prompt:**
-...
+Your step prompt here...
+
+**Commands:**
+```bash
+commands here
+```
 
 **Outputs:**
-...
+- `file1.py`
+- `file2.md`
+
+<!-- GATE_REVIEW_START -->
+#### Gate Review Checklist
+
+##### Category Name 1
+- [ ] Checklist item 1
+- [ ] Checklist item 2
+- [ ] Checklist item 3
+
+##### Category Name 2
+- [ ] Checklist item 4
+- [ ] Checklist item 5
+
+#### Approval Decision
+- [ ] APPROVED
+- [ ] APPROVED WITH CONDITIONS: ___
+- [ ] REJECTED: ___
+- [ ] DEFERRED: ___
+
+**Approval Metadata:**
+- Reviewer: ___
+- Date: ___
+- Rationale: ___
+<!-- GATE_REVIEW_END -->
+```
+
+**CRITICAL Rules for LLMs:**
+
+1. **HTML Comment Markers are REQUIRED**: Must use `<!-- GATE_REVIEW_START -->` and `<!-- GATE_REVIEW_END -->` exactly as shown
+2. **Heading Levels Matter**:
+   - `#### Gate Review Checklist` (4 hashes)
+   - `##### Category Name` (5 hashes for categories)
+   - `#### Approval Decision` (4 hashes)
+3. **Checkbox Format**: Must be `- [ ]` with a space between brackets
+4. **Section Order**: Checklist categories first, then Approval Decision, then Approval Metadata
+5. **No Extra Content**: Don't add text between sections or modify the structure
+
+**Common Gate Checklist Categories:**
+
+**For G0 (Plan Approval):**
+```markdown
+##### Architecture Review
+- [ ] Work breakdown structure is complete and accurate
+- [ ] File touch map identifies all affected components
+- [ ] Dependencies and interfaces are clearly defined
+- [ ] No circular dependencies introduced
+
+##### Risk Assessment
+- [ ] Risk analysis completed for proposed changes
+- [ ] Mitigation strategies identified
+- [ ] Rollback plan documented
+
+##### Resource Planning
+- [ ] Effort estimates are reasonable
+- [ ] Timeline is achievable
+- [ ] Required skills/tools identified
+```
+
+**For G1 (Code Readiness/Design Review):**
+```markdown
+##### Design Quality
+- [ ] API contracts are well-defined
+- [ ] Database schema changes are validated
+- [ ] Security considerations are documented
+- [ ] Performance implications are assessed
+
+##### Architecture Compliance
+- [ ] Design follows established patterns
+- [ ] No architectural violations introduced
+- [ ] Scalability requirements addressed
+- [ ] Integration points are documented
+```
+
+**For G2 (Code Review/Implementation):**
+```markdown
+##### Code Quality
+- [ ] Code follows project style guide
+- [ ] No linting errors (ruff check passes)
+- [ ] Type hints are complete (mypy passes)
+- [ ] No hardcoded secrets or credentials
+
+##### Testing
+- [ ] Unit tests written for new code
+- [ ] Test suite passes (pytest -q)
+- [ ] Edge cases are covered
+- [ ] Test coverage meets minimum threshold
+
+##### Documentation
+- [ ] Code is well-commented
+- [ ] API changes are documented
+- [ ] Breaking changes are highlighted
+- [ ] README updated if needed
+```
+
+**For G3 (Pre-Release/Testing):**
+```markdown
+##### Test Coverage
+- [ ] Full test suite passes
+- [ ] Test coverage ≥ 85%
+- [ ] No flaky tests identified
+- [ ] Performance tests pass
+
+##### Integration Testing
+- [ ] End-to-end workflows tested
+- [ ] Integration points validated
+- [ ] Error handling verified
+- [ ] Rollback tested
+
+##### Quality Metrics
+- [ ] Defect density ≤ 1.5
+- [ ] No critical bugs
+- [ ] No high-severity security issues
+- [ ] Code review feedback addressed
+```
+
+**For G4 (Deployment Approval/Governance):**
+```markdown
+##### Compliance
+- [ ] Decision log complete and accurate
+- [ ] Compliance checklist validated
+- [ ] Regulatory requirements met
+- [ ] Audit trail documented
+
+##### Deployment Readiness
+- [ ] Deployment plan reviewed
+- [ ] Rollback procedure validated
+- [ ] Monitoring and alerting configured
+- [ ] Runbook complete
+
+##### Stakeholder Approval
+- [ ] Technical lead approval obtained
+- [ ] Product owner approval obtained
+- [ ] Security review complete (if needed)
+- [ ] Final signoff received
+```
+
+**How It Works During `spec run`:**
+1. When a step with a gate review is reached
+2. The checklist is displayed interactively with categories
+3. Reviewer checks off completed items using questionary checkboxes
+4. Reviewer makes approval decision (Approve/Reject/Defer/Conditional)
+5. Decision is logged to audit trail (`.aip_artifacts/{AIP_ID}/gate_approvals.jsonl`)
+6. Execution continues, pauses, or stops based on decision
+
+**Tier-Specific Behavior:**
+- **Tier A/B**: Gates are blocking - execution halts until approved
+- **Tier C**: Gates are auto-approved with logging only
+
+**View Gate Approvals:**
+```bash
+spec gate-list          # List all approvals
+spec gate-report        # Summary statistics
+```
+
+**Example Complete Step with Gate Review:**
+```markdown
+### Step 1: Planning [G0: Plan Approval]
+
+**Prompt:**
+
+Produce detailed work breakdown and file-touch map:
+- WBS with task breakdown
+- Files to be modified
+- Test coverage plan
+
+**Outputs:**
+
+- `artifacts/plan/wbs.md`
+- `artifacts/plan/file-touch-map.yaml`
 
 <!-- GATE_REVIEW_START -->
 #### Gate Review Checklist
@@ -271,6 +455,11 @@ For Tier A and B specs, you can add detailed review checklists to gate steps. Th
 - [ ] Mitigation strategies identified
 - [ ] Rollback plan documented
 
+##### Resource Planning
+- [ ] Effort estimates are reasonable
+- [ ] Timeline is achievable
+- [ ] Required skills/tools identified
+
 #### Approval Decision
 - [ ] APPROVED
 - [ ] APPROVED WITH CONDITIONS: ___
@@ -282,24 +471,6 @@ For Tier A and B specs, you can add detailed review checklists to gate steps. Th
 - Date: ___
 - Rationale: ___
 <!-- GATE_REVIEW_END -->
-```
-
-**How It Works:**
-1. During `spec run`, when a step with a gate is reached
-2. The checklist is displayed interactively
-3. Reviewer checks off completed items
-4. Reviewer makes approval decision (Approve/Reject/Defer/Conditional)
-5. Decision is logged to audit trail (`.aip_artifacts/{AIP_ID}/gate_approvals.jsonl`)
-6. Execution continues, pauses, or stops based on decision
-
-**Tier-Specific Behavior:**
-- **Tier A/B**: Gates are blocking - execution halts until approved
-- **Tier C**: Gates are auto-approved with logging only
-
-**View Gate Approvals:**
-```bash
-spec gate-list          # List all approvals
-spec gate-report        # Summary statistics
 ```
 
 ## Acceptance Criteria
