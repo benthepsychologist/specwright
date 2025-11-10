@@ -123,6 +123,9 @@ def get_default_config() -> dict:
         "repo": {
             "default_branch": "main"
         },
+        "user": {
+            "default_owner": None  # Default owner for new specs
+        },
         "current": {
             "spec": None,  # Path to current working .md spec
             "aip": None    # Path to current compiled .yaml AIP
@@ -196,36 +199,76 @@ def config():
 
 
 @app.command()
-def set_current(
-    spec: Path = typer.Argument(..., help="Path to spec file (.md or .yaml)"),
+def config(
+    key: str | None = typer.Argument(None, help="Config key to set (e.g., 'user', 'current.spec')"),
+    value: str | None = typer.Argument(None, help="Value to set"),
+    show: bool = typer.Option(False, "--show", help="Show current configuration"),
 ):
-    """Set the current working spec for compile/validate/run commands."""
+    """
+    Manage Specwright configuration.
+
+    Examples:
+        spec config user myusername          # Set default owner
+        spec config current.spec path.md     # Set current working spec
+        spec config current.aip path.yaml    # Set current working AIP
+        spec config --show                   # Show current config
+    """
     config_path, cfg = find_config()
 
     if not config_path:
         typer.echo("Error: No .specwright.yaml found. Run 'spec init' first.", err=True)
         raise typer.Exit(1)
 
-    if not spec.exists():
-        typer.echo(f"Error: Spec file not found: {spec}", err=True)
+    # Show config if requested or no arguments
+    if show or (key is None and value is None):
+        typer.echo("Current configuration:")
+        typer.echo(yaml.dump(cfg, sort_keys=False, default_flow_style=False))
+        return
+
+    if key is None:
+        typer.echo("Error: Please provide a key to set", err=True)
+        typer.echo('  Examples: spec config user myusername', err=True)
         raise typer.Exit(1)
 
-    # Ensure current section exists
-    if "current" not in cfg:
-        cfg["current"] = {"spec": None, "aip": None}
+    if value is None:
+        typer.echo(f"Error: Please provide a value for '{key}'", err=True)
+        raise typer.Exit(1)
 
-    # Update based on file type
-    if spec.suffix == '.md':
-        cfg["current"]["spec"] = str(spec)
-        typer.secho(f"✓ Set current spec: {spec}", fg=typer.colors.GREEN)
-        typer.echo("  You can now run: spec compile, spec validate")
-    elif spec.suffix in ['.yaml', '.yml']:
-        cfg["current"]["aip"] = str(spec)
-        typer.secho(f"✓ Set current AIP: {spec}", fg=typer.colors.GREEN)
-        typer.echo("  You can now run: spec validate, spec run")
+    # Handle nested keys (e.g., "current.spec")
+    parts = key.split('.')
+
+    # Shorthand: "user" -> "user.default_owner"
+    if parts == ["user"]:
+        parts = ["user", "default_owner"]
+
+    # Navigate to the correct nested dict
+    current = cfg
+    for part in parts[:-1]:
+        if part not in current:
+            current[part] = {}
+        current = current[part]
+
+    # Special handling for file paths - validate they exist
+    if parts[-1] in ["spec", "aip"]:
+        path = Path(value)
+        if not path.exists():
+            typer.echo(f"Warning: File not found: {path}", err=True)
+            if not typer.confirm("Set anyway?", default=False):
+                raise typer.Exit(1)
+
+        # Store as string
+        current[parts[-1]] = str(path)
+
+        if parts[-1] == "spec":
+            typer.secho(f"✓ Set current spec: {value}", fg=typer.colors.GREEN)
+            typer.echo("  You can now run: spec compile, spec validate")
+        else:
+            typer.secho(f"✓ Set current AIP: {value}", fg=typer.colors.GREEN)
+            typer.echo("  You can now run: spec validate, spec run")
     else:
-        typer.echo(f"Error: File must be .md or .yaml (got {spec.suffix})", err=True)
-        raise typer.Exit(1)
+        # Set the value
+        current[parts[-1]] = value
+        typer.secho(f"✓ Set {key}: {value}", fg=typer.colors.GREEN)
 
     # Save config
     save_config(config_path, cfg)
@@ -236,7 +279,7 @@ def create(
     tier: RiskTier = typer.Option(..., "--tier", "-t", help="Risk tier (A/B/C)"),
     title: str = typer.Option(..., "--title", help="Spec title"),
     goal: str = typer.Option(..., "--goal", "-g", help="Objective (what are we building?)"),
-    owner: str = typer.Option(..., "--owner", help="GitHub username or team"),
+    owner: str | None = typer.Option(None, "--owner", help="GitHub username or team"),
     branch: str | None = typer.Option(None, "--branch", "-b", help="Working branch name"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
     yaml_mode: bool = typer.Option(False, "--yaml", help="Generate YAML directly (legacy mode)"),
@@ -246,6 +289,15 @@ def create(
     # Get config
     config_path, cfg = find_config()
     project_root = config_path.parent if config_path else Path.cwd()
+
+    # Get owner from config if not provided
+    if owner is None:
+        owner = cfg.get("user", {}).get("default_owner")
+        if owner is None:
+            typer.secho("Error: No owner specified", fg=typer.colors.RED, err=True)
+            typer.echo("  Use --owner flag or set default owner with: spec config user <username>", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Using default owner: {owner}")
 
     # Generate slug and branch
     slug = slugify(title)
@@ -356,7 +408,7 @@ def compile(
         current_spec = cfg.get("current", {}).get("spec")
         if not current_spec:
             typer.echo("Error: No spec path provided and no current spec set.", err=True)
-            typer.echo("  Run: spec set-current <path-to-spec.md>", err=True)
+            typer.echo("  Run: spec config current.spec <path-to-spec.md>", err=True)
             raise typer.Exit(1)
         spec_path = Path(current_spec)
         typer.echo(f"Using current spec: {spec_path}")
@@ -448,7 +500,7 @@ def validate(
             typer.echo(f"Using current AIP: {spec_path}")
         else:
             typer.echo("Error: No file path provided and no current spec/AIP set.", err=True)
-            typer.echo("  Run: spec set-current <path-to-file>", err=True)
+            typer.echo("  Run: spec config current.spec <path-to-file>", err=True)
             raise typer.Exit(1)
 
     if not spec_path.exists():
@@ -534,7 +586,7 @@ def run(
         if not current_aip:
             typer.echo("Error: No AIP path provided and no current AIP set.", err=True)
             typer.echo("  Run: spec compile  (to compile and set current AIP)", err=True)
-            typer.echo("  Or: spec set-current <path-to-aip.yaml>", err=True)
+            typer.echo("  Or: spec config current.aip <path-to-aip.yaml>", err=True)
             raise typer.Exit(1)
         aip_path = Path(current_aip)
         typer.echo(f"Using current AIP: {aip_path}\n")

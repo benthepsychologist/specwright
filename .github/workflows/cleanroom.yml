@@ -20,5 +20,8 @@ jobs:
           mkdir -p /tmp/test-spec
           cd /tmp/test-spec
           spec init
-          spec create --tier C --title "Test" --owner test --goal "Test install"
-          spec validate .specwright/specs/test.md
+          spec config user test
+          spec create --tier C --title "Test" --goal "Test install"
+          spec config current.spec .specwright/specs/test.md
+          spec compile
+          spec validate
