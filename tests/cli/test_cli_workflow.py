@@ -379,3 +379,133 @@ def test_compile_creates_output_directory(temp_project):
         assert (temp_project / ".specwright" / "aips").exists()
     finally:
         os.chdir(old_cwd)
+
+
+def test_validate_md_spec(temp_project):
+    """Test spec validate works on .md files."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Create MD spec
+        runner.invoke(app, [
+            "create",
+            "--tier", "C",
+            "--title", "Validate Test",
+            "--owner", "eve",
+            "--goal", "Test validation"
+        ])
+
+        # Validate MD file directly
+        result = runner.invoke(app, ["validate", ".specwright/specs/validate-test.md"])
+
+        assert result.exit_code == 0
+        assert "is valid" in result.stdout or "✓" in result.stdout
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_validate_yaml_aip(temp_project):
+    """Test spec validate works on compiled .yaml AIPs."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Create and compile
+        runner.invoke(app, [
+            "create",
+            "--tier", "C",
+            "--title", "YAML Validate",
+            "--owner", "frank",
+            "--goal", "Test YAML validation"
+        ])
+        runner.invoke(app, ["compile", ".specwright/specs/yaml-validate.md"])
+
+        # Validate compiled YAML
+        result = runner.invoke(app, ["validate", ".specwright/aips/yaml-validate.yaml"])
+
+        assert result.exit_code == 0
+        assert "is valid" in result.stdout or "✓" in result.stdout
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_validate_uses_current_spec(temp_project):
+    """Test spec validate uses current spec when no arg provided."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Create spec and set as current
+        runner.invoke(app, [
+            "create",
+            "--tier", "C",
+            "--title", "Current Validate",
+            "--owner", "grace",
+            "--goal", "Test current validation"
+        ])
+        runner.invoke(app, ["config", "current.spec", ".specwright/specs/current-validate.md"])
+
+        # Validate without arguments
+        result = runner.invoke(app, ["validate"])
+
+        assert result.exit_code == 0
+        assert "Using current spec" in result.stdout or "is valid" in result.stdout
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_validate_fails_on_invalid_spec(temp_project):
+    """Test spec validate fails on invalid spec."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Create an invalid spec with missing required fields
+        invalid_spec = temp_project / ".specwright" / "specs" / "invalid.md"
+        invalid_spec.parent.mkdir(parents=True, exist_ok=True)
+        invalid_spec.write_text("""---
+tier: C
+title: Invalid Spec
+---
+
+# Invalid Spec
+
+Missing owner and goal fields.
+""")
+
+        # Validate should fail
+        result = runner.invoke(app, ["validate", str(invalid_spec)])
+
+        assert result.exit_code == 1
+        output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
+        # The error output contains "Validating" and "failed"
+        assert "failed" in output.lower() or "missing" in output.lower()
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_run_fails_without_aip(temp_project):
+    """Test spec run fails when no AIP is set or provided."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Try to run without any AIP
+        result = runner.invoke(app, ["run"])
+
+        assert result.exit_code == 1
+        output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
+        assert "No AIP" in output or "not found" in output.lower()
+    finally:
+        os.chdir(old_cwd)

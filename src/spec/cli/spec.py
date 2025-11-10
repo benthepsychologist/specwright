@@ -181,8 +181,27 @@ def init(
     with open(config_path, "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
+    # Create .specwright directory and copy guide
+    spec_dir = Path.cwd() / ".specwright"
+    spec_dir.mkdir(exist_ok=True)
+
+    # Copy GUIDE.md to .specwright/
+    try:
+        from importlib.resources import files
+        package_files = files("spec")
+        guide_file = package_files / "templates" / "GUIDE.md"
+        if hasattr(guide_file, "read_text"):
+            guide_content = guide_file.read_text()  # type: ignore[attr-defined]
+            guide_dest = spec_dir / "GUIDE.md"
+            guide_dest.write_text(guide_content)
+            typer.echo(f"✓ Created {guide_dest}")
+    except Exception:
+        # Silently skip if guide not found (development mode)
+        pass
+
     typer.echo(f"✓ Created {config_path}")
     typer.echo("  You can now use spec commands from anywhere in this project")
+    typer.echo("  Read .specwright/GUIDE.md for help writing effective specs")
 
 
 @app.command()

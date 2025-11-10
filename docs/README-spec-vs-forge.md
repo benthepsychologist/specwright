@@ -1,6 +1,6 @@
-# Spec vs. Forge: Architectural Separation
+# Spec vs. Dogfold: Architectural Separation
 
-**TL;DR:** Spec is the meta-engineering orchestration layer. Forge is the Python builder. They're separate, complementary tools.
+**TL;DR:** Spec is the meta-engineering orchestration layer. Dogfold is the Python builder. They're separate, complementary tools.
 
 ---
 
@@ -23,7 +23,7 @@
                │ Build Instructions
                ▼
 ┌─────────────────────────────────────────┐
-│      BUILDERS (Forge, etc.)             │
+│      BUILDERS (Dogfold, etc.)             │
 │  Execute actual code generation,        │
 │  testing, deployment                    │
 │  Output: Running software               │
@@ -71,7 +71,7 @@
 
 ---
 
-## Forge: The Python Builder
+## Dogfold: The Python Builder
 
 **Purpose:** Build and deploy Python projects
 
@@ -109,7 +109,7 @@
 
 **Purpose:** Translate AIPs into builder-specific instructions
 
-**Example: Forge Adapter**
+**Example: Dogfold Adapter**
 
 **Input (AIP excerpt):**
 ```yaml
@@ -121,7 +121,7 @@ plan:
     output_artifacts: ["src/**/*.py", "tests/**/*.py"]
 ```
 
-**Output (Forge instructions):**
+**Output (Dogfold instructions):**
 ```json
 {
   "action": "generate_code",
@@ -156,16 +156,16 @@ plan:
 
 ### 1. Single Responsibility
 - **Spec:** Orchestration, governance, workflow
-- **Forge:** Code generation, testing, building
+- **Dogfold:** Code generation, testing, building
 
 ### 2. Technology Independence
 - Spec can orchestrate any builder (Python, JS, Go, Rust)
-- Forge can be used standalone or via Spec
+- Dogfold can be used standalone or via Spec
 - Adapters handle impedance matching
 
 ### 3. Evolution Speed
 - Spec evolves with methodology (Agentsway, governance)
-- Forge evolves with Python ecosystem (tools, frameworks)
+- Dogfold evolves with Python ecosystem (tools, frameworks)
 - Decoupled release cycles
 
 ### 4. Composition
@@ -174,14 +174,14 @@ plan:
 
 ### 5. Testing & Validation
 - Spec tested for orchestration correctness
-- Forge tested for build quality
+- Dogfold tested for build quality
 - Clear boundaries = easier testing
 
 ---
 
 ## Interaction Patterns
 
-### Pattern 1: Spec Orchestrates Forge
+### Pattern 1: Spec Orchestrates Dogfold
 
 **User workflow:**
 ```bash
@@ -194,7 +194,7 @@ vim aip.yaml
 # Validate AIP
 spec validate aip.yaml
 
-# Run AIP (Spec orchestrates, calls Forge via adapter)
+# Run AIP (Spec orchestrates, calls Dogfold via adapter)
 spec run aip.yaml
 ```
 
@@ -205,25 +205,25 @@ spec run aip.yaml
 4. Spec executes step 2: Gate (human approval)
 5. Spec executes step 3: Implementation (agent)
    - Spec calls ForgeAdapter with step details
-   - ForgeAdapter translates to Forge instructions
-   - Forge generates code, runs tests
-   - Forge returns results to adapter
+   - ForgeAdapter translates to Dogfold instructions
+   - Dogfold generates code, runs tests
+   - Dogfold returns results to adapter
    - Adapter returns results to Spec
 6. Spec logs results, updates state
 7. Spec executes step 4: Testing (agent)
    - Similar flow via adapter
 8. Spec marks AIP as succeeded
 
-### Pattern 2: Forge Standalone
+### Pattern 2: Dogfold Standalone
 
 **User workflow:**
 ```bash
-# Use Forge directly without Spec
-forge init my-project --template fastapi
+# Use Dogfold directly without Spec
+Dogfold init my-project --template fastapi
 cd my-project
-forge generate model User
-forge test
-forge build
+Dogfold generate model User
+Dogfold test
+Dogfold build
 ```
 
 **Use case:** Developers who want a Python builder without full orchestration
@@ -235,9 +235,9 @@ forge build
 # Use Spec for high-risk work (orchestration)
 spec run production-deploy.yaml
 
-# Use Forge standalone for quick iteration
-forge generate endpoint /api/search
-forge test tests/test_search.py
+# Use Dogfold standalone for quick iteration
+Dogfold generate endpoint /api/search
+Dogfold test tests/test_search.py
 ```
 
 ---
@@ -252,7 +252,7 @@ forge test tests/test_search.py
 - ✅ Budget tracking and cost control
 - ✅ Team collaboration with approvals
 
-### Use Forge When:
+### Use Dogfold When:
 - ✅ Building Python projects (standalone)
 - ✅ Quick prototypes or experiments
 - ✅ Local development iteration
@@ -276,7 +276,7 @@ metadata:
 plan:
   - type: "agent"
     name: "Backend API"
-    builder: "forge"  # Use Forge for Python
+    builder: "Dogfold"  # Use Dogfold for Python
     output_artifacts: ["backend/src/**/*.py"]
   
   - type: "agent"
@@ -300,7 +300,7 @@ Spec orchestrates all three builders via their respective adapters.
 
 ## Summary
 
-| Aspect | Spec | Forge |
+| Aspect | Spec | Dogfold |
 |--------|------|-------|
 | **Purpose** | Orchestration | Building |
 | **Input** | User intent, methodology | Build instructions |
@@ -310,6 +310,6 @@ Spec orchestrates all three builders via their respective adapters.
 | **Standalone?** | Yes (orchestrates others) | Yes (can be used alone) |
 | **Integration** | Via adapters | Via CLI or API |
 
-**Key insight:** Spec doesn't build software—it creates and orchestrates the plans for building software. Forge (and other builders) do the actual building.
+**Key insight:** Spec doesn't build software—it creates and orchestrates the plans for building software. Dogfold (and other builders) do the actual building.
 
-This separation allows Spec to be language-agnostic while Forge specializes in Python excellence.
+This separation allows Spec to be language-agnostic while Dogfold specializes in Python excellence.
