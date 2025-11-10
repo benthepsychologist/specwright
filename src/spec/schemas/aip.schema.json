@@ -478,6 +478,43 @@
             "required": ["amount", "currency"],
             "additionalProperties": false,
             "description": "Maximum cost for this step"
+          },
+          "gate_ref": {
+            "type": "string",
+            "description": "Gate reference from step title (e.g., 'G0: Plan Approval')"
+          },
+          "gate_review": {
+            "type": "object",
+            "properties": {
+              "checklist": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "description": "Review checklist organized by categories"
+              },
+              "approval_metadata": {
+                "type": "object",
+                "properties": {
+                  "reviewer": { "type": "string" },
+                  "date": { "type": "string" },
+                  "rationale": { "type": "string" },
+                  "decision": {
+                    "enum": ["approved", "rejected", "deferred", "conditional"],
+                    "description": "Gate approval decision"
+                  },
+                  "conditions": { "type": "string" },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false,
+            "description": "Gate review checklist and approval metadata"
           }
         },
         "additionalProperties": false

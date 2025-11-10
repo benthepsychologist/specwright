@@ -118,7 +118,8 @@ class SpecParser:
                 "gate_ref": gate_ref,
                 "prompts": self._extract_prompts(step_body),
                 "commands": self._extract_commands(step_body),
-                "outputs": self._extract_outputs(step_body)
+                "outputs": self._extract_outputs(step_body),
+                "gate_review": self._extract_gate_review(step_body)
             }
 
             steps.append(step)
@@ -195,6 +196,77 @@ class SpecParser:
                     outputs.append(path)
 
         return outputs
+
+    def _extract_gate_review(self, text: str) -> dict[str, Any] | None:
+        """Extract gate review block from step body.
+
+        Returns:
+            Dict with gate review metadata or None if no gate block found
+            Structure:
+            {
+                "checklist": {
+                    "Category Name": ["item1", "item2", ...],
+                    ...
+                },
+                "approval_metadata": {
+                    "reviewer": "",
+                    "date": "",
+                    "rationale": ""
+                }
+            }
+        """
+        # Find gate review block
+        gate_start = text.find('<!-- GATE_REVIEW_START -->')
+        gate_end = text.find('<!-- GATE_REVIEW_END -->')
+
+        if gate_start == -1 or gate_end == -1:
+            return None
+
+        gate_content = text[gate_start:gate_end + len('<!-- GATE_REVIEW_END -->')].strip()
+
+        # Parse checklist items
+        checklist: dict[str, list[str]] = {}
+        current_category = None
+
+        # Extract checklist section
+        checklist_match = re.search(
+            r'#### Gate Review Checklist\s+(.*?)#### Approval Decision',
+            gate_content,
+            re.DOTALL
+        )
+
+        if checklist_match:
+            checklist_text = checklist_match.group(1)
+
+            # Parse categories and items
+            category_pattern = re.compile(r'^#{5}\s+(.+)$', re.MULTILINE)
+            item_pattern = re.compile(r'^-\s+\[\s?\]\s+(.+)$', re.MULTILINE)
+
+            lines = checklist_text.split('\n')
+            for line in lines:
+                # Check for category header
+                cat_match = category_pattern.match(line)
+                if cat_match:
+                    current_category = cat_match.group(1).strip()
+                    checklist[current_category] = []
+                    continue
+
+                # Check for checklist item
+                item_match = item_pattern.match(line)
+                if item_match and current_category:
+                    checklist[current_category].append(item_match.group(1).strip())
+
+        # Parse approval metadata structure
+        approval_metadata = {
+            "reviewer": "",
+            "date": "",
+            "rationale": ""
+        }
+
+        return {
+            "checklist": checklist,
+            "approval_metadata": approval_metadata
+        }
 
     def _parse_acceptance_criteria(self) -> list[dict[str, str]]:
         """Parse acceptance criteria checkboxes."""
@@ -275,6 +347,14 @@ class SpecParser:
             if step.get("commands"):
                 # Commands aren't in the schema, so we'll add them as a prompt note
                 pass
+
+            # Add gate review if present
+            if step.get("gate_review"):
+                schema_step["gate_review"] = step["gate_review"]
+
+            # Add gate_ref if present
+            if step.get("gate_ref"):
+                schema_step["gate_ref"] = step["gate_ref"]
 
             schema_steps.append(schema_step)
 
