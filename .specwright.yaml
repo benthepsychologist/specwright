@@ -6,3 +6,6 @@ paths:
   schemas: config/schemas
 repo:
   default_branch: main
+current:
+  spec: specs/upgrade-to-include-hitl-steps-and-auditsignoff-interactive-console.md
+  aip: null
