@@ -65,7 +65,7 @@ Specwright is part of a larger experimental toolchain:
 
 | Tool | Purpose | Status |
 |------|---------|--------|
-| **Specwright** | Defines AIPs, enforces governance | Alpha (v0.3.0) |
+| **Specwright** | Defines AIPs, enforces governance | Alpha (v0.5.0) |
 | **Dogfold** | Recursive Python scaffolding | Experimental |
 | **Gorch** | Google Cloud orchestration | Future |
 | **LifeOS** | Personal operating system | Future |
@@ -624,13 +624,18 @@ This is meta-engineering: **tools that build the builders, then build the world.
 
 ## 🚀 Roadmap
 
-### v0.3.0 (Current)
+### v0.5.0 (Current)
 - ✅ Markdown-first authoring with Jinja2 templates
 - ✅ Deterministic compilation with source hash tracking
-- ✅ Token-based Markdown parsing
+- ✅ Token-based Markdown parsing with gate review blocks
 - ✅ Round-trip validation and diff detection
 - ✅ Tier-specific governance with 5-gate model
 - ✅ Schema validation with defaults merging
+- ✅ Interactive gate approvals with questionary + rich
+- ✅ HITL gate checkpoints with approval workflows
+- ✅ Full audit trail logging (JSONL format)
+- ✅ Gate management commands (gate-list, gate-report)
+- ✅ Validation checkpoints alongside formal gate reviews
 
 ### v0.4.0 (Next Quarter)
 - [ ] Rename to `specwright` package

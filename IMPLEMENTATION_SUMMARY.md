@@ -192,11 +192,17 @@ spec gate-report
 - `src/spec/audit/logger.py` - Gate audit logger
 - `specs/upgrade-to-include-hitl-steps-and-auditsignoff-interactive-console.md` - Reference spec
 
-### Modified Files
+### Modified Files (Phases 1-4)
 - `pyproject.toml` - Added questionary and rich dependencies
 - `src/spec/compiler/parser.py` - Gate review parsing
 - `src/spec/schemas/aip.schema.json` - Gate metadata schema
 - `src/spec/cli/spec.py` - Enhanced run command, gate commands
+
+### Modified Files (Phase 7)
+- `src/spec/templates/tier-a-template.md` - Added validation checkpoints to all steps
+- `src/spec/templates/tier-b-template.md` - Added validation checkpoints to all steps
+- `src/spec/templates/GUIDE.md` - Added gate structure clarifications and validation vs gate review section
+- `IMPLEMENTATION_SUMMARY.md` - Documented clarifications
 
 ## Issue Requirements Coverage
 
@@ -272,6 +278,38 @@ spec gate-report
 4. **Phase 4: Audit & Management** (e4b7bae)
    - Logging system, gate commands
 
+## Phase 7: Clarifications & Validation Checkpoints
+
+After user feedback about gate structure, clarifications were added:
+
+✅ **Added Validation Checkpoints** to all templates
+- Lightweight automated checks before gate review
+- Examples: "All commands pass", "Coverage ≥85%", "Artifacts generated"
+- Added to `**Validation:**` section in all Tier A/B steps
+- Distinction: Validation = automated, Gate Review = human approval
+
+✅ **Updated Documentation** ([GUIDE.md](src/spec/templates/GUIDE.md))
+- Added "Understanding Gate Structure" explaining dual representation:
+  - **Markdown Format**: Human-authored with embedded gate blocks
+  - **YAML Format**: Compiled with separate `type: "gate"` items
+- Added "Validation Checkpoints vs Gate Reviews" section
+- Updated template example to include validation section
+
+✅ **Verified Compiler Behavior**
+- Tested compilation with gate blocks and validation sections
+- Confirmed gate blocks correctly parse to `gate_review` structure
+- Confirmed `gate_ref` extracted from step titles
+- Validation sections remain in markdown (informational, not structured data)
+
+**Test Results:**
+```bash
+$ spec compile /tmp/test-gate-compile.md
+✓ Compiled successfully
+✓ gate_ref: 'G0: Plan Approval'
+✓ gate_review.checklist: { Planning Quality: [...] }
+✓ gate_review.approval_metadata: { reviewer, date, rationale }
+```
+
 ## Conclusion
 
 The HITL gate approval system is fully implemented and functional. All core features are working:
@@ -279,5 +317,7 @@ The HITL gate approval system is fully implemented and functional. All core feat
 - Tier-specific approval workflows
 - Full audit trail logging
 - Management commands for approval tracking
+- Lightweight validation checkpoints alongside formal gate reviews
+- Clear documentation explaining gate structure (Markdown vs YAML)
 
-The system is ready for testing and documentation updates.
+The system is ready for comprehensive testing.

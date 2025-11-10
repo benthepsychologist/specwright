@@ -1,5 +1,15 @@
 # Getting Started with Spec
 
+> **⚠️ Note**: This guide is outdated and reflects the old YAML-first workflow.
+>
+> **For the current Markdown-first workflow with interactive gate approvals, see:**
+> - **[README.md](../README.md)** - Quick start and current workflow (v0.5.0)
+> - **[GUIDE.md](../src/spec/templates/GUIDE.md)** - Template authoring guide with gate syntax
+>
+> This document will be updated to reflect the v0.5.0 workflow in a future release.
+
+---
+
 This guide walks you through creating and running your first Agentic Implementation Plan (AIP).
 
 ---

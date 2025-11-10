@@ -15,6 +15,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integration with Dogfold scaffolding
 - Full Gorch orchestration integration
 
+## [0.5.0] - 2025-11-10
+
+### Added - Interactive HITL Gate Approvals
+- **Interactive gate approval UI**: Beautiful CLI with questionary + rich for gate checkpoints
+- **`spec run`**: Now supports interactive gate approval workflows with tier-specific behavior
+  - Tier A/B: Blocking gates with human approval required
+  - Tier C: Auto-approve gates with audit logging
+- **`spec gate-list`**: List all gate approvals from audit trail
+- **`spec gate-report`**: Generate summary statistics of gate approvals by decision type
+- **Gate audit logging**: Full JSONL audit trail at `.aip_artifacts/{AIP_ID}/gate_approvals.jsonl`
+- **Gate review blocks**: HTML comment-based syntax for embedding gate checklists in Markdown specs
+- **Validation checkpoints**: Lightweight automated checks alongside formal gate reviews
+- **Approval decisions**: Support for Approved/Rejected/Deferred/Conditional with metadata capture
+
+### Changed - Gate Structure and Documentation
+- **Enhanced Tier A/B templates**: Added validation checkpoints and comprehensive gate review blocks to all steps
+- **GUIDE.md**: Added "Understanding Gate Structure" and "Validation Checkpoints vs Gate Reviews" sections
+- **Parser**: Extended to extract gate review blocks from Markdown and compile to YAML
+- **Schema**: Added `gate_ref` and `gate_review` fields to step schema
+- **Interactive CLI**: Gate checkpoints display with tier-specific styling and color-coded decisions
+
+### Fixed
+- Gate review parsing now handles multi-category checklists correctly
+- Approval metadata structure validated against schema
+- Step compilation preserves gate references from step titles
+
+### Documentation
+- Added comprehensive gate approval documentation to GUIDE.md
+- Updated IMPLEMENTATION_SUMMARY.md with Phase 7 clarifications
+- Clarified dual representation of gates (Markdown vs YAML formats)
+- Added examples of validation checkpoints vs formal gate reviews
+
 ## [0.4.0] - 2025-11-08
 
 ### Added
@@ -102,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.4.0
 [0.3.2]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.2
 [0.3.1]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.1

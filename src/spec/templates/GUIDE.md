@@ -247,13 +247,21 @@ ruff check src/
 
 For Tier A and B specs, you can add detailed review checklists to gate steps. These checklists are displayed interactively during `spec run` and require approval before proceeding.
 
+**Understanding Gate Structure:**
+
+Gates exist in TWO representations:
+1. **Markdown Format (Human-Authored)**: Gate review blocks embedded in steps using HTML comment markers
+2. **YAML Format (Compiled)**: Separate gate items with `type: "gate"` in the compiled AIP
+
+Both represent the same validation checkpoints - the markdown format is for humans to write, the YAML format is for machines to execute.
+
 **When to Add Gate Reviews:**
 - **Always for Tier A/B**: Add gate review blocks to steps with gate references (`[G0: ...]`, `[G1: ...]`, etc.)
 - **Optional for Tier C**: Can be added but will auto-approve
 
 **Where to Place:**
-- After `**Outputs:**` section in each step
-- Before the `---` separator (if present)
+- After `**Validation:**` section (or after `**Outputs:**` if no validation section)
+- Before the next step header
 - Must be within the step content (between step headers)
 
 **Exact Format (Copy This Template):**
@@ -267,6 +275,13 @@ Your step prompt here...
 ```bash
 commands here
 ```
+
+**Validation:**
+
+Before proceeding to G0 gate review, verify:
+- ✓ All commands pass without errors
+- ✓ All output artifacts generated
+- ✓ No blocked paths modified
 
 **Outputs:**
 - `file1.py`
@@ -307,6 +322,47 @@ commands here
 3. **Checkbox Format**: Must be `- [ ]` with a space between brackets
 4. **Section Order**: Checklist categories first, then Approval Decision, then Approval Metadata
 5. **No Extra Content**: Don't add text between sections or modify the structure
+
+**Validation Checkpoints vs Gate Reviews:**
+
+Understanding the difference between lightweight validation and formal gate approval:
+
+**Validation Checkpoints** (Automated, Lightweight):
+- Run DURING step execution
+- Automated checks: tests pass, files generated, commands succeed
+- No human approval required
+- Examples: "Run pytest -q", "Check coverage ≥85%", "Verify artifact created"
+- Used in `**Validation:**` section
+
+**Gate Reviews** (Human Approval, Formal):
+- Run AFTER step completion
+- Requires human review and approval
+- Interactive checklist completion
+- Examples: "Architecture sound", "Security review complete", "QA sign-off obtained"
+- Used in `<!-- GATE_REVIEW_START -->` block
+
+**Both work together:**
+```markdown
+**Commands:**
+```bash
+pytest -q
+```
+
+**Validation:** ← Automated checks (no approval)
+- ✓ Tests pass
+- ✓ Coverage ≥85%
+
+**Outputs:**
+- artifacts/code.py
+
+<!-- GATE_REVIEW_START --> ← Human approval required
+#### Gate Review Checklist
+##### Code Quality
+- [ ] Code follows standards
+- [ ] Security review complete
+...
+<!-- GATE_REVIEW_END -->
+```
 
 **Common Gate Checklist Categories:**
 
