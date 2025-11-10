@@ -124,7 +124,8 @@ def get_default_config() -> dict:
             "default_branch": "main"
         },
         "user": {
-            "default_owner": None  # Default owner for new specs
+            "default_owner": None,  # Default owner for new specs
+            "default_tier": None    # Default tier (A/B/C) for new specs
         },
         "current": {
             "spec": None,  # Path to current working .md spec
@@ -228,6 +229,7 @@ def config(
 
     Examples:
         spec config user myusername          # Set default owner
+        spec config tier C                   # Set default tier
         spec config current.spec path.md     # Set current working spec
         spec config current.aip path.yaml    # Set current working AIP
         spec config --show                   # Show current config
@@ -256,9 +258,16 @@ def config(
     # Handle nested keys (e.g., "current.spec")
     parts = key.split('.')
 
-    # Shorthand: "user" -> "user.default_owner"
+    # Shorthands for convenience
     if parts == ["user"]:
         parts = ["user", "default_owner"]
+    elif parts == ["tier"]:
+        parts = ["user", "default_tier"]
+        # Validate tier value
+        if value.upper() not in ["A", "B", "C"]:
+            typer.echo(f"Error: Invalid tier '{value}'. Must be A, B, or C.", err=True)
+            raise typer.Exit(1)
+        value = value.upper()  # Normalize to uppercase
 
     # Navigate to the correct nested dict
     current = cfg
@@ -296,7 +305,7 @@ def config(
 @app.command()
 def create(
     title: str = typer.Argument(..., help="Spec title"),
-    tier: RiskTier = typer.Option(..., "--tier", "-t", help="Risk tier (A/B/C)"),
+    tier: RiskTier | None = typer.Option(None, "--tier", "-t", help="Risk tier (A/B/C)"),
     goal: str | None = typer.Option(None, "--goal", "-g", help="Objective (what are we building?)"),
     owner: str | None = typer.Option(None, "--owner", help="GitHub username or team"),
     branch: str | None = typer.Option(None, "--branch", "-b", help="Working branch name"),
@@ -307,13 +316,25 @@ def create(
     """Create a new spec from template (Markdown by default, YAML with --yaml flag).
 
     Examples:
+        spec create "Add User Avatars"                    # Uses defaults
         spec create "Add User Avatars" --tier C --goal "Allow profile pictures"
-        spec create "Refactor Auth" --tier C --set-current
+        spec create "Refactor Auth" --set-current
     """
 
     # Get config
     config_path, cfg = find_config()
     project_root = config_path.parent if config_path else Path.cwd()
+
+    # Get tier from config if not provided
+    if tier is None:
+        default_tier_str = cfg.get("user", {}).get("default_tier")
+        if default_tier_str:
+            tier = RiskTier(default_tier_str)
+            typer.echo(f"Using default tier: {tier.value}")
+        else:
+            typer.secho("Error: No tier specified", fg=typer.colors.RED, err=True)
+            typer.echo("  Use --tier flag or set default tier with: spec config tier <A|B|C>", err=True)
+            raise typer.Exit(1)
 
     # Get owner from config if not provided
     if owner is None:
