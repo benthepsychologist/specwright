@@ -637,8 +637,18 @@ def validate(
 def run(
     aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
     step: int | None = typer.Option(None, "--step", "-s", help="Run specific step number (1-based)"),
+    skip_gates: bool = typer.Option(False, "--skip-gates", help="Skip gate approvals (governance override)"),
 ):
-    """Run an AIP in guided execution mode."""
+    """Run an AIP in guided execution mode with gate approvals."""
+    from spec.cli.interactive import (
+        display_gate_checkpoint,
+        show_gate_checklist,
+        prompt_checklist_completion,
+        prompt_approval_decision,
+        display_step_details,
+        display_approval_summary,
+        confirm_gate_override
+    )
 
     # Get config
     config_path, cfg = find_config()
@@ -662,10 +672,13 @@ def run(
     with open(aip_path) as f:
         aip = yaml.safe_load(f)
 
+    # Get tier for gate behavior
+    tier = aip.get("tier", "C")
+
     # Display AIP info with acceptance criteria
     typer.echo(f"\n{'='*70}")
     typer.secho(f"AIP: {aip.get('title', 'Untitled')}", bold=True)
-    typer.echo(f"Tier: {aip.get('tier', 'unknown')}")
+    typer.echo(f"Tier: {tier}")
     typer.echo(f"{'='*70}")
 
     # Display objective
@@ -680,6 +693,12 @@ def run(
             typer.echo(f"  {i}. {criterion}")
 
     typer.echo(f"\n{'='*70}\n")
+
+    # Handle skip-gates for Tier A/B
+    if skip_gates and tier in ["A", "B"]:
+        if not confirm_gate_override(tier):
+            typer.echo("Aborting execution.", err=True)
+            raise typer.Exit(1)
 
     # Get plan
     plan = aip.get("plan", [])
@@ -703,28 +722,17 @@ def run(
         step_id = step_def.get("step_id", "unknown")
         step_role = step_def.get("role", "unknown")
         step_desc = step_def.get("description", "")
+        gate_ref = step_def.get("gate_ref")
+        gate_review = step_def.get("gate_review")
 
         typer.secho(f"\n▶ Step {step_num}/{len(plan)}: {step_desc}", fg=typer.colors.CYAN, bold=True)
         typer.echo(f"  ID: {step_id}")
         typer.echo(f"  Role: {step_role}")
+        if gate_ref:
+            typer.echo(f"  Gate: {gate_ref}")
 
-        # Show prompt if present
-        if step_def.get("prompt"):
-            typer.echo(f"\n  📝 Prompt:")
-            for line in step_def['prompt'].split('\n'):
-                typer.echo(f"     {line}")
-
-        # Show commands if present
-        if step_def.get("commands"):
-            typer.echo(f"\n  🔧 Commands:")
-            for cmd in step_def["commands"]:
-                typer.echo(f"     $ {cmd}")
-
-        # Show outputs if present
-        if step_def.get("outputs"):
-            typer.echo(f"\n  📦 Expected outputs:")
-            for out in step_def["outputs"]:
-                typer.echo(f"     - {out}")
+        # Show step details using rich formatting
+        display_step_details(step_def)
 
         # Ask if step is complete - STOP if not complete
         typer.echo()
@@ -735,7 +743,55 @@ def run(
             typer.echo(f"\n  Resume later with: spec run --step {step_num}")
             raise typer.Exit(0)  # Exit without error
 
-    typer.echo(f"{'='*60}")
+        # Handle gate review if present
+        if gate_review and not skip_gates:
+            checklist = gate_review.get("checklist", {})
+
+            # Tier-specific gate behavior
+            if tier == "C":
+                # Tier C: Auto-approve (log only)
+                typer.echo(f"\n📝 [Tier C] Gate auto-approved (checklist logged)")
+                # TODO: Log to audit trail
+            elif tier in ["A", "B"]:
+                # Tier A/B: Require interactive approval
+                display_gate_checkpoint(gate_ref or "Gate", step_desc, tier)
+
+                if checklist:
+                    show_gate_checklist(checklist)
+                    typer.echo()
+
+                    # Interactive checklist completion
+                    completed_items = prompt_checklist_completion(checklist)
+
+                # Prompt for approval decision
+                approval = prompt_approval_decision()
+
+                if approval.get("decision") == "cancelled":
+                    typer.secho("\n⚠️  Gate approval cancelled. Stopping execution.", fg=typer.colors.YELLOW)
+                    raise typer.Exit(0)
+
+                display_approval_summary(approval)
+
+                # Handle decision
+                if approval["decision"] == "rejected":
+                    typer.secho("\n❌ Gate REJECTED. Execution halted.", fg=typer.colors.RED, bold=True)
+                    typer.echo(f"   Reason: {approval.get('rationale', 'No reason provided')}")
+                    raise typer.Exit(1)
+                elif approval["decision"] == "deferred":
+                    typer.secho("\n⏸️  Gate DEFERRED. Execution paused for review.", fg=typer.colors.YELLOW)
+                    typer.echo(f"\n  Resume later with: spec run --step {step_num + 1}")
+                    raise typer.Exit(0)
+                elif approval["decision"] in ["approved", "conditional"]:
+                    if approval["decision"] == "conditional":
+                        typer.secho(f"\n⚠️  Gate CONDITIONALLY APPROVED", fg=typer.colors.YELLOW)
+                        typer.echo(f"   Conditions: {approval.get('conditions', '')}")
+                    else:
+                        typer.secho(f"\n✅ Gate APPROVED", fg=typer.colors.GREEN)
+                    typer.echo(f"   Proceeding to next step...")
+
+                # TODO: Log approval to audit trail
+
+    typer.echo(f"\n{'='*60}")
     typer.echo("✓ AIP execution complete")
     typer.echo(f"{'='*60}\n")
 
