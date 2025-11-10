@@ -148,25 +148,100 @@ def test_config_displays_loaded_config(temp_project):
         os.chdir(temp_project)
         runner.invoke(app, ["init"])
 
-        result = runner.invoke(app, ["config"])
+        result = runner.invoke(app, ["config", "--show"])
         assert result.exit_code == 0
-        assert "Config loaded from:" in result.stdout
+        assert "Current configuration:" in result.stdout
         assert "version:" in result.stdout
+        assert "user:" in result.stdout
+        assert "default_owner:" in result.stdout
     finally:
         os.chdir(old_cwd)
 
 
 def test_config_shows_defaults_when_no_config(temp_project):
-    """Test spec config shows defaults when no config file exists."""
+    """Test spec config shows error when no config file exists."""
     import os
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
 
-        result = runner.invoke(app, ["config"])
+        result = runner.invoke(app, ["config", "--show"])
+        assert result.exit_code == 1
+        # Error messages go to stderr, but typer.testing combines them into output
+        output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
+        assert "No .specwright.yaml found" in output
+        assert "spec init" in output
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_config_set_user(temp_project):
+    """Test spec config user sets default owner."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        result = runner.invoke(app, ["config", "user", "testuser"])
         assert result.exit_code == 0
-        assert "No .specwright.yaml found" in result.stdout
-        assert "version:" in result.stdout
+        assert "Set user: testuser" in result.stdout
+
+        # Verify it's in the config
+        result = runner.invoke(app, ["config", "--show"])
+        assert "default_owner: testuser" in result.stdout
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_create_without_owner_uses_default(temp_project):
+    """Test spec create uses default owner from config."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+        runner.invoke(app, ["config", "user", "defaultuser"])
+
+        # Create without --owner flag
+        result = runner.invoke(app, [
+            "create",
+            "--tier", "C",
+            "--title", "Test Feature",
+            "--goal", "Test default owner"
+        ])
+        assert result.exit_code == 0
+        assert "Using default owner: defaultuser" in result.stdout
+
+        # Verify owner is set in the created file
+        spec_path = temp_project / ".specwright/specs/test-feature.md"
+        assert spec_path.exists()
+        content = spec_path.read_text()
+        assert "owner: defaultuser" in content
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_create_without_owner_fails_when_no_default(temp_project):
+    """Test spec create fails when no owner provided and no default set."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init"])
+
+        # Try to create without --owner and no default
+        result = runner.invoke(app, [
+            "create",
+            "--tier", "C",
+            "--title", "Test Feature",
+            "--goal", "Test error handling"
+        ])
+        assert result.exit_code == 1
+        # Error messages go to stderr, but typer.testing combines them into output
+        output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
+        assert "No owner specified" in output
+        assert "spec config user" in output
     finally:
         os.chdir(old_cwd)
 
