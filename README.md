@@ -43,8 +43,12 @@ spec compile specs/add-oauth-login.md
 # Validate the compiled AIP
 spec validate aips/add-oauth-login.yaml
 
-# Execute the plan in guided mode
+# Execute the plan in guided mode with interactive gate approvals
 spec run aips/add-oauth-login.yaml
+
+# View gate approvals
+spec gate-list          # List all approvals
+spec gate-report        # Summary statistics
 ```
 
 **Power users:** Use `--yaml` flag to generate YAML directly:
@@ -190,21 +194,52 @@ spec validate aips/AIP-2025-10-31-001.yaml
 
 ### `spec run`
 
-Execute an AIP in guided checklist mode (v0.1).
+Execute an AIP in guided mode with interactive gate approvals.
 
 ```bash
-# Interactive execution
-spec run specs/my-feature.compiled.yaml
+# Interactive execution with gate approvals
+spec run
 
-# Preview mode (no execution)
-spec run specs/my-feature.compiled.yaml --plan
+# Run specific step
+spec run --step 3
+
+# Override gates (with warning)
+spec run --skip-gates
 ```
 
-**What it does** (v0.1):
+**What it does**:
 - Displays each step with role, prompts, commands, outputs
-- Prompts for manual completion confirmation
-- Shows gate checkpoints
-- (Future: actual agent execution, state persistence, automated gates)
+- Shows interactive gate checkpoints with checklists (Tier A/B)
+- Prompts for approval decisions (Approve/Reject/Defer/Conditional)
+- Logs all approvals to audit trail (`.aip_artifacts/{AIP_ID}/gate_approvals.jsonl`)
+- Blocks execution on rejection or deferral
+- Tier C gates auto-approve with logging
+
+**Approval Decisions**:
+- **Approved** ✅ - Proceed to next step
+- **Rejected** ❌ - Halt execution with rationale
+- **Deferred** ⏸️ - Pause for review (resume with `--step`)
+- **Conditional** ⚠️ - Approve with conditions
+
+### `spec gate-list`
+
+List all gate approvals from audit trail.
+
+```bash
+spec gate-list
+```
+
+Shows: step ID, gate ref, decision, reviewer, timestamp, rationale, conditions
+
+### `spec gate-report`
+
+Generate summary statistics of gate approvals.
+
+```bash
+spec gate-report
+```
+
+Shows: total approvals, breakdown by decision type, per-gate statistics
 
 ### `spec diff`
 

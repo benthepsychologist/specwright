@@ -243,6 +243,65 @@ ruff check src/
   - **G3: Pre-Release** - Testing complete
   - **G4: Final Approval** - Ready to deploy
 
+#### Gate Review Checklists (Tier A/B)
+
+For Tier A and B specs, you can add detailed review checklists to gate steps. These checklists are displayed interactively during `spec run` and require approval before proceeding.
+
+**Format:**
+```markdown
+### Step N: Step Title [G0: Plan Approval]
+
+**Prompt:**
+...
+
+**Outputs:**
+...
+
+<!-- GATE_REVIEW_START -->
+#### Gate Review Checklist
+
+##### Architecture Review
+- [ ] Work breakdown structure is complete and accurate
+- [ ] File touch map identifies all affected components
+- [ ] Dependencies and interfaces are clearly defined
+- [ ] No circular dependencies introduced
+
+##### Risk Assessment
+- [ ] Risk analysis completed for proposed changes
+- [ ] Mitigation strategies identified
+- [ ] Rollback plan documented
+
+#### Approval Decision
+- [ ] APPROVED
+- [ ] APPROVED WITH CONDITIONS: ___
+- [ ] REJECTED: ___
+- [ ] DEFERRED: ___
+
+**Approval Metadata:**
+- Reviewer: ___
+- Date: ___
+- Rationale: ___
+<!-- GATE_REVIEW_END -->
+```
+
+**How It Works:**
+1. During `spec run`, when a step with a gate is reached
+2. The checklist is displayed interactively
+3. Reviewer checks off completed items
+4. Reviewer makes approval decision (Approve/Reject/Defer/Conditional)
+5. Decision is logged to audit trail (`.aip_artifacts/{AIP_ID}/gate_approvals.jsonl`)
+6. Execution continues, pauses, or stops based on decision
+
+**Tier-Specific Behavior:**
+- **Tier A/B**: Gates are blocking - execution halts until approved
+- **Tier C**: Gates are auto-approved with logging only
+
+**View Gate Approvals:**
+```bash
+spec gate-list          # List all approvals
+spec gate-report        # Summary statistics
+```
+
 ## Acceptance Criteria
 
 Write specific, measurable criteria:
