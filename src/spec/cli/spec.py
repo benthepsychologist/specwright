@@ -649,6 +649,7 @@ def run(
         display_approval_summary,
         confirm_gate_override
     )
+    from spec.audit import GateAuditLogger
 
     # Get config
     config_path, cfg = find_config()
@@ -674,6 +675,11 @@ def run(
 
     # Get tier for gate behavior
     tier = aip.get("tier", "C")
+
+    # Initialize audit logger
+    aip_id = aip.get("aip_id", "unknown")
+    artifacts_dir = aip.get("orchestrator_contract", {}).get("artifacts_dir", f".aip_artifacts/{aip_id}")
+    audit_logger = GateAuditLogger(aip_id, artifacts_dir)
 
     # Display AIP info with acceptance criteria
     typer.echo(f"\n{'='*70}")
@@ -751,7 +757,14 @@ def run(
             if tier == "C":
                 # Tier C: Auto-approve (log only)
                 typer.echo(f"\n📝 [Tier C] Gate auto-approved (checklist logged)")
-                # TODO: Log to audit trail
+                audit_logger.log_approval(
+                    step_id=step_id,
+                    gate_ref=gate_ref or "unknown",
+                    decision="approved",
+                    reviewer="system",
+                    rationale="Tier C auto-approval",
+                    completed_checklist=checklist
+                )
             elif tier in ["A", "B"]:
                 # Tier A/B: Require interactive approval
                 display_gate_checkpoint(gate_ref or "Gate", step_desc, tier)
@@ -772,6 +785,18 @@ def run(
 
                 display_approval_summary(approval)
 
+                # Log approval to audit trail
+                audit_logger.log_approval(
+                    step_id=step_id,
+                    gate_ref=gate_ref or "unknown",
+                    decision=approval["decision"],
+                    reviewer=approval["reviewer"],
+                    rationale=approval.get("rationale", ""),
+                    conditions=approval.get("conditions", ""),
+                    completed_checklist=completed_items,
+                    metadata={"timestamp": approval.get("timestamp")}
+                )
+
                 # Handle decision
                 if approval["decision"] == "rejected":
                     typer.secho("\n❌ Gate REJECTED. Execution halted.", fg=typer.colors.RED, bold=True)
@@ -789,11 +814,127 @@ def run(
                         typer.secho(f"\n✅ Gate APPROVED", fg=typer.colors.GREEN)
                     typer.echo(f"   Proceeding to next step...")
 
-                # TODO: Log approval to audit trail
-
     typer.echo(f"\n{'='*60}")
     typer.echo("✓ AIP execution complete")
     typer.echo(f"{'='*60}\n")
+
+
+@app.command()
+def gate_list(
+    aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
+):
+    """List all gate approvals from audit trail."""
+    from spec.audit import GateAuditLogger
+
+    # Get config
+    config_path, cfg = find_config()
+
+    # If no aip_path provided, use current AIP
+    if aip_path is None:
+        current_aip = cfg.get("current", {}).get("aip")
+        if not current_aip:
+            typer.echo("Error: No AIP path provided and no current AIP set.", err=True)
+            raise typer.Exit(1)
+        aip_path = Path(current_aip)
+
+    if not aip_path.exists():
+        typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
+        raise typer.Exit(1)
+
+    # Load AIP
+    with open(aip_path) as f:
+        aip = yaml.safe_load(f)
+
+    aip_id = aip.get("aip_id", "unknown")
+    artifacts_dir = aip.get("orchestrator_contract", {}).get("artifacts_dir", f".aip_artifacts/{aip_id}")
+    audit_logger = GateAuditLogger(aip_id, artifacts_dir)
+
+    approvals = audit_logger.get_approvals()
+
+    if not approvals:
+        typer.echo("No gate approvals found in audit trail.")
+        return
+
+    typer.echo(f"\n{'='*70}")
+    typer.secho(f"Gate Approvals for {aip_id}", bold=True)
+    typer.echo(f"{'='*70}\n")
+
+    for approval in approvals:
+        decision_colors = {
+            "approved": typer.colors.GREEN,
+            "rejected": typer.colors.RED,
+            "deferred": typer.colors.YELLOW,
+            "conditional": typer.colors.YELLOW
+        }
+        color = decision_colors.get(approval.get("decision", "unknown"), typer.colors.WHITE)
+
+        typer.secho(f"Step: {approval.get('step_id')}", bold=True)
+        typer.echo(f"  Gate: {approval.get('gate_ref')}")
+        typer.secho(f"  Decision: {approval.get('decision').upper()}", fg=color)
+        typer.echo(f"  Reviewer: {approval.get('reviewer')}")
+        typer.echo(f"  Timestamp: {approval.get('timestamp')}")
+
+        if approval.get("rationale"):
+            typer.echo(f"  Rationale: {approval.get('rationale')}")
+        if approval.get("conditions"):
+            typer.echo(f"  Conditions: {approval.get('conditions')}")
+
+        typer.echo()
+
+
+@app.command()
+def gate_report(
+    aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
+):
+    """Generate a summary report of gate approvals."""
+    from spec.audit import GateAuditLogger
+
+    # Get config
+    config_path, cfg = find_config()
+
+    # If no aip_path provided, use current AIP
+    if aip_path is None:
+        current_aip = cfg.get("current", {}).get("aip")
+        if not current_aip:
+            typer.echo("Error: No AIP path provided and no current AIP set.", err=True)
+            raise typer.Exit(1)
+        aip_path = Path(current_aip)
+
+    if not aip_path.exists():
+        typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
+        raise typer.Exit(1)
+
+    # Load AIP
+    with open(aip_path) as f:
+        aip = yaml.safe_load(f)
+
+    aip_id = aip.get("aip_id", "unknown")
+    artifacts_dir = aip.get("orchestrator_contract", {}).get("artifacts_dir", f".aip_artifacts/{aip_id}")
+    audit_logger = GateAuditLogger(aip_id, artifacts_dir)
+
+    summary = audit_logger.get_summary()
+
+    typer.echo(f"\n{'='*70}")
+    typer.secho(f"Gate Approval Summary for {aip_id}", bold=True)
+    typer.echo(f"{'='*70}\n")
+
+    typer.echo(f"Total Approvals: {summary['total']}")
+    typer.secho(f"  Approved: {summary['approved']}", fg=typer.colors.GREEN)
+    typer.secho(f"  Rejected: {summary['rejected']}", fg=typer.colors.RED)
+    typer.secho(f"  Deferred: {summary['deferred']}", fg=typer.colors.YELLOW)
+    typer.secho(f"  Conditional: {summary['conditional']}", fg=typer.colors.YELLOW)
+
+    if summary["by_gate"]:
+        typer.echo(f"\nBy Gate:")
+        for gate_ref, stats in summary["by_gate"].items():
+            typer.echo(f"\n  {gate_ref}:")
+            typer.echo(f"    Total: {stats['total']}")
+            typer.echo(f"    Approved: {stats['approved']}")
+            typer.echo(f"    Rejected: {stats['rejected']}")
+            typer.echo(f"    Deferred: {stats['deferred']}")
+            typer.echo(f"    Conditional: {stats['conditional']}")
+
+    typer.echo()
 
 
 if __name__ == "__main__":

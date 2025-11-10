@@ -1,0 +1,135 @@
+"""Gate approval audit logging for Specwright."""
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+
+class GateAuditLogger:
+    """Logs gate approval decisions to JSONL audit trail."""
+
+    def __init__(self, aip_id: str, artifacts_dir: Path | str):
+        """
+        Initialize gate audit logger.
+
+        Args:
+            aip_id: AIP identifier
+            artifacts_dir: Path to artifacts directory
+        """
+        self.aip_id = aip_id
+        self.artifacts_dir = Path(artifacts_dir)
+        self.log_file = self.artifacts_dir / "gate_approvals.jsonl"
+
+        # Ensure artifacts directory exists
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    def log_approval(
+        self,
+        step_id: str,
+        gate_ref: str,
+        decision: str,
+        reviewer: str,
+        rationale: str = "",
+        conditions: str = "",
+        completed_checklist: dict[str, list[str]] | None = None,
+        metadata: dict[str, Any] | None = None
+    ) -> None:
+        """
+        Log a gate approval decision to the audit trail.
+
+        Args:
+            step_id: Step identifier (e.g., "step-001")
+            gate_ref: Gate reference (e.g., "G0: Plan Approval")
+            decision: Approval decision (approved, rejected, deferred, conditional)
+            reviewer: Name of reviewer
+            rationale: Decision rationale
+            conditions: Approval conditions (if conditional)
+            completed_checklist: Checklist items that were completed
+            metadata: Additional metadata
+        """
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "aip_id": self.aip_id,
+            "step_id": step_id,
+            "gate_ref": gate_ref,
+            "decision": decision,
+            "reviewer": reviewer,
+            "rationale": rationale,
+            "conditions": conditions,
+            "completed_checklist": completed_checklist or {},
+            "metadata": metadata or {}
+        }
+
+        # Append to JSONL file
+        with open(self.log_file, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+
+    def get_approvals(self) -> list[dict[str, Any]]:
+        """
+        Read all gate approvals from the audit trail.
+
+        Returns:
+            List of approval records
+        """
+        if not self.log_file.exists():
+            return []
+
+        approvals = []
+        with open(self.log_file) as f:
+            for line in f:
+                if line.strip():
+                    approvals.append(json.loads(line))
+
+        return approvals
+
+    def get_approval_for_step(self, step_id: str) -> dict[str, Any] | None:
+        """
+        Get the most recent approval for a specific step.
+
+        Args:
+            step_id: Step identifier
+
+        Returns:
+            Approval record or None if not found
+        """
+        approvals = self.get_approvals()
+
+        # Filter by step_id and return most recent
+        step_approvals = [a for a in approvals if a.get("step_id") == step_id]
+        if step_approvals:
+            return step_approvals[-1]  # Most recent
+
+        return None
+
+    def get_summary(self) -> dict[str, Any]:
+        """
+        Get summary statistics of gate approvals.
+
+        Returns:
+            Dict with approval counts by decision type
+        """
+        approvals = self.get_approvals()
+
+        summary = {
+            "total": len(approvals),
+            "approved": 0,
+            "rejected": 0,
+            "deferred": 0,
+            "conditional": 0,
+            "by_gate": {}
+        }
+
+        for approval in approvals:
+            decision = approval.get("decision", "unknown")
+            if decision in summary:
+                summary[decision] += 1
+
+            gate_ref = approval.get("gate_ref", "unknown")
+            if gate_ref not in summary["by_gate"]:
+                summary["by_gate"][gate_ref] = {"total": 0, "approved": 0, "rejected": 0, "deferred": 0, "conditional": 0}
+            summary["by_gate"][gate_ref]["total"] += 1
+            if decision in summary["by_gate"][gate_ref]:
+                summary["by_gate"][gate_ref][decision] += 1
+
+        return summary
