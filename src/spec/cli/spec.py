@@ -122,8 +122,18 @@ def get_default_config() -> dict:
         },
         "repo": {
             "default_branch": "main"
+        },
+        "current": {
+            "spec": None,  # Path to current working .md spec
+            "aip": None    # Path to current compiled .yaml AIP
         }
     }
+
+
+def save_config(config_path: Path, config: dict) -> None:
+    """Save configuration to file."""
+    with open(config_path, 'w') as f:
+        yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
 
 def find_config() -> tuple[Path | None, dict]:
@@ -183,6 +193,42 @@ def config():
         typer.echo("No .specwright.yaml found. Using defaults:")
 
     typer.echo(yaml.dump(cfg, sort_keys=False, default_flow_style=False))
+
+
+@app.command()
+def set_current(
+    spec: Path = typer.Argument(..., help="Path to spec file (.md or .yaml)"),
+):
+    """Set the current working spec for compile/validate/run commands."""
+    config_path, cfg = find_config()
+
+    if not config_path:
+        typer.echo("Error: No .specwright.yaml found. Run 'spec init' first.", err=True)
+        raise typer.Exit(1)
+
+    if not spec.exists():
+        typer.echo(f"Error: Spec file not found: {spec}", err=True)
+        raise typer.Exit(1)
+
+    # Ensure current section exists
+    if "current" not in cfg:
+        cfg["current"] = {"spec": None, "aip": None}
+
+    # Update based on file type
+    if spec.suffix == '.md':
+        cfg["current"]["spec"] = str(spec)
+        typer.secho(f"✓ Set current spec: {spec}", fg=typer.colors.GREEN)
+        typer.echo("  You can now run: spec compile, spec validate")
+    elif spec.suffix in ['.yaml', '.yml']:
+        cfg["current"]["aip"] = str(spec)
+        typer.secho(f"✓ Set current AIP: {spec}", fg=typer.colors.GREEN)
+        typer.echo("  You can now run: spec validate, spec run")
+    else:
+        typer.echo(f"Error: File must be .md or .yaml (got {spec.suffix})", err=True)
+        raise typer.Exit(1)
+
+    # Save config
+    save_config(config_path, cfg)
 
 
 @app.command()
@@ -295,12 +341,25 @@ def create(
 
 @app.command()
 def compile(
-    spec_path: Path = typer.Argument(..., help="Path to Markdown spec file"),
+    spec_path: Path | None = typer.Argument(None, help="Path to Markdown spec file (uses current spec if omitted)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output YAML path (default: aips/<stem>.yaml)"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing compiled file"),
 ):
     """Compile Markdown spec to validated YAML AIP."""
     from spec.compiler import compile_spec as do_compile
+
+    # Get config
+    config_path, cfg = find_config()
+
+    # If no spec_path provided, use current from config
+    if spec_path is None:
+        current_spec = cfg.get("current", {}).get("spec")
+        if not current_spec:
+            typer.echo("Error: No spec path provided and no current spec set.", err=True)
+            typer.echo("  Run: spec set-current <path-to-spec.md>", err=True)
+            raise typer.Exit(1)
+        spec_path = Path(current_spec)
+        typer.echo(f"Using current spec: {spec_path}")
 
     if not spec_path.exists():
         typer.echo(f"Error: Spec file not found: {spec_path}", err=True)
@@ -350,8 +409,15 @@ def compile(
 
         typer.secho(f"✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
         typer.secho(f"✓ Validation passed", fg=typer.colors.GREEN)
+
+        # Update current AIP in config
+        if config_path and "current" in cfg:
+            cfg["current"]["aip"] = str(output)
+            save_config(config_path, cfg)
+            typer.echo(f"  Set as current AIP")
+
         typer.echo("  Next steps:")
-        typer.echo(f"    1. Run: spec run {output}")
+        typer.echo(f"    1. Run: spec run")
     except Exception as e:
         if isinstance(e, typer.Exit):
             raise
@@ -361,9 +427,29 @@ def compile(
 
 @app.command()
 def validate(
-    spec_path: Path = typer.Argument(..., help="Path to spec (.md) or AIP (.yaml) file"),
+    spec_path: Path | None = typer.Argument(None, help="Path to spec (.md) or AIP (.yaml) file (uses current if omitted)"),
 ):
     """Validate a Markdown spec or compiled YAML AIP."""
+
+    # Get config
+    config_path, cfg = find_config()
+
+    # If no spec_path provided, try current spec or aip
+    if spec_path is None:
+        current_spec = cfg.get("current", {}).get("spec")
+        current_aip = cfg.get("current", {}).get("aip")
+
+        # Prefer spec over aip
+        if current_spec:
+            spec_path = Path(current_spec)
+            typer.echo(f"Using current spec: {spec_path}")
+        elif current_aip:
+            spec_path = Path(current_aip)
+            typer.echo(f"Using current AIP: {spec_path}")
+        else:
+            typer.echo("Error: No file path provided and no current spec/AIP set.", err=True)
+            typer.echo("  Run: spec set-current <path-to-file>", err=True)
+            raise typer.Exit(1)
 
     if not spec_path.exists():
         typer.echo(f"Error: File not found: {spec_path}", err=True)
@@ -434,10 +520,24 @@ def validate(
 
 @app.command()
 def run(
-    aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
+    aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
     step: int | None = typer.Option(None, "--step", "-s", help="Run specific step number (1-based)"),
 ):
     """Run an AIP in guided execution mode."""
+
+    # Get config
+    config_path, cfg = find_config()
+
+    # If no aip_path provided, use current AIP
+    if aip_path is None:
+        current_aip = cfg.get("current", {}).get("aip")
+        if not current_aip:
+            typer.echo("Error: No AIP path provided and no current AIP set.", err=True)
+            typer.echo("  Run: spec compile  (to compile and set current AIP)", err=True)
+            typer.echo("  Or: spec set-current <path-to-aip.yaml>", err=True)
+            raise typer.Exit(1)
+        aip_path = Path(current_aip)
+        typer.echo(f"Using current AIP: {aip_path}\n")
 
     if not aip_path.exists():
         typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
@@ -447,12 +547,24 @@ def run(
     with open(aip_path) as f:
         aip = yaml.safe_load(f)
 
-    # Display AIP info
-    typer.echo(f"\n{'='*60}")
-    typer.echo(f"AIP: {aip.get('title', 'Untitled')}")
+    # Display AIP info with acceptance criteria
+    typer.echo(f"\n{'='*70}")
+    typer.secho(f"AIP: {aip.get('title', 'Untitled')}", bold=True)
     typer.echo(f"Tier: {aip.get('tier', 'unknown')}")
-    typer.echo(f"Goal: {aip.get('objective', {}).get('goal', 'unknown')}")
-    typer.echo(f"{'='*60}\n")
+    typer.echo(f"{'='*70}")
+
+    # Display objective
+    objective = aip.get("objective", {})
+    typer.echo(f"\n📋 Goal: {objective.get('goal', 'Not specified')}")
+
+    # Display acceptance criteria
+    acceptance_criteria = objective.get("acceptance_criteria", [])
+    if acceptance_criteria:
+        typer.echo(f"\n✅ Acceptance Criteria:")
+        for i, criterion in enumerate(acceptance_criteria, 1):
+            typer.echo(f"  {i}. {criterion}")
+
+    typer.echo(f"\n{'='*70}\n")
 
     # Get plan
     plan = aip.get("plan", [])
@@ -471,38 +583,42 @@ def run(
         steps_to_run = plan
         step_numbers = list(range(1, len(plan) + 1))
 
-    # Execute steps
+    # Execute steps (stop at first incomplete)
     for step_num, step_def in zip(step_numbers, steps_to_run):
         step_id = step_def.get("step_id", "unknown")
         step_role = step_def.get("role", "unknown")
         step_desc = step_def.get("description", "")
 
-        typer.echo(f"[Step {step_num}/{len(plan)}] {step_id}")
+        typer.secho(f"\n▶ Step {step_num}/{len(plan)}: {step_desc}", fg=typer.colors.CYAN, bold=True)
+        typer.echo(f"  ID: {step_id}")
         typer.echo(f"  Role: {step_role}")
-        typer.echo(f"  {step_desc}")
 
         # Show prompt if present
         if step_def.get("prompt"):
-            typer.echo(f"\n  Prompt: {step_def['prompt']}")
+            typer.echo(f"\n  📝 Prompt:")
+            for line in step_def['prompt'].split('\n'):
+                typer.echo(f"     {line}")
 
         # Show commands if present
         if step_def.get("commands"):
-            typer.echo("\n  Commands:")
+            typer.echo(f"\n  🔧 Commands:")
             for cmd in step_def["commands"]:
-                typer.echo(f"    $ {cmd}")
+                typer.echo(f"     $ {cmd}")
 
         # Show outputs if present
         if step_def.get("outputs"):
-            typer.echo("\n  Expected outputs:")
+            typer.echo(f"\n  📦 Expected outputs:")
             for out in step_def["outputs"]:
-                typer.echo(f"    - {out}")
+                typer.echo(f"     - {out}")
 
-        # Simple execution (just pause and confirm)
+        # Ask if step is complete - STOP if not complete
         typer.echo()
-        if typer.confirm("  Mark as complete?", default=True):
-            typer.echo("  ✓ Step completed\n")
+        if typer.confirm("  ✓ Mark this step as complete?", default=False):
+            typer.secho("  ✅ Step completed", fg=typer.colors.GREEN)
         else:
-            typer.echo("  ⏭  Skipped\n")
+            typer.secho("  ⏸  Stopping at incomplete step", fg=typer.colors.YELLOW)
+            typer.echo(f"\n  Resume later with: spec run --step {step_num}")
+            raise typer.Exit(0)  # Exit without error
 
     typer.echo(f"{'='*60}")
     typer.echo("✓ AIP execution complete")
