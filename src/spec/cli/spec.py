@@ -168,6 +168,7 @@ def find_config() -> tuple[Path | None, dict]:
 @app.command()
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
+    claude: bool = typer.Option(True, "--claude/--no-claude", help="Install Claude Code slash commands"),
 ):
     """Initialize Specwright configuration in current directory."""
     config_path = Path.cwd() / ".specwright.yaml"
@@ -199,6 +200,40 @@ def init(
     except Exception:
         # Silently skip if guide not found (development mode)
         pass
+
+    # Copy Claude Code slash commands if requested
+    if claude:
+        claude_dir = Path.cwd() / ".claude" / "commands"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+
+        slash_commands = [
+            "spec-run.md",
+            "spec-status.md",
+            "spec-next.md",
+            "spec-pause.md",
+            "README.md"
+        ]
+
+        copied_count = 0
+        try:
+            # First, try to find commands in the package installation
+            spec_package_dir = Path(__file__).parent.parent.parent.parent
+            source_claude_dir = spec_package_dir / ".claude" / "commands"
+
+            if source_claude_dir.exists():
+                for cmd_file in slash_commands:
+                    src = source_claude_dir / cmd_file
+                    dst = claude_dir / cmd_file
+                    if src.exists():
+                        dst.write_text(src.read_text())
+                        copied_count += 1
+
+                if copied_count > 0:
+                    typer.echo(f"✓ Installed {copied_count} Claude Code slash commands to .claude/commands/")
+                    typer.echo("  Use /spec-run, /spec-status, /spec-next, /spec-pause in Claude Code")
+        except Exception as e:
+            typer.echo(f"  Warning: Could not install Claude Code commands: {e}", err=True)
+            typer.echo(f"  You can manually copy them from the specwright repo's .claude/commands/", err=True)
 
     typer.echo(f"✓ Created {config_path}")
     typer.echo("  You can now use spec commands from anywhere in this project")
