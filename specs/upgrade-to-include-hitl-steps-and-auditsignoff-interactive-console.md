@@ -40,7 +40,7 @@ repo:
 
 ## Plan
 
-### Step 1: Planning [G0: Plan Approval]
+### Step 1: Planning & Design [G0: Plan Approval]
 
 **Prompt:**
 
@@ -151,7 +151,7 @@ pytest -q
 - Rationale: ___
 <!-- GATE_REVIEW_END -->
 
-### Step 4: Testing [G2: Pre-Release]
+### Step 4: Testing & Validation [G2: Pre-Release]
 
 **Prompt:**
 

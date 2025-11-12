@@ -5,6 +5,10 @@ title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+project_slug: {{ project_slug }}
+spec_version: 1.0.0
+created: {{ created }}
+updated: {{ updated }}
 orchestrator_contract: "standard"
 repo:
   working_branch: "{{ branch }}"
@@ -43,13 +47,6 @@ Produce detailed work breakdown and file-touch map:
 - WBS with task breakdown
 - Files to be modified
 - Test coverage plan
-
-**Validation:**
-
-Before proceeding to G0 gate review, verify:
-- ✓ All required planning artifacts created
-- ✓ WBS is complete and detailed
-- ✓ File touch map identifies all components
 
 **Outputs:**
 
@@ -96,13 +93,6 @@ Generate domain-specific prompts with moderate guardrails:
 - Test strategy
 - Code review checklist
 
-**Validation:**
-
-Before proceeding to G0 gate review, verify:
-- ✓ All prompt artifacts generated
-- ✓ Prompts include test strategies
-- ✓ Review checklists are comprehensive
-
 **Outputs:**
 
 - `artifacts/prompts/coding-prompts.md`
@@ -121,13 +111,6 @@ ruff check .
 mypy .
 pytest -q
 ```
-
-**Validation:**
-
-Before proceeding to G1 gate review, verify:
-- ✓ All commands above pass without errors
-- ✓ No files in blocked paths modified
-- ✓ All output artifacts generated
 
 **Outputs:**
 
@@ -179,13 +162,6 @@ Run full test suite and generate coverage report.
 pytest --cov=src --cov-report=xml
 ```
 
-**Validation:**
-
-Before proceeding to G2 gate review, verify:
-- ✓ All tests pass without failures
-- ✓ Coverage report generated successfully
-- ✓ Coverage meets minimum threshold (85%)
-
 **Outputs:**
 
 - `artifacts/test/coverage.xml`
@@ -229,13 +205,6 @@ Before proceeding to G2 gate review, verify:
 **Prompt:**
 
 Document decisions and verify compliance.
-
-**Validation:**
-
-Before proceeding to G3 gate review, verify:
-- ✓ All governance artifacts generated
-- ✓ Decision log is complete and auditable
-- ✓ Compliance checklist verified
 
 **Outputs:**
 

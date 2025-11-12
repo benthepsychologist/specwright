@@ -411,12 +411,24 @@ class SpecParser:
         except (subprocess.CalledProcessError, FileNotFoundError):
             repo_url = "git@github.com:org/repo.git"
 
+        # Get project slug from frontmatter or derive from repo
+        project_slug = self.frontmatter.get("project_slug")
+        if not project_slug:
+            # Derive from repo URL if available
+            if "github.com" in repo_url:
+                # Extract repo name from URL like git@github.com:user/repo.git
+                project_slug = repo_url.split("/")[-1].replace(".git", "")
+            else:
+                # Fallback to generic slug
+                project_slug = "project"
+            project_slug = project_slug.lower()
+
         # Generate AIP ID from frontmatter or create one
         aip_id = self.frontmatter.get("aip_id")
         if not aip_id:
             from datetime import date
             today = date.today()
-            aip_id = f"AIP-{today.year}-{today.month:02d}-{today.day:02d}-001"
+            aip_id = f"AIP-{project_slug}-{today.year}-{today.month:02d}-{today.day:02d}-001"
 
         # Parse orchestrator_contract from frontmatter or use default
         orchestrator = self.frontmatter.get("orchestrator_contract", "standard")
@@ -438,17 +450,33 @@ class SpecParser:
         else:
             orchestrator_contract = orchestrator  # Assume it's already a complete object
 
+        # Helper to ensure datetime values are ISO strings
+        def to_iso_string(value):
+            if isinstance(value, datetime):
+                return value.isoformat()
+            elif isinstance(value, str):
+                return value
+            else:
+                return datetime.now().astimezone().isoformat()
+
+        created = to_iso_string(self.frontmatter.get("created"))
+        updated = to_iso_string(self.frontmatter.get("updated"))
+
         aip = {
             # Required top-level fields
             "version": self.frontmatter.get("version", "0.1"),
             "aip_id": aip_id,
+            "project_slug": project_slug,
+            "spec_version": self.frontmatter.get("spec_version", "1.0.0"),
+            "created": created,
+            "updated": updated,
             "title": self.frontmatter["title"],
             "tier": self.frontmatter["tier"],
 
             # Meta (required: created_by, created_at)
             "meta": {
                 "created_by": self.frontmatter.get("owner"),
-                "created_at": self.frontmatter.get("created_at", datetime.now().astimezone().isoformat())
+                "created_at": created
             },
 
             # Repo (required: url, default_branch, working_branch)

@@ -17,10 +17,30 @@
       "format": "uri",
       "description": "URL to the canonical schema for this version"
     },
-    "aip_id": { 
+    "aip_id": {
       "type": "string",
-      "pattern": "^AIP-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
-      "description": "Unique identifier (format: AIP-YYYY-MM-DD-NNN)"
+      "pattern": "^AIP-[a-z0-9-]+-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
+      "description": "Unique identifier (format: AIP-{project_slug}-YYYY-MM-DD-NNN)"
+    },
+    "project_slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Project identifier (lowercase alphanumeric with hyphens)"
+    },
+    "spec_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this spec (major.minor.patch)"
+    },
+    "created": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when spec was created"
+    },
+    "updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when spec was last updated"
     },
     "title": { 
       "type": "string",
@@ -110,11 +130,11 @@
           "items": { "type": "string" },
           "description": "Roles or people involved"
         },
-        "related_aips": { 
-          "type": "array", 
-          "items": { 
+        "related_aips": {
+          "type": "array",
+          "items": {
             "type": "string",
-            "pattern": "^AIP-\\d{4}-\\d{2}-\\d{2}-\\d{3}$"
+            "pattern": "^AIP-[a-z0-9-]+-\\d{4}-\\d{2}-\\d{2}-\\d{3}$"
           },
           "description": "Dependencies or related AIPs"
         }
@@ -320,9 +340,9 @@
           },
           "additionalProperties": false
         },
-        "artifacts_dir": { 
+        "artifacts_dir": {
           "type": "string",
-          "pattern": "^(?:\\.?[\\w./-]+/)?AIP-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
+          "pattern": "^(?:\\.?[\\w./-]+/)?AIP-[a-z0-9-]+-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
           "description": "Path to artifacts directory, must end with AIP ID"
         },
         "state_file": {
@@ -481,7 +501,8 @@
           },
           "gate_ref": {
             "type": "string",
-            "description": "Gate reference from step title (e.g., 'G0: Plan Approval')"
+            "pattern": "^G\\d+:\\s*.+$",
+            "description": "Gate reference (e.g., 'G0: Plan Approval')"
           },
           "gate_review": {
             "type": "object",
@@ -492,25 +513,21 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
-                "description": "Review checklist organized by categories"
+                "description": "Checklist sections with items"
+              },
+              "approval_options": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Available approval decisions"
               },
               "approval_metadata": {
                 "type": "object",
                 "properties": {
                   "reviewer": { "type": "string" },
                   "date": { "type": "string" },
-                  "rationale": { "type": "string" },
-                  "decision": {
-                    "enum": ["approved", "rejected", "deferred", "conditional"],
-                    "description": "Gate approval decision"
-                  },
-                  "conditions": { "type": "string" },
-                  "timestamp": {
-                    "type": "string",
-                    "format": "date-time"
-                  }
+                  "rationale": { "type": "string" }
                 },
-                "additionalProperties": false
+                "additionalProperties": true
               }
             },
             "additionalProperties": false,

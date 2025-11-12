@@ -5,6 +5,10 @@ title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+project_slug: {{ project_slug }}
+spec_version: 1.0.0
+created: {{ created }}
+updated: {{ updated }}
 orchestrator_contract: "standard"
 repo:
   working_branch: "{{ branch }}"
@@ -34,7 +38,7 @@ repo:
 
 ## Plan
 
-### Step 1: Planning Phase [G0: Plan Approval]
+### Step 1: Planning & Design [G0: Plan Approval]
 
 **Prompt:**
 

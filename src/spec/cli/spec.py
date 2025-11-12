@@ -418,6 +418,25 @@ def create(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1)
 
+        # Get project slug from git remote
+        import subprocess
+        try:
+            repo_url = subprocess.check_output(
+                ['git', 'config', '--get', 'remote.origin.url'],
+                stderr=subprocess.DEVNULL,
+                text=True
+            ).strip()
+            # Extract repo name from URL
+            if "github.com" in repo_url:
+                project_slug = repo_url.split("/")[-1].replace(".git", "").lower()
+            else:
+                project_slug = "project"
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            project_slug = "project"
+
+        # Generate timestamps
+        now = datetime.now().astimezone().isoformat()
+
         # Use Jinja2 to render template
         from jinja2 import Template
         template_content = template_path.read_text()
@@ -427,11 +446,31 @@ def create(
             title=title,
             owner=owner,
             goal=goal,
-            branch=branch
+            branch=branch,
+            project_slug=project_slug,
+            created=now,
+            updated=now
         )
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered)
+
+        # Log spec creation to audit trail
+        from spec.audit.execution_logger import ExecutionAuditLogger
+        from datetime import date
+        today = date.today()
+        aip_id = f"AIP-{project_slug}-{today.year}-{today.month:02d}-{today.day:02d}-001"
+
+        audit_logger = ExecutionAuditLogger()
+        audit_logger.log_spec_created(
+            aip_id=aip_id,
+            project_slug=project_slug,
+            spec_path=str(output),
+            spec_version="1.0.0",
+            author=owner,
+            tier=tier.value,
+            title=title
+        )
 
         typer.echo(f"✓ Created Tier {tier.value} spec at {output}")
         typer.echo(f"  Branch: {branch}")
@@ -524,6 +563,24 @@ def compile(
 
         typer.secho(f"✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
         typer.secho(f"✓ Validation passed", fg=typer.colors.GREEN)
+
+        # Log compilation to audit trail
+        from spec.audit.execution_logger import ExecutionAuditLogger
+        import hashlib
+
+        # Calculate source hash
+        with open(spec_path, 'rb') as f:
+            source_hash = hashlib.sha256(f.read()).hexdigest()
+
+        audit_logger = ExecutionAuditLogger()
+        audit_logger.log_spec_compiled(
+            aip_id=aip.get("aip_id", "unknown"),
+            project_slug=aip.get("project_slug", "unknown"),
+            spec_path=str(spec_path),
+            aip_path=str(output),
+            source_hash=f"sha256:{source_hash}",
+            compiler_version="0.5.0"
+        )
 
         # Update current AIP in config
         if config_path and "current" in cfg:
@@ -676,10 +733,21 @@ def run(
     # Get tier for gate behavior
     tier = aip.get("tier", "C")
 
-    # Initialize audit logger
+    # Initialize audit loggers
     aip_id = aip.get("aip_id", "unknown")
+    project_slug = aip.get("project_slug", "unknown")
     artifacts_dir = aip.get("orchestrator_contract", {}).get("artifacts_dir", f".aip_artifacts/{aip_id}")
     audit_logger = GateAuditLogger(aip_id, artifacts_dir)
+
+    # Log execution start to execution history
+    from spec.audit.execution_logger import ExecutionAuditLogger
+    exec_logger = ExecutionAuditLogger()
+    git_snapshot = exec_logger.log_execution_started(
+        aip_id=aip_id,
+        project_slug=project_slug,
+        executor=cfg.get("user", {}).get("default_owner", "unknown"),
+        aip_path=str(aip_path)
+    )
 
     # Display AIP info with acceptance criteria
     typer.echo(f"\n{'='*70}")
@@ -813,6 +881,15 @@ def run(
                     else:
                         typer.secho(f"\n✅ Gate APPROVED", fg=typer.colors.GREEN)
                     typer.echo(f"   Proceeding to next step...")
+
+    # Log execution completion
+    exec_logger.log_execution_completed(
+        aip_id=aip_id,
+        project_slug=project_slug,
+        status="success",
+        start_git_commit=git_snapshot.get("commit"),
+        artifacts_path=artifacts_dir
+    )
 
     typer.echo(f"\n{'='*60}")
     typer.echo("✓ AIP execution complete")

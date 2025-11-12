@@ -4,6 +4,10 @@ title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+project_slug: {{ project_slug }}
+spec_version: 1.0.0
+created: {{ created }}
+updated: {{ updated }}
 ---
 
 # {{ title }}

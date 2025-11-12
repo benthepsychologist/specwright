@@ -5,6 +5,10 @@ title: {{ title }}
 owner: {{ owner }}
 goal: {{ goal }}
 labels: []
+project_slug: {{ project_slug }}
+spec_version: 1.0.0
+created: {{ created }}
+updated: {{ updated }}
 orchestrator_contract: "standard"
 repo:
   working_branch: "{{ branch }}"
@@ -48,14 +52,6 @@ Produce comprehensive plan including:
 - Threat model analysis
 - Risk assessment
 - Metrics targets (coverage, defect density)
-
-**Validation:**
-
-Before proceeding to G0 gate review, verify:
-- ✓ All planning artifacts created
-- ✓ WBS includes security checkpoints
-- ✓ Threat model complete
-- ✓ Risk assessment detailed
 
 **Outputs:**
 
@@ -117,14 +113,6 @@ Create comprehensive prompts with security, privacy, and safety guardrails:
 - Test strategy and coverage plan
 - Security checklist and review criteria
 
-**Validation:**
-
-Before proceeding to G0 gate review, verify:
-- ✓ All prompt artifacts generated
-- ✓ Security guardrails included
-- ✓ Test strategy comprehensive
-- ✓ Safety constraints defined
-
 **Outputs:**
 
 - `artifacts/prompts/coding-prompts.md`
@@ -146,14 +134,6 @@ mypy .
 bandit -r src/
 pytest -q
 ```
-
-**Validation:**
-
-Before proceeding to G1 gate review, verify:
-- ✓ All commands pass without errors
-- ✓ No security vulnerabilities (bandit clean)
-- ✓ No files in blocked paths modified
-- ✓ All output artifacts generated
 
 **Outputs:**
 
@@ -221,14 +201,6 @@ pytest --cov=src --cov-report=xml --cov-report=html
 bandit -r src/ -f json -o artifacts/test/bandit.json
 ```
 
-**Validation:**
-
-Before proceeding to G2 gate review, verify:
-- ✓ All tests pass without failures
-- ✓ Coverage meets minimum threshold (90%)
-- ✓ Security scan clean (no critical issues)
-- ✓ All test artifacts generated
-
 **Outputs:**
 
 - `artifacts/test/coverage.xml`
@@ -288,14 +260,6 @@ Before proceeding to G2 gate review, verify:
 **Prompt:**
 
 Generate comprehensive governance artifacts and retrospective.
-
-**Validation:**
-
-Before proceeding to G3 gate review, verify:
-- ✓ All governance artifacts generated
-- ✓ Decision log complete and auditable
-- ✓ Privacy impact assessment complete
-- ✓ ISO 42001 evidence pack ready
 
 **Outputs:**
 

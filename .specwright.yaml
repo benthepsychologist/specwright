@@ -7,5 +7,5 @@ paths:
 repo:
   default_branch: main
 current:
-  spec: specs/upgrade-to-include-hitl-steps-and-auditsignoff-interactive-console.md
-  aip: /home/user/specwright/aips/meltano-ingest-cloudrun-dispatcher-initial-spec.yaml
+  spec: specs/test-claude-integration-simple.md
+  aip: /home/user/specwright/aips/test-claude-integration-simple.yaml
