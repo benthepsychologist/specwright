@@ -1,0 +1,388 @@
+"""Execution audit logging for Specwright."""
+
+import json
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+
+class ExecutionAuditLogger:
+    """Logs execution lifecycle events to project-wide audit trail."""
+
+    def __init__(self, artifacts_dir: Path | str = ".aip_artifacts"):
+        """
+        Initialize execution audit logger.
+
+        Args:
+            artifacts_dir: Path to artifacts directory (default: .aip_artifacts)
+        """
+        self.artifacts_dir = Path(artifacts_dir)
+        self.log_file = self.artifacts_dir / "execution_history.jsonl"
+
+        # Ensure artifacts directory exists
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_git_metadata(self) -> dict[str, Any]:
+        """
+        Capture current git metadata.
+
+        Returns:
+            Dict with git information (branch, commit, remote, etc.)
+        """
+        metadata = {}
+
+        try:
+            # Current branch
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            metadata["branch"] = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            metadata["branch"] = None
+
+        try:
+            # Current commit
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            metadata["commit"] = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            metadata["commit"] = None
+
+        try:
+            # Remote URL
+            result = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            metadata["remote_url"] = result.stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            metadata["remote_url"] = None
+
+        try:
+            # Working tree status
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            metadata["has_uncommitted_changes"] = bool(result.stdout.strip())
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            metadata["has_uncommitted_changes"] = None
+
+        return metadata
+
+    def _get_git_diff_stats(self, commit_start: str, commit_end: str) -> dict[str, Any]:
+        """
+        Get diff statistics between two commits.
+
+        Args:
+            commit_start: Starting commit hash
+            commit_end: Ending commit hash
+
+        Returns:
+            Dict with diff statistics
+        """
+        stats = {}
+
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--shortstat", commit_start, commit_end],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            output = result.stdout.strip()
+
+            # Parse output like: "3 files changed, 45 insertions(+), 12 deletions(-)"
+            if "file" in output:
+                parts = output.split(",")
+                stats["files_changed"] = int(parts[0].split()[0])
+
+                for part in parts:
+                    if "insertion" in part:
+                        stats["lines_added"] = int(part.split()[0])
+                    elif "deletion" in part:
+                        stats["lines_deleted"] = int(part.split()[0])
+
+                # Set defaults if not present
+                stats.setdefault("lines_added", 0)
+                stats.setdefault("lines_deleted", 0)
+            else:
+                stats = {"files_changed": 0, "lines_added": 0, "lines_deleted": 0}
+
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError):
+            stats = {"files_changed": None, "lines_added": None, "lines_deleted": None}
+
+        return stats
+
+    def log_event(
+        self,
+        event_type: str,
+        aip_id: str,
+        project_slug: str,
+        metadata: dict[str, Any] | None = None,
+        include_git: bool = True
+    ) -> None:
+        """
+        Log an execution lifecycle event.
+
+        Args:
+            event_type: Type of event (spec_created, execution_started, etc.)
+            aip_id: AIP identifier
+            project_slug: Project identifier
+            metadata: Additional event metadata
+            include_git: Whether to capture git metadata (default: True)
+        """
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "event": event_type,
+            "project_slug": project_slug,
+            "aip_id": aip_id,
+        }
+
+        # Add git metadata if requested
+        if include_git:
+            log_entry["git"] = self._get_git_metadata()
+
+        # Merge additional metadata
+        if metadata:
+            log_entry["metadata"] = metadata
+
+        # Append to JSONL file
+        with open(self.log_file, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+
+    def log_spec_created(
+        self,
+        aip_id: str,
+        project_slug: str,
+        spec_path: str,
+        spec_version: str,
+        author: str,
+        tier: str,
+        title: str
+    ) -> None:
+        """Log spec creation event."""
+        self.log_event(
+            event_type="spec_created",
+            aip_id=aip_id,
+            project_slug=project_slug,
+            metadata={
+                "spec_path": spec_path,
+                "spec_version": spec_version,
+                "author": author,
+                "tier": tier,
+                "title": title
+            }
+        )
+
+    def log_spec_compiled(
+        self,
+        aip_id: str,
+        project_slug: str,
+        spec_path: str,
+        aip_path: str,
+        source_hash: str,
+        compiler_version: str
+    ) -> None:
+        """Log spec compilation event."""
+        self.log_event(
+            event_type="spec_compiled",
+            aip_id=aip_id,
+            project_slug=project_slug,
+            metadata={
+                "spec_path": spec_path,
+                "aip_path": aip_path,
+                "source_hash": source_hash,
+                "compiler_version": compiler_version
+            }
+        )
+
+    def log_execution_started(
+        self,
+        aip_id: str,
+        project_slug: str,
+        executor: str,
+        aip_path: str
+    ) -> dict[str, Any]:
+        """
+        Log execution start event.
+
+        Returns:
+            Git metadata snapshot for later use in execution_completed
+        """
+        git_metadata = self._get_git_metadata()
+
+        self.log_event(
+            event_type="execution_started",
+            aip_id=aip_id,
+            project_slug=project_slug,
+            metadata={
+                "executor": executor,
+                "aip_path": aip_path
+            },
+            include_git=True
+        )
+
+        return git_metadata
+
+    def log_execution_completed(
+        self,
+        aip_id: str,
+        project_slug: str,
+        status: str,
+        start_git_commit: Optional[str] = None,
+        artifacts_path: Optional[str] = None
+    ) -> None:
+        """
+        Log execution completion event.
+
+        Args:
+            aip_id: AIP identifier
+            project_slug: Project identifier
+            status: Execution status (success, failed, cancelled)
+            start_git_commit: Git commit at execution start (for diff stats)
+            artifacts_path: Path to execution artifacts
+        """
+        metadata: dict[str, Any] = {"status": status}
+
+        if artifacts_path:
+            metadata["artifacts_path"] = artifacts_path
+
+        # Calculate diff stats if we have start commit
+        git_metadata = self._get_git_metadata()
+        if start_git_commit and git_metadata.get("commit"):
+            diff_stats = self._get_git_diff_stats(start_git_commit, git_metadata["commit"])
+            metadata["diff_stats"] = diff_stats
+
+        self.log_event(
+            event_type="execution_completed",
+            aip_id=aip_id,
+            project_slug=project_slug,
+            metadata=metadata,
+            include_git=True
+        )
+
+    def log_spec_closed(
+        self,
+        aip_id: str,
+        project_slug: str,
+        outcome: str,
+        pr_url: Optional[str] = None,
+        notes: Optional[str] = None
+    ) -> None:
+        """
+        Log spec closure event.
+
+        Args:
+            aip_id: AIP identifier
+            project_slug: Project identifier
+            outcome: Outcome (merged, cancelled, rejected, superseded)
+            pr_url: Pull request URL if merged
+            notes: Additional notes
+        """
+        metadata = {"outcome": outcome}
+
+        if pr_url:
+            metadata["pr_url"] = pr_url
+        if notes:
+            metadata["notes"] = notes
+
+        self.log_event(
+            event_type="spec_closed",
+            aip_id=aip_id,
+            project_slug=project_slug,
+            metadata=metadata
+        )
+
+    def get_events(
+        self,
+        aip_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        project_slug: Optional[str] = None,
+        since: Optional[datetime] = None
+    ) -> list[dict[str, Any]]:
+        """
+        Query execution history events.
+
+        Args:
+            aip_id: Filter by AIP ID
+            event_type: Filter by event type
+            project_slug: Filter by project slug
+            since: Filter events after this timestamp
+
+        Returns:
+            List of matching events
+        """
+        if not self.log_file.exists():
+            return []
+
+        events = []
+        with open(self.log_file) as f:
+            for line in f:
+                if line.strip():
+                    event = json.loads(line)
+
+                    # Apply filters
+                    if aip_id and event.get("aip_id") != aip_id:
+                        continue
+                    if event_type and event.get("event") != event_type:
+                        continue
+                    if project_slug and event.get("project_slug") != project_slug:
+                        continue
+                    if since:
+                        event_time = datetime.fromisoformat(event["timestamp"])
+                        if event_time < since:
+                            continue
+
+                    events.append(event)
+
+        return events
+
+    def get_timeline(
+        self,
+        project_slug: Optional[str] = None,
+        limit: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """
+        Get chronological timeline of all events.
+
+        Args:
+            project_slug: Filter by project slug
+            limit: Maximum number of events to return
+
+        Returns:
+            List of events sorted by timestamp (newest first)
+        """
+        events = self.get_events(project_slug=project_slug)
+        events.sort(key=lambda e: e["timestamp"], reverse=True)
+
+        if limit:
+            events = events[:limit]
+
+        return events
+
+    def get_aip_history(self, aip_id: str) -> list[dict[str, Any]]:
+        """
+        Get complete history for a specific AIP.
+
+        Args:
+            aip_id: AIP identifier
+
+        Returns:
+            List of events for this AIP sorted chronologically
+        """
+        events = self.get_events(aip_id=aip_id)
+        events.sort(key=lambda e: e["timestamp"])
+        return events
