@@ -84,6 +84,9 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "B008",  # function call in default argument - required for Typer CLI option/argument pattern
+    "B904",  # raise from - not applicable for typer.Exit() in CLI error handling
+    "B905",  # zip strict= - not always needed when iterating known-same-length iterables
 ]
 
 [tool.mypy]

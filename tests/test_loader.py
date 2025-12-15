@@ -1,7 +1,5 @@
 """Tests for core.loader module."""
 
-import pytest
-from pathlib import Path
 from spec.core.loader import deep_merge, load_defaults, merge_aip_with_defaults
 
 

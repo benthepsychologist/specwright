@@ -233,24 +233,11 @@ def init(
                     typer.echo("  Use /spec-run, /spec-status, /spec-next, /spec-pause in Claude Code")
         except Exception as e:
             typer.echo(f"  Warning: Could not install Claude Code commands: {e}", err=True)
-            typer.echo(f"  You can manually copy them from the specwright repo's .claude/commands/", err=True)
+            typer.echo("  You can manually copy them from the specwright repo's .claude/commands/", err=True)
 
     typer.echo(f"✓ Created {config_path}")
     typer.echo("  You can now use spec commands from anywhere in this project")
     typer.echo("  Read .specwright/GUIDE.md for help writing effective specs")
-
-
-@app.command()
-def config():
-    """Display current Specwright configuration."""
-    config_path, cfg = find_config()
-
-    if config_path:
-        typer.echo(f"Config loaded from: {config_path}")
-    else:
-        typer.echo("No .specwright.yaml found. Using defaults:")
-
-    typer.echo(yaml.dump(cfg, sort_keys=False, default_flow_style=False))
 
 
 @app.command()
@@ -491,8 +478,9 @@ def create(
         output.write_text(rendered)
 
         # Log spec creation to audit trail
-        from spec.audit.execution_logger import ExecutionAuditLogger
         from datetime import date
+
+        from spec.audit.execution_logger import ExecutionAuditLogger
         today = date.today()
         aip_id = f"AIP-{project_slug}-{today.year}-{today.month:02d}-{today.day:02d}-001"
 
@@ -516,7 +504,7 @@ def create(
                 cfg["current"] = {"spec": None, "aip": None}
             cfg["current"]["spec"] = str(output)
             save_config(config_path, cfg)
-            typer.secho(f"✓ Set as current spec", fg=typer.colors.GREEN)
+            typer.secho("✓ Set as current spec", fg=typer.colors.GREEN)
             typer.echo("  Next steps:")
             typer.echo("    1. Edit the spec")
             typer.echo("    2. Run: spec compile")
@@ -597,11 +585,12 @@ def compile(
             raise typer.Exit(1)
 
         typer.secho(f"✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
-        typer.secho(f"✓ Validation passed", fg=typer.colors.GREEN)
+        typer.secho("✓ Validation passed", fg=typer.colors.GREEN)
 
         # Log compilation to audit trail
-        from spec.audit.execution_logger import ExecutionAuditLogger
         import hashlib
+
+        from spec.audit.execution_logger import ExecutionAuditLogger
 
         # Calculate source hash
         with open(spec_path, 'rb') as f:
@@ -621,10 +610,10 @@ def compile(
         if config_path and "current" in cfg:
             cfg["current"]["aip"] = str(output)
             save_config(config_path, cfg)
-            typer.echo(f"  Set as current AIP")
+            typer.echo("  Set as current AIP")
 
         typer.echo("  Next steps:")
-        typer.echo(f"    1. Run: spec run")
+        typer.echo("    1. Run: spec run")
     except Exception as e:
         if isinstance(e, typer.Exit):
             raise
@@ -672,9 +661,9 @@ def validate(
             content = spec_path.read_text(encoding='utf-8')
             parser = SpecParser(content, source_path=spec_path)
             aip = parser.parse()
-            typer.secho(f"✓ Markdown parsed successfully", fg=typer.colors.GREEN)
+            typer.secho("✓ Markdown parsed successfully", fg=typer.colors.GREEN)
         except (ValueError, KeyError, AttributeError) as e:
-            typer.secho(f"\n✗ Markdown parsing failed:", fg=typer.colors.RED, bold=True, err=True)
+            typer.secho("\n✗ Markdown parsing failed:", fg=typer.colors.RED, bold=True, err=True)
             typer.secho(f"  {str(e)}", fg=typer.colors.RED, err=True)
             raise typer.Exit(1)
 
@@ -725,23 +714,188 @@ def validate(
         raise typer.Exit(1)
 
 
+# Exit code constants for autonomous mode
+EXIT_PASS = 0
+EXIT_FAIL = 1  # FAIL_* termination reasons
+EXIT_ESCALATE = 2  # ESCALATE_* termination reasons
+
+
+def _run_autonomous_step(
+    aip_path: Path,
+    step_num: int,
+    dry_run: bool,
+    allow_dirty: bool,
+    max_iterations: int,
+    adapter: str,
+) -> None:
+    """
+    Run a step autonomously with scope enforcement.
+
+    Exit codes:
+        0 = PASS (step completed successfully)
+        1 = FAIL_* (scope violation, patch apply failure, verification failure, protocol error, dirty worktree)
+        2 = ESCALATE_* (needs human review, ambiguous)
+    """
+    from spec.executor import StepRunner, TerminationReason
+
+    # Get config
+    config_path, cfg = find_config()
+    project_root = config_path.parent if config_path else Path.cwd()
+
+    # Load AIP
+    with open(aip_path) as f:
+        aip = yaml.safe_load(f)
+
+    # Validate step number
+    plan = aip.get("plan", [])
+    if not plan:
+        typer.echo("Error: No plan steps defined in AIP", err=True)
+        raise typer.Exit(EXIT_FAIL)
+
+    if step_num < 1 or step_num > len(plan):
+        typer.echo(f"Error: Step {step_num} out of range (1-{len(plan)})", err=True)
+        raise typer.Exit(EXIT_FAIL)
+
+    # Convert to 0-based index
+    step_idx = step_num - 1
+
+    # Display step info
+    step_def = plan[step_idx]
+    typer.echo(f"\n{'='*60}")
+    typer.secho(f"Executing Step {step_num}/{len(plan)} (autonomous mode)", bold=True)
+    typer.echo(f"  ID: {step_def.get('id', f'step-{step_idx:03d}')}")
+    typer.echo(f"  Adapter: {adapter}")
+    if dry_run:
+        typer.secho("  Mode: DRY RUN (preview only)", fg=typer.colors.YELLOW)
+    typer.echo(f"{'='*60}\n")
+
+    # Initialize runner
+    runs_dir = project_root / "runs"
+    runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
+
+    # Execute step
+    result = runner.run_step(
+        aip=aip,
+        step_idx=step_idx,
+        dry_run=dry_run,
+        max_iterations=max_iterations,
+        allow_dirty=allow_dirty,
+    )
+
+    # Display result
+    typer.echo(f"\n{'='*60}")
+
+    # Map termination reasons to display info and exit codes
+    # INVARIANT: All TerminationReason values must be explicitly mapped here.
+    # UPDATE THIS MAPPING when TerminationReason enum changes.
+    reason_info: dict[TerminationReason, tuple[str, str, int]] = {
+        # (label, color, exit_code)
+        # Success
+        TerminationReason.PASS: ("PASSED", typer.colors.GREEN, EXIT_PASS),
+        # Failures -> exit code 1
+        TerminationReason.FAIL_SCOPE: ("SCOPE VIOLATION", typer.colors.RED, EXIT_FAIL),
+        TerminationReason.FAIL_PATCH_APPLY: ("PATCH APPLY FAILED", typer.colors.RED, EXIT_FAIL),
+        TerminationReason.FAIL_VERIFY_RETRYABLE: ("VERIFICATION FAILED (max retries)", typer.colors.RED, EXIT_FAIL),
+        TerminationReason.FAIL_ADAPTER_PROTOCOL: ("ADAPTER PROTOCOL ERROR", typer.colors.RED, EXIT_FAIL),
+        TerminationReason.FAIL_DIRTY_WORKTREE: ("DIRTY WORKTREE", typer.colors.RED, EXIT_FAIL),
+        TerminationReason.GATE_REJECTED: ("GATE REJECTED", typer.colors.RED, EXIT_FAIL),
+        # Escalations -> exit code 2
+        TerminationReason.ESCALATE_NEEDS_HUMAN: ("NEEDS HUMAN REVIEW", typer.colors.YELLOW, EXIT_ESCALATE),
+        TerminationReason.ESCALATE_AMBIGUOUS: ("AMBIGUOUS (needs input)", typer.colors.YELLOW, EXIT_ESCALATE),
+        TerminationReason.GATE_DEFERRED: ("GATE DEFERRED", typer.colors.YELLOW, EXIT_ESCALATE),
+    }
+
+    info = reason_info.get(result.termination_reason)
+    if info:
+        label, color, exit_code = info
+        symbol = "✓" if exit_code == EXIT_PASS else ("⚠" if exit_code == EXIT_ESCALATE else "✗")
+        typer.secho(f"Result: {symbol} {label}", fg=color, bold=True)
+    else:
+        label = result.termination_reason.value
+        exit_code = EXIT_FAIL
+        typer.secho(f"Result: ? {label}", bold=True)
+
+    if result.error:
+        typer.echo(f"  Error: {result.error}")
+
+    typer.echo(f"  Iterations: {len(result.iterations)}")
+    if result.touched_files:
+        typer.echo(f"  Files touched: {len(result.touched_files)}")
+
+    if result.artifacts_dir:
+        typer.echo(f"  Artifacts: runs/{result.artifacts_dir}/")
+
+    typer.echo(f"{'='*60}")
+
+    # Show dry run command
+    if dry_run and result.dry_run_command:
+        typer.echo(f"\nDry run command:\n  {result.dry_run_command}")
+
+    # Show gate package path
+    if result.artifacts_dir:
+        gate_path = runs_dir / result.artifacts_dir / "gate.md"
+        if gate_path.exists():
+            typer.echo(f"\nGate package: {gate_path}")
+            typer.echo("  Review and approve before committing changes.")
+
+    # Final message based on result
+    if exit_code == EXIT_PASS:
+        if not dry_run:
+            typer.secho("\n✓ Step completed successfully. Review gate.md and commit.", fg=typer.colors.GREEN)
+    elif exit_code == EXIT_ESCALATE:
+        typer.secho("\n⚠ Step requires human review.", fg=typer.colors.YELLOW)
+    else:
+        typer.secho("\n✗ Step failed.", fg=typer.colors.RED)
+
+    raise typer.Exit(exit_code)
+
+
 @app.command()
 def run(
     aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
-    step: int | None = typer.Option(None, "--step", "-s", help="Run specific step number (1-based)"),
-    skip_gates: bool = typer.Option(False, "--skip-gates", help="Skip gate approvals (governance override)"),
+    step: int | None = typer.Option(None, "--step", "-s", help="Run specific step autonomously (1-based). Without this flag, runs interactive HITL mode."),
+    skip_gates: bool = typer.Option(False, "--skip-gates", help="Skip gate approvals (governance override, HITL mode only)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Write input bundle only, don't execute (autonomous mode only)"),
+    allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Allow execution with dirty working tree (autonomous mode only)"),
+    max_iterations: int = typer.Option(3, "--max-iterations", "-m", help="Maximum retry iterations (autonomous mode only)"),
+    adapter: str = typer.Option("codex", "--adapter", help="Agent adapter to use (autonomous mode only)"),
 ):
-    """Run an AIP in guided execution mode with gate approvals."""
-    from spec.cli.interactive import (
-        display_gate_checkpoint,
-        show_gate_checklist,
-        prompt_checklist_completion,
-        prompt_approval_decision,
-        display_step_details,
-        display_approval_summary,
-        confirm_gate_override
-    )
+    """Run an AIP - either in interactive HITL mode or autonomous step execution.
+
+    Without --step: Interactive human-in-the-loop mode with gate approvals.
+    With --step N: Autonomous execution of step N with scope enforcement.
+
+    Autonomous mode (--step N):
+        Executes the full step lifecycle:
+        1. Build step contract with scope constraints
+        2. Run agent (Codex by default)
+        3. Apply patch
+        4. Check scope violations
+        5. Run verification commands
+        6. Retry on verification failure (up to --max-iterations)
+        7. Write gate package for human review
+
+        Exit codes:
+            0 = PASS (step completed successfully)
+            1 = FAIL (scope violation, patch failure, verification failure, protocol error, gate rejected)
+            2 = ESCALATE (needs human review, ambiguous input, gate deferred)
+
+    Examples:
+        spec run                       # Interactive HITL mode
+        spec run --step 1              # Execute step 1 autonomously
+        spec run --step 1 --dry-run    # Preview what would be executed
+        spec run --step 2 --allow-dirty --max-iterations 5
+    """
     from spec.audit import GateAuditLogger
+    from spec.cli.interactive import (
+        confirm_gate_override,
+        display_approval_summary,
+        display_gate_checkpoint,
+        display_step_details,
+        prompt_approval_decision,
+        prompt_checklist_completion,
+        show_gate_checklist,
+    )
 
     # Get config
     config_path, cfg = find_config()
@@ -760,6 +914,25 @@ def run(
     if not aip_path.exists():
         typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
         raise typer.Exit(1)
+
+    # AUTONOMOUS MODE: --step N provided
+    if step is not None:
+        _run_autonomous_step(
+            aip_path=aip_path,
+            step_num=step,
+            dry_run=dry_run,
+            allow_dirty=allow_dirty,
+            max_iterations=max_iterations,
+            adapter=adapter,
+        )
+        return  # Never reached due to typer.Exit in _run_autonomous_step
+
+    # INTERACTIVE HITL MODE: no --step flag
+    # Warn if autonomous-only flags are used
+    if dry_run or allow_dirty or max_iterations != 3 or adapter != "codex":
+        typer.echo("Warning: --dry-run, --allow-dirty, --max-iterations, and --adapter are ignored in interactive mode.", err=True)
+        typer.echo("  Use --step N to run in autonomous mode.", err=True)
+        typer.echo()
 
     # Load AIP
     with open(aip_path) as f:
@@ -797,7 +970,7 @@ def run(
     # Display acceptance criteria
     acceptance_criteria = objective.get("acceptance_criteria", [])
     if acceptance_criteria:
-        typer.echo(f"\n✅ Acceptance Criteria:")
+        typer.echo("\n✅ Acceptance Criteria:")
         for i, criterion in enumerate(acceptance_criteria, 1):
             typer.echo(f"  {i}. {criterion}")
 
@@ -859,7 +1032,7 @@ def run(
             # Tier-specific gate behavior
             if tier == "C":
                 # Tier C: Auto-approve (log only)
-                typer.echo(f"\n📝 [Tier C] Gate auto-approved (checklist logged)")
+                typer.echo("\n📝 [Tier C] Gate auto-approved (checklist logged)")
                 audit_logger.log_approval(
                     step_id=step_id,
                     gate_ref=gate_ref or "unknown",
@@ -911,11 +1084,11 @@ def run(
                     raise typer.Exit(0)
                 elif approval["decision"] in ["approved", "conditional"]:
                     if approval["decision"] == "conditional":
-                        typer.secho(f"\n⚠️  Gate CONDITIONALLY APPROVED", fg=typer.colors.YELLOW)
+                        typer.secho("\n⚠️  Gate CONDITIONALLY APPROVED", fg=typer.colors.YELLOW)
                         typer.echo(f"   Conditions: {approval.get('conditions', '')}")
                     else:
-                        typer.secho(f"\n✅ Gate APPROVED", fg=typer.colors.GREEN)
-                    typer.echo(f"   Proceeding to next step...")
+                        typer.secho("\n✅ Gate APPROVED", fg=typer.colors.GREEN)
+                    typer.echo("   Proceeding to next step...")
 
     # Log execution completion
     exec_logger.log_execution_completed(
@@ -1037,7 +1210,7 @@ def gate_report(
     typer.secho(f"  Conditional: {summary['conditional']}", fg=typer.colors.YELLOW)
 
     if summary["by_gate"]:
-        typer.echo(f"\nBy Gate:")
+        typer.echo("\nBy Gate:")
         for gate_ref, stats in summary["by_gate"].items():
             typer.echo(f"\n  {gate_ref}:")
             typer.echo(f"    Total: {stats['total']}")

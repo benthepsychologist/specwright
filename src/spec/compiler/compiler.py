@@ -15,16 +15,16 @@ def compile_spec(
 ) -> Path:
     """
     Compile a Markdown spec to YAML AIP.
-    
+
     Args:
         spec_path: Path to .md spec file
         output_path: Output path (defaults to spec_path.with_suffix('.compiled.yaml'))
         overwrite: Allow overwriting existing compiled file even if content differs
         validate: Validate Markdown structure during compilation (default: True)
-    
+
     Returns:
         Path to compiled YAML file
-    
+
     Raises:
         ValueError: If compilation fails or round-trip check fails
     """
@@ -67,7 +67,7 @@ def compile_spec(
 def _serialize_canonical(data: dict) -> str:
     """
     Serialize data to YAML with canonical ordering.
-    
+
     - Sort all dict keys
     - Normalize whitespace
     - Strip trailing spaces

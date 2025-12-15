@@ -4,7 +4,7 @@ import json
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class ExecutionAuditLogger:
@@ -242,8 +242,8 @@ class ExecutionAuditLogger:
         aip_id: str,
         project_slug: str,
         status: str,
-        start_git_commit: Optional[str] = None,
-        artifacts_path: Optional[str] = None
+        start_git_commit: str | None = None,
+        artifacts_path: str | None = None
     ) -> None:
         """
         Log execution completion event.
@@ -279,8 +279,8 @@ class ExecutionAuditLogger:
         aip_id: str,
         project_slug: str,
         outcome: str,
-        pr_url: Optional[str] = None,
-        notes: Optional[str] = None
+        pr_url: str | None = None,
+        notes: str | None = None
     ) -> None:
         """
         Log spec closure event.
@@ -308,10 +308,10 @@ class ExecutionAuditLogger:
 
     def get_events(
         self,
-        aip_id: Optional[str] = None,
-        event_type: Optional[str] = None,
-        project_slug: Optional[str] = None,
-        since: Optional[datetime] = None
+        aip_id: str | None = None,
+        event_type: str | None = None,
+        project_slug: str | None = None,
+        since: datetime | None = None
     ) -> list[dict[str, Any]]:
         """
         Query execution history events.
@@ -352,8 +352,8 @@ class ExecutionAuditLogger:
 
     def get_timeline(
         self,
-        project_slug: Optional[str] = None,
-        limit: Optional[int] = None
+        project_slug: str | None = None,
+        limit: int | None = None
     ) -> list[dict[str, Any]]:
         """
         Get chronological timeline of all events.

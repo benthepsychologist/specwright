@@ -122,14 +122,31 @@ Create comprehensive prompts with security, privacy, and safety guardrails:
 
 ### Step 3: Implementation [G1: Code Readiness]
 
+**Role:** agentic
+
 **Prompt:**
 
 Implement with security best practices and strict validation.
 
-**Commands:**
+**Allowed Paths:**
+
+- `src/**`
+- `tests/**`
+- `docs/**`
+
+**Forbidden Paths:**
+
+- `.git/**`
+- `*.lock`
+- `.env*`
+- `secrets/**`
+- `infra/**`
+- `src/core/**`
+
+**Verification Commands:**
 
 ```bash
-ruff .
+ruff check .
 mypy .
 bandit -r src/
 pytest -q

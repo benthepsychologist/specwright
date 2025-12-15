@@ -100,11 +100,27 @@ Generate domain-specific prompts with moderate guardrails:
 
 ### Step 3: Implementation [G1: Code Readiness]
 
+**Role:** agentic
+
 **Prompt:**
 
 Implement feature per plan with standard best practices.
 
-**Commands:**
+**Allowed Paths:**
+
+- `src/**`
+- `tests/**`
+- `docs/**`
+
+**Forbidden Paths:**
+
+- `.git/**`
+- `*.lock`
+- `.env*`
+- `secrets/**`
+- `infra/**`
+
+**Verification Commands:**
 
 ```bash
 ruff check .

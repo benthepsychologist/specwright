@@ -1,0 +1,8 @@
+{
+  "commit": "a3fea103d9fa48cf384a9018fb236dc114add84b",
+  "branch": "main",
+  "dirty": true,
+  "baseline": "a3fea103d9fa48cf384a9018fb236dc114add84b",
+  "codex_sandbox_mode": "read-only",
+  "codex_output_schema_path": "artifacts/schemas/codex_output.schema.json"
+}

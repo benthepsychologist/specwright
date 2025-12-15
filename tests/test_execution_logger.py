@@ -2,8 +2,9 @@
 
 import json
 from datetime import datetime
-from pathlib import Path
+
 import pytest
+
 from spec.audit.execution_logger import ExecutionAuditLogger
 
 
@@ -413,7 +414,6 @@ def test_log_execution_completed_with_diff_stats(logger, tmp_artifacts):
 
 def test_get_events_filter_by_since(logger):
     """Test filtering events by timestamp."""
-    from datetime import datetime, timedelta
 
     # Log first event
     logger.log_spec_created(

@@ -394,8 +394,8 @@
             "pattern": "^[a-z]+-\\d{2,3}$",
             "description": "Step identifier (e.g., plan-01, code-123)"
           },
-          "role": { 
-            "enum": ["planning_agent", "prompting_agent", "coding_agent", "testing_agent", "fine_tuning_agent"]
+          "role": {
+            "enum": ["planning_agent", "prompting_agent", "coding_agent", "testing_agent", "fine_tuning_agent", "agentic"]
           },
           "kind": { 
             "enum": ["plan", "prompt", "code", "test", "learn"]
@@ -532,6 +532,21 @@
             },
             "additionalProperties": false,
             "description": "Gate review checklist and approval metadata"
+          },
+          "allowed_paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns for paths the agent may modify"
+          },
+          "forbidden_paths": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Glob patterns for paths the agent must not touch"
+          },
+          "verification_commands": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Commands to verify step success (must all exit 0)"
           }
         },
         "additionalProperties": false

@@ -1,4 +1,4 @@
-version: '0.1'
+version: "0.1"
 paths:
   specs: specs
   aips: aips
@@ -7,5 +7,5 @@ paths:
 repo:
   default_branch: main
 current:
-  spec: specs/test-claude-integration-simple.md
-  aip: /home/user/specwright/aips/test-claude-integration-simple.yaml
+  spec: specs/spec-run-agent-executor.md
+  aip: /workspace/specwright/aips/spec-run-agent-executor.yaml

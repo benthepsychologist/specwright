@@ -11,14 +11,14 @@ import yaml  # type: ignore[import]
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Deep merge two dictionaries, with override taking precedence.
-    
+
     Args:
         base: Base dictionary (lower precedence)
         override: Override dictionary (higher precedence)
-        
+
     Returns:
         Merged dictionary
-        
+
     Example:
         >>> base = {"a": 1, "b": {"c": 2, "d": 3}}
         >>> override = {"b": {"c": 99}, "e": 5}
@@ -42,15 +42,15 @@ def load_defaults(
     project_root: Path | None = None
 ) -> dict[str, Any]:
     """Load hierarchical defaults for a given tier.
-    
+
     Args:
         tier: Risk tier ("A", "B", or "C")
         policy_packs: Optional list of policy pack names to merge
         project_root: Root directory of the project (defaults to cwd)
-        
+
     Returns:
         Merged defaults dictionary
-        
+
     Precedence (highest to lowest):
         1. Tier-specific defaults (tier-{A,B,C}.yaml)
         2. Project defaults (project.yaml)
@@ -96,14 +96,14 @@ def merge_aip_with_defaults(
     project_root: Path | None = None
 ) -> dict[str, Any]:
     """Merge a sparse AIP with appropriate defaults.
-    
+
     Args:
         aip: The sparse AIP dictionary
         project_root: Root directory of the project (defaults to cwd)
-        
+
     Returns:
         Fully resolved AIP with all defaults applied
-        
+
     Example:
         >>> aip = {
         ...     "metadata": {"risk": "high", "title": "My Feature"},

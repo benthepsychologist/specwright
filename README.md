@@ -200,11 +200,14 @@ Execute an AIP in guided mode with interactive gate approvals.
 # Interactive execution with gate approvals
 spec run
 
-# Run specific step
-spec run --step 3
+# Run specific step with agentic execution
+spec run --step 1
 
-# Override gates (with warning)
-spec run --skip-gates
+# Dry run (write input bundle, don't execute)
+spec run --step 1 --dry-run
+
+# Allow execution on dirty worktree
+spec run --step 1 --allow-dirty
 ```
 
 **What it does**:
@@ -215,11 +218,69 @@ spec run --skip-gates
 - Blocks execution on rejection or deferral
 - Tier C gates auto-approve with logging
 
-**Approval Decisions**:
-- **Approved** ✅ - Proceed to next step
-- **Rejected** ❌ - Halt execution with rationale
-- **Deferred** ⏸️ - Pause for review (resume with `--step`)
-- **Conditional** ⚠️ - Approve with conditions
+**Agentic Step Execution** (`spec run --step N`):
+
+When running a specific step, the executor orchestrates the agent with strict scope enforcement:
+
+```bash
+# Happy path: agent produces valid patch within scope
+$ spec run --step 1
+[AIP-oauth-2024-001] Running step step-001: Add OAuth config
+Baseline: abc123
+Invoking codex adapter...
+Patch applied: src/auth/oauth.py, src/auth/config.py
+Scope check: PASSED (2 files, 0 violations)
+Verification: PASSED (3/3 commands)
+Step completed: PASS
+
+# Where to look:
+runs/AIP-oauth-2024-001/2024-12-15T10-30-00/step-001/
+├── result.json          # {"termination_reason": "PASS", ...}
+├── gate.md              # Human-readable summary
+├── input/
+│   ├── contract.yaml    # Scope constraints
+│   └── prompt.md        # Agent prompt
+└── iter-0/
+    ├── output/
+    │   ├── patch.diff   # Agent's output
+    │   └── agent.json   # Status, notes
+    └── policy_report.json
+```
+
+```bash
+# Failure path: agent touches file outside allowed_paths
+$ spec run --step 1
+[AIP-oauth-2024-001] Running step step-001: Add OAuth config
+Baseline: abc123
+Invoking codex adapter...
+Patch applied: src/auth/oauth.py, config/secrets.yaml
+Scope check: FAILED
+  - config/secrets.yaml: not in allowed paths (src/**)
+
+Step failed: FAIL_SCOPE (exit code 1)
+
+# Diagnose at:
+runs/AIP-oauth-2024-001/2024-12-15T10-31-00/step-001/
+├── result.json          # {"termination_reason": "FAIL_SCOPE", ...}
+├── gate.md              # Shows violation details
+└── iter-0/
+    └── policy_report.json  # {"passed": false, "violations": [...]}
+```
+
+**Exit codes**:
+- `0` = PASS
+- `1` = FAIL_SCOPE, FAIL_PATCH_APPLY, FAIL_VERIFY_*, FAIL_ADAPTER_*, GATE_REJECTED
+- `2` = ESCALATE_NEEDS_HUMAN, ESCALATE_AMBIGUOUS, GATE_DEFERRED
+
+**Note:** Runner verification is authoritative; agent `cmdlog.txt` is advisory (for audit, not enforcement).
+
+See [docs/EXECUTOR.md](docs/EXECUTOR.md) for the full lifecycle and invariants.
+
+**Approval Decisions** (guided mode):
+- **Approved** - Proceed to next step
+- **Rejected** - Halt execution with rationale
+- **Deferred** - Pause for review (resume with `--step`)
+- **Conditional** - Approve with conditions
 
 ### `spec gate-list`
 

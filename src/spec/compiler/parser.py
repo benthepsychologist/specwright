@@ -1,6 +1,5 @@
 """Parse Markdown specifications into structured data."""
 
-import hashlib
 import os
 import re
 from pathlib import Path
@@ -119,7 +118,11 @@ class SpecParser:
                 "prompts": self._extract_prompts(step_body),
                 "commands": self._extract_commands(step_body),
                 "outputs": self._extract_outputs(step_body),
-                "gate_review": self._extract_gate_review(step_body)
+                "gate_review": self._extract_gate_review(step_body),
+                "role": self._extract_role(step_body),
+                "allowed_paths": self._extract_path_list(step_body, "Allowed Paths"),
+                "forbidden_paths": self._extract_path_list(step_body, "Forbidden Paths"),
+                "verification_commands": self._extract_verification_commands(step_body),
             }
 
             steps.append(step)
@@ -130,16 +133,25 @@ class SpecParser:
         self.plan_steps = sorted(steps, key=lambda s: s["index"])
 
     def _extract_prompts(self, text: str) -> list[str]:
-        """Extract prompt sections."""
+        """Extract prompt sections.
+
+        Stops at any known section marker to avoid including executor fields in prompt.
+        """
         prompts = []
         in_prompt = False
         current_prompt = []
+
+        # Section markers that terminate prompt extraction
+        section_markers = (
+            '**Commands:**', '**Outputs:**', '**Allowed Paths:**',
+            '**Forbidden Paths:**', '**Verification Commands:**'
+        )
 
         for line in text.split('\n'):
             if line.startswith('**Prompt:**'):
                 in_prompt = True
                 continue
-            elif line.startswith('**Commands:**') or line.startswith('**Outputs:**'):
+            elif any(line.startswith(marker) for marker in section_markers):
                 if in_prompt and current_prompt:
                     prompts.append('\n'.join(current_prompt).strip())
                     current_prompt = []
@@ -196,6 +208,51 @@ class SpecParser:
                     outputs.append(path)
 
         return outputs
+
+    def _extract_role(self, text: str) -> str | None:
+        """Extract role from step body (e.g., **Role:** agentic)."""
+        match = re.search(r'\*\*Role:\*\*\s*(\w+)', text)
+        return match.group(1).strip() if match else None
+
+    def _extract_path_list(self, text: str, section_name: str) -> list[str]:
+        """Extract a list of paths from a section like **Allowed Paths:** or **Forbidden Paths:**."""
+        paths = []
+        pattern = rf'\*\*{section_name}:\*\*(.*?)(?=\n\*\*|\n###|$)'
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            section_text = match.group(1)
+            # Extract paths from bullet points with backticks or quoted strings
+            for line in section_text.split('\n'):
+                line = line.strip()
+                if line.startswith('-') or line.startswith('*'):
+                    # Try backtick format: - `src/**`
+                    backtick_match = re.search(r'`([^`]+)`', line)
+                    if backtick_match:
+                        paths.append(backtick_match.group(1))
+                    else:
+                        # Try plain format: - src/**
+                        plain_match = re.match(r'^[-*]\s+(.+)$', line)
+                        if plain_match:
+                            paths.append(plain_match.group(1).strip())
+        return paths
+
+    def _extract_verification_commands(self, text: str) -> list[str]:
+        """Extract verification commands from **Verification Commands:** section."""
+        commands = []
+        pattern = r'\*\*Verification Commands:\*\*(.*?)(?=\n\*\*[A-Z]|\n###|$)'
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            section_text = match.group(1)
+            # Extract commands from code blocks
+            code_block_pattern = re.compile(r'```(?:\w+)?\n(.*?)```', re.DOTALL)
+            for block_match in code_block_pattern.finditer(section_text):
+                code = block_match.group(1).strip()
+                # Split by newlines to get individual commands
+                for line in code.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        commands.append(line)
+        return commands
 
     def _extract_gate_review(self, text: str) -> dict[str, Any] | None:
         """Extract gate review block from step body.
@@ -348,9 +405,12 @@ class SpecParser:
         schema_steps = []
         for step in steps:
             # Map our fields to schema fields
+            # Use parsed role if available, otherwise default to coding_agent
+            role = step.get("role") or "coding_agent"
+
             schema_step = {
                 "step_id": f"step-{step['index']:03d}",
-                "role": "coding_agent",  # Default role
+                "role": role,
                 "kind": "code",  # Default kind
                 "description": step.get("title", ""),
             }
@@ -373,6 +433,16 @@ class SpecParser:
             # Add gate_ref if present
             if step.get("gate_ref"):
                 schema_step["gate_ref"] = step["gate_ref"]
+
+            # Add executor fields if present (for agentic steps)
+            if step.get("allowed_paths"):
+                schema_step["allowed_paths"] = step["allowed_paths"]
+
+            if step.get("forbidden_paths"):
+                schema_step["forbidden_paths"] = step["forbidden_paths"]
+
+            if step.get("verification_commands"):
+                schema_step["verification_commands"] = step["verification_commands"]
 
             schema_steps.append(schema_step)
 

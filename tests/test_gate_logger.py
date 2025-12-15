@@ -1,8 +1,9 @@
 """Tests for audit.logger (gate audit logger) module."""
 
 import json
-from pathlib import Path
+
 import pytest
+
 from spec.audit.logger import GateAuditLogger
 
 

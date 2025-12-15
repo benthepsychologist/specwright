@@ -1,0 +1,17 @@
+{
+  "aip_id": "AIP-spec-run-executor-2025-12-13-001",
+  "step_idx": 0,
+  "step_id": "step-000",
+  "baseline_sha": "a3fea103d9fa48cf384a9018fb236dc114add84b",
+  "adapter_name": "codex",
+  "termination_reason": "FAIL_DIRTY_WORKTREE",
+  "iterations_attempted": 0,
+  "artifacts_dir": "AIP-spec-run-executor-2025-12-13-001/2025-12-15T14-53-06/step-000",
+  "final_patch_path": null,
+  "touched_files": [],
+  "details": {
+    "error_message": "Working tree is dirty. Use --allow-dirty to override."
+  },
+  "dry_run": false,
+  "timestamp": "2025-12-15T14:53:06.713299+00:00"
+}
