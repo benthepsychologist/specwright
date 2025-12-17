@@ -167,7 +167,7 @@ class StepRunner:
             )
 
         step = steps[step_idx]
-        step_id = step.get("id", f"step-{step_idx:03d}")
+        step_id = step.get("step_id") or step.get("id", f"step-{step_idx:03d}")
 
         # Create run directory early so we can write artifacts on ANY failure
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
@@ -659,11 +659,14 @@ class StepRunner:
 
     def _build_prompt(self, step: dict[str, Any], contract: StepContract) -> str:
         """Build the prompt for the agent."""
+        step_id = step.get("step_id") or step.get("id", "unknown")
+        # Support both 'prompt' and 'description' fields for step objective
+        prompt_text = step.get("prompt") or step.get("description", "No prompt provided.")
         prompt_parts = [
-            f"# Step: {step.get('id', 'unknown')}",
+            f"# Step: {step_id}",
             "",
             "## Objective",
-            step.get("prompt", "No prompt provided."),
+            prompt_text,
             "",
             "## Scope Constraints",
             "",

@@ -1,0 +1,111 @@
+aip_id: AIP-specwright-2025-12-17-001
+context:
+  background: 'The current Codex adapter has reliability issues:
+
+    - Timeouts after 600s on straightforward tasks
+
+    - Goes off-task, implementing unrelated changes
+
+    - Produces changes that don''t match the step objective
+
+
+    Claude Code CLI offers better task adherence, but the original spec assumed fully autonomous "oneshot"
+    execution. In practice, **babysitting** (human intervention during execution) is the realistic workflow
+    for now.'
+  constraints:
+  - Must maintain same output artifact format as Codex adapter for runner compatibility
+  - Do not modify `runner.py` or CLI** - mode selection via contract.yaml only
+  - Should not modify `base.py`
+  - Keep implementation focused - command safety checks are less critical when babysitting
+  - Interactive mode artifacts are produced by Claude (instructed via prompt) with adapter backfill as
+    safety net
+created: '2025-12-17T10:02:21.023311+00:00'
+meta:
+  created_at: '2025-12-17T10:02:21.023311+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - '`ClaudeAdapter` class implements `AgentAdapter` interface (verify, execute, name property)'
+  - Adapter registered in `_ADAPTERS` registry in `__init__.py`
+  - '`spec run --adapter claude` selects the Claude adapter'
+  - '`interactive` (default): Launches Claude TUI, records full transcript'
+  - '`oneshot`: Uses `--print --output-format json` for non-interactive execution'
+  - Mode is configured via `adapter` section in `contract.yaml`, NOT via CLI flags
+  - '`patch.diff` - Unified diff of changes'
+  - '`agent.json` - Agent report (schema below)'
+  - '`cmdlog.txt` - Command execution log'
+  - '`claude.transcript.txt` - Full TUI transcript (via `script` or PTY fallback)'
+  - '`repo_state_before.json` - Git state before execution'
+  - '`repo_state_after.json` - Git state after execution'
+  - Transcript recording via `script` if available; Python PTY fallback otherwise
+  - '`SPEC_OUTPUT_DIR` env var set for Claude to know where to write artifacts'
+  - Adapter backfills missing artifacts from git state (with protocol warning)
+  - Timeout is advisory (warning), not a hard kill
+  - Uses `--json-schema` for structured output enforcement
+  - Timeout causes hard kill + `ProtocolError`
+  - '`agent.json` shallow validation: JSON parse + required keys exist'
+  - CI green (ruff + pytest)
+  - Tests cover adapter verification, mode selection, artifact validation, backfill logic
+  goal: Add Claude Code CLI as an alternative agent adapter with interactive babysitting support
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-17-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- description: Implementation
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  prompt: "Create a Claude adapter for specwright that implements the AgentAdapter interface with dual-mode\
+    \ support.\n**File: `src/spec/executor/adapters/claude.py`**\n```python\n# Required structure - implement\
+    \ these\nclass ClaudeAdapter(AgentAdapter):\n    def __init__(self) -> None:\n        self._verified\
+    \ = False\n        self._script_available = False  # Set in verify()\n    @property\n    def name(self)\
+    \ -> str:\n        return \"claude\"\n    def verify(self) -> None:\n        # 1. Check `claude` CLI\
+    \ exists (shutil.which)\n        # 2. Check `script` exists for transcript recording\n        #  \
+    \  - If missing, set self._script_available = False (will use PTY fallback)\n        # 3. Set self._verified\
+    \ = True\n    def execute(self, input_dir, output_dir, repo_root, timeout=600) -> None:\n        #\
+    \ 1. Ensure verified\n        # 2. Read contract.yaml from input_dir, extract adapter.mode (default:\
+    \ \"interactive\")\n        # 3. Dispatch to _execute_interactive or _execute_oneshot\n    def _execute_interactive(self,\
+    \ input_dir, output_dir, repo_root, timeout) -> None:\n        # 1. Capture repo_state_before.json\n\
+    \        # 2. Build prompt with artifact instructions (include SPEC_OUTPUT_DIR path)\n        # 3.\
+    \ Launch claude via script or PTY fallback\n        #    - Set env: SPEC_OUTPUT_DIR=str(output_dir)\n\
+    \        #    - Command: claude --dangerously-skip-permissions -p \"<prompt>\"\n        # 4. Wait\
+    \ for exit (timeout is advisory - just log warning if exceeded)\n        # 5. Capture repo_state_after.json\n\
+    \        # 6. Validate artifacts exist; backfill missing ones\n        # 7. Validate agent.json has\
+    \ required keys\n    def _execute_oneshot(self, input_dir, output_dir, repo_root, timeout) -> None:\n\
+    \        # 1. Build prompt from prompt.md\n        # 2. Run: claude --print --output-format json --json-schema\
+    \ <path> --dangerously-skip-permissions \"<prompt>\"\n        # 3. Parse JSON output\n        # 4.\
+    \ Extract and write patch.diff, agent.json, cmdlog.txt\n        # 5. Hard timeout enforcement\n  \
+    \  def _capture_repo_state(self, repo_root) -> dict:\n        # Returns {\"commit\": \"<sha>\", \"\
+    status\": \"<porcelain>\"}\n    def _backfill_artifacts(self, output_dir, repo_root) -> list[str]:\n\
+    \        # Returns list of warnings for backfilled artifacts\n    def _validate_agent_json(self, agent_json_path)\
+    \ -> None:\n        # Parse JSON, check required keys exist\n        # Raise ProtocolError if invalid\n\
+    ```\n**Prompt construction for interactive mode:**\n```python\nINTERACTIVE_PROMPT_TEMPLATE = '''\n\
+    {task_prompt}"
+  role: agentic
+  step_id: step-001
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/claude-adapter-for-specwright
+spec_version: 1.0.0
+tier: C
+title: Claude adapter for specwright
+updated: '2025-12-17T13:00:00+00:00'
+version: '0.1'
+

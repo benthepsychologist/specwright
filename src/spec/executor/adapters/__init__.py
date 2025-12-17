@@ -15,6 +15,7 @@ from spec.executor.adapters.base import (
     ProtocolError,
     ToolNotFoundError,
 )
+from spec.executor.adapters.claude import ClaudeAdapter
 from spec.executor.adapters.codex import CodexAdapter
 
 if TYPE_CHECKING:
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 # Registry of available adapters (folded into __init__ for simplicity)
 _ADAPTERS: dict[str, type[AgentAdapter]] = {
     "codex": CodexAdapter,
+    "claude": ClaudeAdapter,
 }
 
 
@@ -71,6 +73,7 @@ def register_adapter(name: str, adapter_class: type[AgentAdapter]) -> None:
 __all__ = [
     "AdapterError",
     "AgentAdapter",
+    "ClaudeAdapter",
     "CodexAdapter",
     "EscalationRequired",
     "ProtocolError",

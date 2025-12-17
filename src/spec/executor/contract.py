@@ -225,7 +225,7 @@ def build_contract(
 
     codex_config = CodexConfig(
         sandbox_mode="read-only",
-        output_schema_path="artifacts/schemas/codex_output.schema.json",
+        output_schema_path=".specwright/artifacts/schemas/codex_output.schema.json",
     )
 
     return StepContract(

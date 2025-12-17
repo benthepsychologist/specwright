@@ -183,14 +183,21 @@ def init(
     with open(config_path, "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
 
-    # Create .specwright directory and copy guide
+    # Create .specwright directory structure
     spec_dir = Path.cwd() / ".specwright"
     spec_dir.mkdir(exist_ok=True)
 
-    # Copy GUIDE.md to .specwright/
+    # Create subdirectories
+    (spec_dir / "aips").mkdir(exist_ok=True)
+    (spec_dir / "runs").mkdir(exist_ok=True)
+    (spec_dir / "artifacts" / "schemas").mkdir(parents=True, exist_ok=True)
+
+    # Copy GUIDE.md and schemas to .specwright/
     try:
         from importlib.resources import files
         package_files = files("spec")
+
+        # Copy GUIDE.md
         guide_file = package_files / "templates" / "GUIDE.md"
         if hasattr(guide_file, "read_text"):
             guide_content = guide_file.read_text()  # type: ignore[attr-defined]
@@ -199,6 +206,21 @@ def init(
             typer.echo(f"✓ Created {guide_dest}")
     except Exception:
         # Silently skip if guide not found (development mode)
+        pass
+
+    # Copy codex_output.schema.json
+    try:
+        # Try package resources first
+        from importlib.resources import files as pkg_files
+        package_files = pkg_files("spec")
+        # Schema might be in artifacts/schemas relative to package root
+        schema_source = Path(__file__).parent.parent.parent.parent / "artifacts" / "schemas" / "codex_output.schema.json"
+        if schema_source.exists():
+            schema_dest = spec_dir / "artifacts" / "schemas" / "codex_output.schema.json"
+            schema_dest.write_text(schema_source.read_text())
+            typer.echo(f"✓ Created {schema_dest}")
+    except Exception:
+        # Silently skip if schema not found
         pass
 
     # Copy Claude Code slash commands if requested
@@ -769,8 +791,8 @@ def _run_autonomous_step(
         typer.secho("  Mode: DRY RUN (preview only)", fg=typer.colors.YELLOW)
     typer.echo(f"{'='*60}\n")
 
-    # Initialize runner
-    runs_dir = project_root / "runs"
+    # Initialize runner - runs live under .specwright/
+    runs_dir = project_root / ".specwright" / "runs"
     runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
 
     # Execute step
@@ -823,7 +845,7 @@ def _run_autonomous_step(
         typer.echo(f"  Files touched: {len(result.touched_files)}")
 
     if result.artifacts_dir:
-        typer.echo(f"  Artifacts: runs/{result.artifacts_dir}/")
+        typer.echo(f"  Artifacts: .specwright/runs/{result.artifacts_dir}/")
 
     typer.echo(f"{'='*60}")
 

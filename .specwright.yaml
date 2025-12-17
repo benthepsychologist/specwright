@@ -1,11 +1,12 @@
-version: "0.1"
+version: '0.4'
 paths:
-  specs: specs
-  aips: aips
-  templates: config/templates/specs
-  schemas: config/schemas
+  specs: .specwright/specs
+  aips: .specwright/aips
 repo:
   default_branch: main
+user:
+  default_owner: benthepsychologist
+  default_tier: C
 current:
-  spec: specs/spec-run-agent-executor.md
-  aip: /workspace/specwright/aips/spec-run-agent-executor.yaml
+  spec: .specwright/specs/claude-adapter-for-specwright.md
+  aip: /workspace/specwright/.specwright/aips/claude-adapter-for-specwright.yaml

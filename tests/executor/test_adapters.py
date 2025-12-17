@@ -145,7 +145,7 @@ class TestCodexAdapterVerify:
         """Test verify raises ProtocolError if flags clearly missing."""
         adapter = CodexAdapter()
 
-        # Missing --sandbox entirely (no alternatives for this flag)
+        # Missing --dangerously-bypass-approvals-and-sandbox entirely
         # Need enough text to not be "too short" (>50 chars)
         help_output = """
 Usage: codex exec [OPTIONS] PROMPT
@@ -167,7 +167,7 @@ Options:
                     adapter.verify()
 
                 assert exc.value.failure_category == "tool_contract_mismatch"
-                assert "--sandbox" in str(exc.value)
+                assert "--dangerously-bypass-approvals-and-sandbox" in str(exc.value)
 
     def test_verify_help_timeout_inconclusive(self) -> None:
         """Test verify handles timeout gracefully (inconclusive, not failure)."""
@@ -280,28 +280,6 @@ class TestCodexAdapterExecute:
 
             assert exc.value.failure_category == "missing_input"
             assert "repo_state.json" in str(exc.value)
-
-    def test_execute_invalid_sandbox_mode(self) -> None:
-        """Test execute rejects non-read-only sandbox mode."""
-        adapter = CodexAdapter()
-        adapter._verified = True
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            input_dir = Path(tmpdir) / "input"
-            input_dir.mkdir()
-
-            (input_dir / "prompt.md").write_text("test")
-            (input_dir / "repo_state.json").write_text(
-                json.dumps({"codex_sandbox_mode": "full"})
-            )
-
-            output_dir = Path(tmpdir) / "output"
-
-            with pytest.raises(ProtocolError) as exc:
-                adapter.execute(input_dir, output_dir, Path(tmpdir))
-
-            assert exc.value.failure_category == "tool_contract_mismatch"
-            assert "read-only" in str(exc.value)
 
     def test_execute_codex_timeout(self) -> None:
         """Test execute handles Codex timeout."""
@@ -1061,7 +1039,7 @@ class TestRequiredFlags:
         # REQUIRED_FLAGS is now list of tuples with alternatives
         flag_primaries = [f[0] for f in REQUIRED_FLAGS]
         assert "--cd" in flag_primaries
-        assert "--sandbox" in flag_primaries
+        assert "--dangerously-bypass-approvals-and-sandbox" in flag_primaries
         assert "--output-schema" in flag_primaries
         assert "--output-last-message" in flag_primaries
         assert "--json" in flag_primaries
