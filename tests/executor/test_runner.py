@@ -175,7 +175,7 @@ class TestStepRunnerInit:
         runner = StepRunner(repo_root=mock_repo)
         assert runner.repo_root == mock_repo
         assert runner.runs_dir == mock_repo / "runs"
-        assert runner.adapter_name == "codex"
+        assert runner.adapter_name == "claude"
 
     def test_init_with_custom_runs_dir(self, mock_repo: Path, tmp_path: Path) -> None:
         """Test StepRunner with custom runs directory."""
@@ -198,8 +198,8 @@ class TestStepRunnerDryRun:
         assert result.dry_run is True
         assert result.termination_reason == TerminationReason.PASS
         assert result.dry_run_command is not None
-        assert "codex" in result.dry_run_command
-        assert "--sandbox" in result.dry_run_command
+        assert "claude" in result.dry_run_command
+        assert "--input" in result.dry_run_command
 
     def test_dry_run_writes_contract(
         self, mock_repo: Path, sample_aip: dict[str, Any]
@@ -353,7 +353,7 @@ class TestStepRunnerExecution:
         runner = StepRunner(repo_root=mock_repo)
 
         def mock_execute(input_dir: Path, output_dir: Path, repo_root: Path) -> None:
-            raise ToolNotFoundError("codex")
+            raise ToolNotFoundError("claude")
 
         runner._adapter.execute = mock_execute
 
@@ -605,13 +605,13 @@ class TestRenderGatePackage:
             aip_id="AIP-test",
             termination_reason=TerminationReason.PASS,
             dry_run=True,
-            dry_run_command="codex exec --sandbox read-only ...",
+            dry_run_command="claude --input /tmp/input --output /tmp/output",
         )
 
         markdown = render_gate_package(result, Path("/tmp"))
 
         assert "Dry Run" in markdown
-        assert "codex exec" in markdown
+        assert "claude --input" in markdown
 
 
 class TestArtifactTreeCompleteness:
@@ -705,7 +705,7 @@ class TestArtifactTreeCompleteness:
         assert result_json["step_id"] == "step-001"
         assert result_json["step_idx"] == 0
         assert result_json["termination_reason"] == "PASS"
-        assert result_json["adapter_name"] == "codex"
+        assert result_json["adapter_name"] == "claude"
         assert result_json["baseline_sha"] is not None
 
     def test_fail_adapter_protocol_artifacts(

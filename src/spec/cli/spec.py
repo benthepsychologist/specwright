@@ -208,15 +208,15 @@ def init(
         # Silently skip if guide not found (development mode)
         pass
 
-    # Copy codex_output.schema.json
+    # Copy claude_output.schema.json
     try:
         # Try package resources first
         from importlib.resources import files as pkg_files
         package_files = pkg_files("spec")
         # Schema might be in artifacts/schemas relative to package root
-        schema_source = Path(__file__).parent.parent.parent.parent / "artifacts" / "schemas" / "codex_output.schema.json"
+        schema_source = Path(__file__).parent.parent.parent.parent / "artifacts" / "schemas" / "claude_output.schema.json"
         if schema_source.exists():
-            schema_dest = spec_dir / "artifacts" / "schemas" / "codex_output.schema.json"
+            schema_dest = spec_dir / "artifacts" / "schemas" / "claude_output.schema.json"
             schema_dest.write_text(schema_source.read_text())
             typer.echo(f"✓ Created {schema_dest}")
     except Exception:
@@ -742,6 +742,56 @@ EXIT_FAIL = 1  # FAIL_* termination reasons
 EXIT_ESCALATE = 2  # ESCALATE_* termination reasons
 
 
+def _show_commit_suggestions(project_root: Path, step_def: dict, step_num: int) -> None:
+    """
+    Show git status and suggested commit commands after step completion.
+
+    This does NOT auto-commit - it prints commands for the user to run.
+    """
+    import subprocess
+
+    step_id = step_def.get("step_id") or step_def.get("id", f"step-{step_num:03d}")
+    step_desc = step_def.get("description", "")
+
+    typer.echo(f"\n{'='*60}")
+    typer.secho("Review changes before committing:", bold=True)
+    typer.echo(f"{'='*60}")
+
+    # Get and display git status
+    typer.echo("\nGit Status:")
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            status_output = result.stdout.strip()
+            if status_output:
+                for line in status_output.split("\n"):
+                    typer.echo(f"  {line}")
+            else:
+                typer.echo("  (no changes)")
+        else:
+            typer.echo("  (could not get git status)")
+    except FileNotFoundError:
+        typer.echo("  (git not found)")
+
+    # Build commit message
+    commit_msg = f"spec: {step_id}"
+    if step_desc:
+        # Truncate description if too long
+        desc_short = step_desc[:50] + "..." if len(step_desc) > 50 else step_desc
+        commit_msg = f"spec: {step_id} - {desc_short}"
+
+    # Display suggested commands
+    typer.echo("\nSuggested commit commands:")
+    typer.secho("  git add -A", fg=typer.colors.CYAN)
+    typer.secho(f'  git commit -m "{commit_msg}"', fg=typer.colors.CYAN)
+    typer.echo(f"{'='*60}")
+
+
 def _run_autonomous_step(
     aip_path: Path,
     step_num: int,
@@ -869,7 +919,9 @@ def _run_autonomous_step(
     # Final message based on result
     if exit_code == EXIT_PASS:
         if not dry_run:
-            typer.secho("\n✓ Step completed successfully. Review gate.md and commit.", fg=typer.colors.GREEN)
+            typer.secho("\n✓ Step completed successfully.", fg=typer.colors.GREEN)
+            # Show git status and suggested commit commands
+            _show_commit_suggestions(project_root, step_def, step_num)
     elif exit_code == EXIT_ESCALATE:
         typer.secho("\n⚠ Step requires human review.", fg=typer.colors.YELLOW)
     else:
@@ -896,7 +948,7 @@ def run(
     Autonomous mode (--step N):
         Executes the full step lifecycle:
         1. Build step contract with scope constraints
-        2. Run agent (Codex by default)
+        2. Run agent (Claude by default)
         3. Apply patch
         4. Check scope violations
         5. Run verification commands

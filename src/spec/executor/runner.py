@@ -79,7 +79,7 @@ class StepResult:
     # Execution context (for result.json)
     step_idx: int = -1
     baseline_sha: str | None = None
-    adapter_name: str = "codex"
+    adapter_name: str = "claude"
     artifacts_dir: str | None = None
     # Iteration results
     iterations: list[IterationResult] = field(default_factory=list)
@@ -112,7 +112,7 @@ class StepRunner:
         self,
         repo_root: Path,
         runs_dir: Path | None = None,
-        adapter_name: str = "codex",
+        adapter_name: str = "claude",
     ) -> None:
         """
         Initialize the step runner.
@@ -120,7 +120,7 @@ class StepRunner:
         Args:
             repo_root: Path to repository root
             runs_dir: Directory for run artifacts (default: repo_root/runs)
-            adapter_name: Name of adapter to use (default: codex)
+            adapter_name: Name of adapter to use (default: claude)
         """
         self.repo_root = repo_root.resolve()
         self.runs_dir = runs_dir or (self.repo_root / "runs")
@@ -242,19 +242,19 @@ class StepRunner:
             "branch": repo_state.branch,
             "dirty": repo_state.dirty,
             "baseline": repo_state.baseline,
-            "codex_sandbox_mode": contract.codex_config.sandbox_mode,
-            "codex_output_schema_path": contract.codex_config.output_schema_path,
+            "adapter": contract.adapter,
         }
         (input_dir / "repo_state.json").write_text(json.dumps(repo_state_dict, indent=2))
 
         # Dry run: stop here
         if dry_run:
-            codex_cmd = self._build_codex_command(input_dir, output_dir, contract)
+            # Build a generic dry-run command showing input/output paths
+            dry_run_cmd = f"claude --input {input_dir} --output {output_dir}"
             result = make_result(
                 TerminationReason.PASS,
                 baseline=repo_state.baseline,
                 dry_run=True,
-                dry_run_command=" ".join(codex_cmd),
+                dry_run_command=dry_run_cmd,
             )
             return self._finalize_artifacts(result, run_dir)
 
@@ -266,10 +266,23 @@ class StepRunner:
         policy_report: dict[str, Any] | None = None
         verification_report: dict[str, Any] | None = None
 
+        # Soft determinism: Skip git reset on iter-0 for Claude interactive mode
+        # This allows Claude to work with the current repo state rather than
+        # forcing a reset, which is useful for interactive/iterative workflows
+        is_soft_determinism = (
+            self.adapter_name == "claude"
+            and contract.adapter.get("mode") == "interactive"
+        )
+
         for iteration in range(max_iterations):
-            # Reset to baseline before EVERY iteration (including iter-0)
-            # This ensures deterministic starting state
-            self._reset_to_baseline(baseline)
+            # Reset to baseline before iteration (deterministic starting state)
+            # Skip reset on iter-0 for soft determinism mode
+            should_reset = True
+            if iteration == 0 and is_soft_determinism:
+                should_reset = False
+
+            if should_reset:
+                self._reset_to_baseline(baseline)
 
             iter_result = self._run_iteration(
                 iteration=iteration,
@@ -634,7 +647,10 @@ class StepRunner:
 
     def _finalize_artifacts(self, result: StepResult, run_dir: Path) -> StepResult:
         """
-        Write final artifacts (result.json, gate.md, final reports) and return result.
+        Write final artifacts (result.json, gate.md, final reports, step.summary.json).
+
+        This method is called for ALL termination paths (success, failure, escalation,
+        protocol error) to ensure artifacts are always written for debugging/audit.
 
         Args:
             result: Step execution result
@@ -654,6 +670,22 @@ class StepRunner:
         self._artifact_writer.write_final_reports(
             run_dir, result.policy_report, result.verification_report
         )
+
+        # Write step.summary.json (always, even on failure/escalation)
+        # This provides a quick-reference summary for downstream tooling
+        summary = {
+            "step_id": result.step_id,
+            "aip_id": result.aip_id,
+            "termination_reason": result.termination_reason.value,
+            "iterations_attempted": len(result.iterations),
+            "passed": result.termination_reason == TerminationReason.PASS,
+            "error": result.error,
+            "touched_files_count": len(result.touched_files),
+            "adapter_name": result.adapter_name,
+            "artifacts_dir": result.artifacts_dir,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        (run_dir / "step.summary.json").write_text(json.dumps(summary, indent=2))
 
         return result
 
@@ -711,29 +743,6 @@ class StepRunner:
         )
 
         return "\n".join(prompt_parts)
-
-    def _build_codex_command(
-        self,
-        input_dir: Path,
-        output_dir: Path,
-        contract: StepContract,
-    ) -> list[str]:
-        """Build the codex command for dry-run display."""
-        return [
-            "codex",
-            "exec",
-            "--cd",
-            str(self.repo_root),
-            "--sandbox",
-            contract.codex_config.sandbox_mode,
-            "--output-schema",
-            str(self.repo_root / contract.codex_config.output_schema_path),
-            "--output-last-message",
-            str(output_dir / "last_message.json"),
-            "--json",
-            "<",
-            str(input_dir / "prompt.md"),
-        ]
 
     def _build_failure_context(
         self,

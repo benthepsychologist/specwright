@@ -7,7 +7,7 @@ Autonomous step execution with scope enforcement and agent adapters.
 from spec.executor.adapters import (
     AdapterError,
     AgentAdapter,
-    CodexAdapter,
+    ClaudeAdapter,
     ProtocolError,
     ToolNotFoundError,
     get_adapter,
@@ -23,7 +23,6 @@ from spec.executor.artifacts import (
     write_input_bundle,
 )
 from spec.executor.contract import (
-    CodexConfig,
     EscalationRequired,
     StepContract,
     build_contract,
@@ -57,7 +56,6 @@ from spec.executor.verify import (
 __all__ = [
     # Contract
     "StepContract",
-    "CodexConfig",
     "EscalationRequired",
     "build_contract",
     "save_contract",
@@ -85,7 +83,7 @@ __all__ = [
     "AdapterError",
     "AdapterEscalationRequired",
     "AgentAdapter",
-    "CodexAdapter",
+    "ClaudeAdapter",
     "ProtocolError",
     "ToolNotFoundError",
     "get_adapter",

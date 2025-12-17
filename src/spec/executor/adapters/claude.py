@@ -22,7 +22,6 @@ import yaml
 
 from spec.executor.adapters.base import (
     AgentAdapter,
-    EscalationRequired,
     ProtocolError,
     ToolNotFoundError,
 )
@@ -213,12 +212,12 @@ class ClaudeAdapter(AgentAdapter):
         # Validate agent.json
         self._validate_agent_json(output_dir / "agent.json")
 
-        # Interactive session ended - raise EscalationRequired to prevent retry loop
-        # This signals to the runner that a human was involved and no auto-retry should occur
-        raise EscalationRequired(
-            "Interactive Claude session ended. Human review required before proceeding.",
-            violations=["interactive_session_ended"],
-        )
+        # Interactive session completed successfully - return normally
+        # The runner will handle escalation decisions based on:
+        # - Scope violations (FAIL_SCOPE)
+        # - Verification failures (FAIL_VERIFY_RETRYABLE)
+        # - agent.json needs_human flag (ESCALATE_NEEDS_HUMAN)
+        logger.info("Interactive Claude session completed successfully")
 
     def _run_with_script(
         self,

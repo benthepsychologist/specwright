@@ -1,0 +1,40 @@
+{
+  "passed": false,
+  "timestamp": "2025-12-17T15:57:36.432462+00:00",
+  "failure_category": "type_failure",
+  "summary": {
+    "total_commands": 3,
+    "passed_commands": 1,
+    "failed_commands": 2,
+    "total_duration_ms": 3710
+  },
+  "commands": [
+    {
+      "command": "ruff check .",
+      "exit_code": 0,
+      "success": true,
+      "duration_ms": 10,
+      "timed_out": false,
+      "stdout_tail": "All checks passed!\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "mypy .",
+      "exit_code": 1,
+      "success": false,
+      "duration_ms": 139,
+      "timed_out": false,
+      "stdout_tail": "-assign]\ntests/executor/test_runner.py:474: error: Incompatible types in assignment (expression has type \"Callable[[Path, Path, Path], None]\", variable has type \"Callable[[Path, Path, Path, int], None]\")  [assignment]\ntests/executor/test_runner.py:503: error: Cannot assign to a method  [method-assign]\ntests/executor/test_runner.py:503: error: Incompatible types in assignment (expression has type \"Callable[[Path, Path, Path], None]\", variable has type \"Callable[[Path, Path, Path, int], None]\")  [assignment]\ntests/executor/test_runner.py:527: error: Cannot assign to a method  [method-assign]\ntests/executor/test_runner.py:527: error: Incompatible types in assignment (expression has type \"Callable[[Path, Path, Path], None]\", variable has type \"Callable[[Path, Path, Path, int], None]\")  [assignment]\ntests/executor/test_runner.py:555: error: Cannot assign to a method  [method-assign]\ntests/executor/test_runner.py:555: error: Incompatible types in assignment (expression has type \"Callable[[Path, Path, Path], None]\", variable has type \"Callable[[Path, Path, Path, int], None]\")  [assignment]\ntests/executor/test_adapters.py:184: error: Unsupported right operand type for in (\"str | None\")  [operator]\ntests/executor/test_adapters.py:199: error: Unsupported right operand type for in (\"str | None\")  [operator]\nsrc/spec/cli/spec.py:14: error: Cannot find implementation or library stub for module named \"importlib_resources\"  [import-not-found]\nsrc/spec/cli/spec.py:14: note: Error code \"import-not-found\" not covered by \"type: ignore\" comment\nsrc/spec/cli/spec.py:14: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports\nsrc/spec/cli/spec.py:14: error: Name \"files\" already defined (possibly by an import)  [no-redef]\nsrc/spec/cli/spec.py:14: note: Error code \"no-redef\" not covered by \"type: ignore\" comment\nsrc/spec/cli/spec.py:1180: error: Item \"None\" of \"Any | None\" has no attribute \"upper\"  [union-attr]\nFound 51 errors in 8 files (checked 36 source files)\n",
+      "stderr_tail": ""
+    },
+    {
+      "command": "pytest",
+      "exit_code": 1,
+      "success": false,
+      "duration_ms": 3561,
+      "timed_out": false,
+      "stdout_tail": " 0xffff9f3bd090>\naip_with_plan = (PosixPath('/tmp/pytest-of-developer/pytest-145/test_run_with_step_calls_auton0/test-project'), PosixPath('/tmp/pytest-of-developer/pytest-145/test_run_with_step_calls_auton0/test-project/test-aip.yaml'))\nmonkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xffff9e1756e0>\n\n    def test_run_with_step_calls_autonomous_runner(self, aip_with_plan, monkeypatch):\n        \"\"\"Test that `spec run --step N` dispatches to autonomous runner.\"\"\"\n        import os\n    \n        project_dir, aip_path = aip_with_plan\n        old_cwd = os.getcwd()\n    \n        # Track if _run_autonomous_step was called and with what args\n        captured_args = {}\n    \n        def mock_autonomous_step(aip_path, step_num, dry_run, allow_dirty, max_iterations, adapter):\n            captured_args[\"step_num\"] = step_num\n            captured_args[\"dry_run\"] = dry_run\n            captured_args[\"adapter\"] = adapter\n            # Simulate successful execution by raising Exit(0)\n            raise SystemExit(0)\n    \n        monkeypatch.setattr(\"spec.cli.spec._run_autonomous_step\", mock_autonomous_step)\n    \n        try:\n            os.chdir(project_dir)\n            runner.invoke(app, [\"run\", str(aip_path), \"--step\", \"1\"])\n    \n            # Verify autonomous mode was called with correct args\n            assert \"step_num\" in captured_args, \"Autonomous runner should be called with --step\"\n            assert captured_args[\"step_num\"] == 1\n            assert captured_args[\"dry_run\"] is False\n>           assert captured_args[\"adapter\"] == \"codex\"\nE           AssertionError: assert 'claude' == 'codex'\nE             \nE             - codex\nE             + claude\n\ntests/cli/test_cli_workflow.py:656: AssertionError\n=========================== short test summary info ============================\nFAILED tests/cli/test_cli_workflow.py::TestAutonomousModeDispatch::test_run_with_step_calls_autonomous_runner\n======================== 1 failed, 361 passed in 3.13s =========================\n",
+      "stderr_tail": ""
+    }
+  ]
+}

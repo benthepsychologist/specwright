@@ -1,6 +1,6 @@
 """End-to-end integration tests for the executor.
 
-These tests verify the full step execution lifecycle with mocked Codex subprocess,
+These tests verify the full step execution lifecycle with mocked Claude adapter,
 testing all execution paths: success, scope violation, retry, max iterations,
 dirty worktree, dry run, and forbidden command detection.
 """
@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from spec.executor import StepRunner, TerminationReason
-from spec.executor.adapters import CodexAdapter, ProtocolError
+from spec.executor.adapters import ClaudeAdapter, ProtocolError
 
 # =============================================================================
 # Fixtures
@@ -127,7 +127,7 @@ def make_write_outputs(
 
 
 # =============================================================================
-# E2E Test: Success Path with Mocked Codex
+# E2E Test: Success Path with Mocked Claude
 # =============================================================================
 
 
@@ -135,7 +135,7 @@ class TestE2ESuccessPath:
     """E2E tests for successful step execution."""
 
     def test_full_success_path(self, git_repo: Path, runs_dir: Path, sample_aip: dict) -> None:
-        """Test complete successful step execution with mocked Codex."""
+        """Test complete successful step execution with mocked Claude adapter."""
         patch_content = """diff --git a/src/main.py b/src/main.py
 --- a/src/main.py
 +++ b/src/main.py
@@ -147,10 +147,10 @@ class TestE2ESuccessPath:
 +    return f"Hello, {name}!"
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(
             patch_content, notes="Added greet function", cmdlog="ls\ncat src/main.py\n"
         )):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=3)
 
             assert result.termination_reason == TerminationReason.PASS
@@ -177,8 +177,8 @@ class TestE2ESuccessPath:
 +# Added comment
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(patch_content)):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(patch_content)):
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=3)
 
             assert result.termination_reason == TerminationReason.PASS
@@ -217,7 +217,7 @@ new file mode 100644
 +setting: value
 """
 
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             call_count = [0]
 
             def write_and_count(input_dir: Path, output_dir: Path, repo_root: Path, timeout: int = 600) -> None:
@@ -231,7 +231,7 @@ new file mode 100644
 
             mock_execute.side_effect = write_and_count
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=3)
 
             # CRITICAL: Must fail with scope violation
@@ -268,8 +268,8 @@ new file mode 100644
 +secret123
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(patch_content)):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(patch_content)):
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=3)
 
             assert result.termination_reason == TerminationReason.FAIL_SCOPE
@@ -310,7 +310,7 @@ class TestE2ERetryBehavior:
 +# Fixed
 """
 
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             calls = [0]
 
             def write_outputs(input_dir: Path, output_dir: Path, repo_root: Path, timeout: int = 600) -> None:
@@ -324,7 +324,7 @@ class TestE2ERetryBehavior:
 
             mock_execute.side_effect = write_outputs
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=aip, step_idx=0, max_iterations=3)
 
             # Should pass on first attempt
@@ -367,7 +367,7 @@ class TestE2EMaxIterations:
 +# Added
 """
 
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             call_count = [0]
 
             def write_outputs(input_dir: Path, output_dir: Path, repo_root: Path, timeout: int = 600) -> None:
@@ -381,7 +381,7 @@ class TestE2EMaxIterations:
 
             mock_execute.side_effect = write_outputs
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=aip, step_idx=0, max_iterations=3)
 
             assert result.termination_reason == TerminationReason.FAIL_VERIFY_RETRYABLE
@@ -414,7 +414,7 @@ class TestE2EMaxIterations:
 +# Change
 """
 
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             call_count = [0]
 
             def write_outputs(input_dir: Path, output_dir: Path, repo_root: Path, timeout: int = 600) -> None:
@@ -428,7 +428,7 @@ class TestE2EMaxIterations:
 
             mock_execute.side_effect = write_outputs
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             runner.run_step(aip=aip, step_idx=0, max_iterations=5)
 
             assert call_count[0] == 5, "Should respect custom max_iterations"
@@ -449,7 +449,7 @@ class TestE2EDirtyWorktree:
         # Make the worktree dirty
         (git_repo / "src" / "main.py").write_text("# Modified\n")
 
-        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
         result = runner.run_step(aip=sample_aip, step_idx=0, allow_dirty=False)
 
         assert result.termination_reason == TerminationReason.FAIL_DIRTY_WORKTREE
@@ -470,8 +470,8 @@ new file mode 100644
 +# New file
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(patch_content)):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(patch_content)):
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, allow_dirty=True)
 
             # Should NOT fail due to dirty worktree
@@ -490,14 +490,14 @@ class TestE2EDryRun:
         self, git_repo: Path, runs_dir: Path, sample_aip: dict
     ) -> None:
         """Test that dry run writes input bundle and exits."""
-        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
         result = runner.run_step(aip=sample_aip, step_idx=0, dry_run=True)
 
         # Dry run should return PASS with no iterations
         assert result.termination_reason == TerminationReason.PASS
         assert len(result.iterations) == 0
         assert result.dry_run_command is not None
-        assert "codex" in result.dry_run_command
+        assert "claude" in result.dry_run_command
 
         # Input bundle should exist
         assert result.artifacts_dir is not None
@@ -512,8 +512,8 @@ class TestE2EDryRun:
         self, git_repo: Path, runs_dir: Path, sample_aip: dict
     ) -> None:
         """Test that dry run does not invoke the adapter."""
-        with patch.object(CodexAdapter, "execute") as mock_execute:
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, dry_run=True)
 
             mock_execute.assert_not_called()
@@ -528,7 +528,7 @@ class TestE2EDryRun:
 class TestE2EForbiddenCommands:
     """E2E tests for forbidden command detection.
 
-    Note: Forbidden command checking happens inside the CodexAdapter.
+    Note: Forbidden command checking happens inside the ClaudeAdapter.
     When we mock adapter.execute, we bypass that check.
     To test forbidden command detection, we need to have the mock RAISE ProtocolError.
     """
@@ -537,11 +537,11 @@ class TestE2EForbiddenCommands:
         self, git_repo: Path, runs_dir: Path, sample_aip: dict
     ) -> None:
         """Test that forbidden commands in cmdlog cause FAIL_ADAPTER_PROTOCOL."""
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             # Simulate adapter detecting forbidden command and raising ProtocolError
             mock_execute.side_effect = ProtocolError("hard: rm command detected in cmdlog")
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=1)
 
             assert result.termination_reason == TerminationReason.FAIL_ADAPTER_PROTOCOL
@@ -551,10 +551,10 @@ class TestE2EForbiddenCommands:
         self, git_repo: Path, runs_dir: Path, sample_aip: dict
     ) -> None:
         """Test that git commit in cmdlog causes FAIL_ADAPTER_PROTOCOL."""
-        with patch.object(CodexAdapter, "execute") as mock_execute:
+        with patch.object(ClaudeAdapter, "execute") as mock_execute:
             mock_execute.side_effect = ProtocolError("hard: git commit detected")
 
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=1)
 
             assert result.termination_reason == TerminationReason.FAIL_ADAPTER_PROTOCOL
@@ -573,10 +573,10 @@ class TestE2EForbiddenCommands:
 """
 
         # No exception raised means allowed commands pass
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(
             patch_content, cmdlog="ls\ncat src/main.py\ngit status\ngit diff\n"
         )):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=1)
 
             assert result.termination_reason != TerminationReason.FAIL_ADAPTER_PROTOCOL
@@ -603,13 +603,13 @@ class TestE2EEscalation:
 +# Partial
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(
             patch_content,
             agent_status="needs_human",
             needs_human=True,
             notes="I'm not sure how to proceed",
         )):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=3)
 
             assert result.termination_reason == TerminationReason.ESCALATE_NEEDS_HUMAN
@@ -636,8 +636,8 @@ class TestE2EArtifactCompleteness:
 +# Done
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(patch_content)):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(patch_content)):
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=1)
 
             assert result.artifacts_dir is not None
@@ -665,7 +665,7 @@ class TestE2EArtifactCompleteness:
         # Dirty worktree failure - should still write result.json and gate.md
         (git_repo / "src" / "main.py").write_text("# Dirty\n")
 
-        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
         result = runner.run_step(aip=sample_aip, step_idx=0, allow_dirty=False)
 
         assert result.termination_reason == TerminationReason.FAIL_DIRTY_WORKTREE
@@ -707,8 +707,8 @@ class TestE2EPatchApplyFailure:
  line5
 """
 
-        with patch.object(CodexAdapter, "execute", side_effect=make_write_outputs(patch_content)):
-            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="codex")
+        with patch.object(ClaudeAdapter, "execute", side_effect=make_write_outputs(patch_content)):
+            runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
             result = runner.run_step(aip=sample_aip, step_idx=0, max_iterations=1)
 
             assert result.termination_reason == TerminationReason.FAIL_PATCH_APPLY

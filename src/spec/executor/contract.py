@@ -19,36 +19,6 @@ SAFE_ALLOWED_DEFAULTS = ["src/**", "tests/**"]
 # Forbidden defaults - always included
 FORBIDDEN_DEFAULTS = [".git/**", "*.lock", ".env*", "secrets/**"]
 
-# Codex allowed commands
-CODEX_ALLOWED_COMMANDS = [
-    "cat",
-    "ls",
-    "find",
-    "grep",
-    "head",
-    "tail",
-    "wc",
-    "diff",
-    "echo",
-    "python",
-    "pytest",
-    "ruff",
-    "mypy",
-]
-
-# Codex forbidden commands
-CODEX_FORBIDDEN_COMMANDS = [
-    "rm -rf",
-    "sudo",
-    "chmod 777",
-    "curl",
-    "wget",
-    "ssh",
-    "scp",
-    "git push",
-    "git commit",
-]
-
 
 class EscalationRequired(Exception):
     """Raised when human intervention is required.
@@ -62,16 +32,6 @@ class EscalationRequired(Exception):
         self.reason = reason
         self.violations = violations or []
         super().__init__(reason)
-
-
-@dataclass
-class CodexConfig:
-    """Configuration for the Codex agent adapter."""
-
-    sandbox_mode: str = "read-only"
-    output_schema_path: str = ""
-    allowed_commands: list[str] = field(default_factory=lambda: CODEX_ALLOWED_COMMANDS.copy())
-    forbidden_commands: list[str] = field(default_factory=lambda: CODEX_FORBIDDEN_COMMANDS.copy())
 
 
 @dataclass
@@ -93,13 +53,13 @@ class StepContract:
     forbidden_paths: list[str]
 
     # Verification
-    verification_commands: list[str] = field(
-        default_factory=lambda: ["ruff check .", "mypy .", "pytest"]
-    )
+    verification_commands: list[str] = field(default_factory=list)
     verification_timeout: int = 300
 
-    # Codex configuration
-    codex_config: CodexConfig = field(default_factory=CodexConfig)
+    # Adapter configuration
+    adapter: dict[str, Any] = field(
+        default_factory=lambda: {"name": "claude", "mode": "interactive"}
+    )
 
     # Retry configuration
     max_iterations: int = 3
@@ -219,14 +179,11 @@ def build_contract(
 
     # === Build verification commands ===
 
-    verification_commands = step.get("verification_commands", ["ruff check .", "mypy .", "pytest"])
+    verification_commands = step.get("verification_commands", [])
 
-    # === Build codex config ===
+    # === Build adapter config ===
 
-    codex_config = CodexConfig(
-        sandbox_mode="read-only",
-        output_schema_path=".specwright/artifacts/schemas/codex_output.schema.json",
-    )
+    adapter = {"name": "claude", "mode": "interactive"}
 
     return StepContract(
         aip_id=aip_id,
@@ -235,7 +192,7 @@ def build_contract(
         allowed_paths=allowed_paths,
         forbidden_paths=forbidden_paths,
         verification_commands=verification_commands,
-        codex_config=codex_config,
+        adapter=adapter,
         max_iterations=aip.get("max_iterations", 3),
     )
 
@@ -254,12 +211,7 @@ def save_contract(contract: StepContract, path: Path) -> None:
         "forbidden_paths": sorted(contract.forbidden_paths),
         "verification_commands": contract.verification_commands,
         "verification_timeout": contract.verification_timeout,
-        "codex_config": {
-            "sandbox_mode": contract.codex_config.sandbox_mode,
-            "output_schema_path": contract.codex_config.output_schema_path,
-            "allowed_commands": sorted(contract.codex_config.allowed_commands),
-            "forbidden_commands": sorted(contract.codex_config.forbidden_commands),
-        },
+        "adapter": contract.adapter,
         "max_iterations": contract.max_iterations,
         "created_at": contract.created_at,
         "baseline_commit": contract.baseline_commit,
@@ -275,16 +227,7 @@ def load_contract(path: Path) -> StepContract:
     with open(path) as f:
         data = yaml.safe_load(f)
 
-    codex_config = CodexConfig(
-        sandbox_mode=data.get("codex_config", {}).get("sandbox_mode", "read-only"),
-        output_schema_path=data.get("codex_config", {}).get("output_schema_path", ""),
-        allowed_commands=data.get("codex_config", {}).get(
-            "allowed_commands", CODEX_ALLOWED_COMMANDS.copy()
-        ),
-        forbidden_commands=data.get("codex_config", {}).get(
-            "forbidden_commands", CODEX_FORBIDDEN_COMMANDS.copy()
-        ),
-    )
+    adapter = data.get("adapter", {"name": "claude", "mode": "interactive"})
 
     return StepContract(
         aip_id=data["aip_id"],
@@ -292,11 +235,9 @@ def load_contract(path: Path) -> StepContract:
         step_index=data["step_index"],
         allowed_paths=data["allowed_paths"],
         forbidden_paths=data["forbidden_paths"],
-        verification_commands=data.get(
-            "verification_commands", ["ruff check .", "mypy .", "pytest"]
-        ),
+        verification_commands=data.get("verification_commands", []),
         verification_timeout=data.get("verification_timeout", 300),
-        codex_config=codex_config,
+        adapter=adapter,
         max_iterations=data.get("max_iterations", 3),
         created_at=data.get("created_at", ""),
         baseline_commit=data.get("baseline_commit", ""),

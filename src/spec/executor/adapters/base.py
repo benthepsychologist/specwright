@@ -90,4 +90,4 @@ class AgentAdapter(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Return adapter name (e.g., 'codex')."""
+        """Return adapter name (e.g., 'claude')."""

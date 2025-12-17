@@ -321,7 +321,7 @@ class TestResultJsonSchema:
             aip_id="AIP-test-001",
             step_idx=0,
             baseline_sha="abc123def456",
-            adapter_name="codex",
+            adapter_name="claude",
             artifacts_dir="AIP-test-001/2024-01-01T00-00-00/step-001",
             termination_reason=TerminationReason.PASS,
             iterations=[],
@@ -338,7 +338,7 @@ class TestResultJsonSchema:
 
         # Execution context
         assert content["baseline_sha"] == "abc123def456"
-        assert content["adapter_name"] == "codex"
+        assert content["adapter_name"] == "claude"
 
         # Result
         assert content["termination_reason"] == "PASS"
@@ -361,7 +361,7 @@ class TestResultJsonSchema:
             aip_id="AIP-test-001",
             step_idx=1,
             baseline_sha="abc123",
-            adapter_name="codex",
+            adapter_name="claude",
             artifacts_dir="test/path",
             termination_reason=TerminationReason.FAIL_VERIFY_RETRYABLE,
             iterations=[],

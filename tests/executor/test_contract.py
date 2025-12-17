@@ -6,11 +6,8 @@ from pathlib import Path
 import pytest
 
 from spec.executor.contract import (
-    CODEX_ALLOWED_COMMANDS,
-    CODEX_FORBIDDEN_COMMANDS,
     FORBIDDEN_DEFAULTS,
     SAFE_ALLOWED_DEFAULTS,
-    CodexConfig,
     StepContract,
     build_contract,
     load_contract,
@@ -31,20 +28,24 @@ class TestStepContract:
             forbidden_paths=[".git/**"],
         )
 
-        assert contract.verification_commands == ["ruff check .", "mypy .", "pytest"]
+        assert contract.verification_commands == []
         assert contract.verification_timeout == 300
         assert contract.max_iterations == 3
-        assert contract.codex_config.sandbox_mode == "read-only"
+        assert contract.adapter == {"name": "claude", "mode": "interactive"}
         assert contract.created_at  # Should be auto-set
 
-    def test_codex_config_defaults(self) -> None:
-        """Test CodexConfig default values."""
-        config = CodexConfig()
+    def test_adapter_defaults(self) -> None:
+        """Test adapter default values."""
+        contract = StepContract(
+            aip_id="AIP-test-2024-12-13-001",
+            step_id="step-001",
+            step_index=0,
+            allowed_paths=["src/**"],
+            forbidden_paths=[".git/**"],
+        )
 
-        assert config.sandbox_mode == "read-only"
-        assert config.output_schema_path == ""
-        assert config.allowed_commands == CODEX_ALLOWED_COMMANDS
-        assert config.forbidden_commands == CODEX_FORBIDDEN_COMMANDS
+        assert contract.adapter["name"] == "claude"
+        assert contract.adapter["mode"] == "interactive"
 
 
 class TestBuildContractExplicitPaths:
@@ -376,21 +377,16 @@ class TestSaveLoadContract:
 
             assert content1 == content2
 
-    def test_codex_config_roundtrip(self) -> None:
-        """Test that codex_config survives roundtrip."""
-        config = CodexConfig(
-            sandbox_mode="read-only",
-            output_schema_path="schemas/output.json",
-            allowed_commands=["cat", "ls"],
-            forbidden_commands=["rm", "sudo"],
-        )
+    def test_adapter_roundtrip(self) -> None:
+        """Test that adapter config survives roundtrip."""
+        adapter = {"name": "claude", "mode": "oneshot"}
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
             step_index=0,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
-            codex_config=config,
+            adapter=adapter,
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -398,7 +394,5 @@ class TestSaveLoadContract:
             save_contract(contract, path)
             loaded = load_contract(path)
 
-        assert loaded.codex_config.sandbox_mode == "read-only"
-        assert loaded.codex_config.output_schema_path == "schemas/output.json"
-        assert sorted(loaded.codex_config.allowed_commands) == ["cat", "ls"]
-        assert sorted(loaded.codex_config.forbidden_commands) == ["rm", "sudo"]
+        assert loaded.adapter["name"] == "claude"
+        assert loaded.adapter["mode"] == "oneshot"

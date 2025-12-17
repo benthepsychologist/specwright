@@ -8,5 +8,5 @@ user:
   default_owner: benthepsychologist
   default_tier: C
 current:
-  spec: .specwright/specs/claude-adapter-for-specwright.md
-  aip: /workspace/specwright/.specwright/aips/claude-adapter-for-specwright.yaml
+  spec: .specwright/specs/soft-determinism-slim-down.md
+  aip: /workspace/specwright/.specwright/aips/soft-determinism-slim-down.yaml

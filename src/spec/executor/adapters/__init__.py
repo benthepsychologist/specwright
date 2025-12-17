@@ -1,7 +1,7 @@
 """
 Agent Adapters
 
-Provides adapters for invoking AI coding agents (Codex, etc.).
+Provides adapters for invoking AI coding agents (Claude, etc.).
 """
 
 from __future__ import annotations
@@ -16,14 +16,12 @@ from spec.executor.adapters.base import (
     ToolNotFoundError,
 )
 from spec.executor.adapters.claude import ClaudeAdapter
-from spec.executor.adapters.codex import CodexAdapter
 
 if TYPE_CHECKING:
     pass
 
 # Registry of available adapters (folded into __init__ for simplicity)
 _ADAPTERS: dict[str, type[AgentAdapter]] = {
-    "codex": CodexAdapter,
     "claude": ClaudeAdapter,
 }
 
@@ -33,7 +31,7 @@ def get_adapter(name: str) -> AgentAdapter:
     Get an adapter instance by name.
 
     Args:
-        name: Adapter name (e.g., 'codex')
+        name: Adapter name (e.g., 'claude')
 
     Returns:
         AgentAdapter instance
@@ -74,7 +72,6 @@ __all__ = [
     "AdapterError",
     "AgentAdapter",
     "ClaudeAdapter",
-    "CodexAdapter",
     "EscalationRequired",
     "ProtocolError",
     "ToolNotFoundError",

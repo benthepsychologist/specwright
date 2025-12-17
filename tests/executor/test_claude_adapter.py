@@ -510,4 +510,4 @@ class TestClaudeAdapterRegistry:
         """Test listing adapters includes claude."""
         adapters = list_adapters()
         assert "claude" in adapters
-        assert "codex" in adapters  # Original still there
+        assert "codex" not in adapters  # Codex has been removed

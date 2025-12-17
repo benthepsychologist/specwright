@@ -1,0 +1,236 @@
+aip_id: AIP-specwright-2025-12-17-001
+context:
+  background: 'The current execution flow has Codex-specific assumptions baked in:
+
+    1. **Git reset on every iteration** - This destroys human changes made during babysitting
+
+    2. **Codex-typed config** - `CodexConfig` and `codex_config` field are unused with Claude adapter
+
+    3. **Unconditional escalation** - Claude interactive raises `EscalationRequired` even on normal exit
+
+
+    For Claude interactive babysitting to work properly:
+
+    - Human changes during the session must be preserved (no reset on iter-0)
+
+    - Normal session exit should proceed to scope check + verification
+
+    - Escalation should only happen when something is actually wrong'
+  constraints:
+  - This is Pass 1 (engine running). Pass 2 (repo.build.yaml, spec.resolve.json) is out of scope.
+  - No auto-commit - always print commands for user to run
+  - Keep adapter "dumb" - policy decisions stay in runner
+created: '2025-12-17T19:23:01.239143+00:00'
+meta:
+  created_at: '2025-12-17T19:23:01.239143+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - Skip git reset on iter-0 **only** for Claude adapter in interactive mode
+  - Other adapters/modes still reset on iter-0 (unchanged behavior)
+  - Claude interactive returns normally on success (no unconditional EscalationRequired)
+  - Runner handles escalation decisions (scope fail → escalate, verify fail → escalate)
+  - '`src/spec/executor/adapters/codex.py` deleted'
+  - '`CodexConfig` dataclass removed from `contract.py`'
+  - '`codex_config` field removed from `StepContract`'
+  - All Codex test classes removed from `test_adapters.py`
+  - '`grep -r "codex" src/ tests/` returns no results'
+  - '`StepContract` has new `adapter: dict[str, Any]` field (default: `{"name": "claude", "mode": "interactive"}`)'
+  - '`verification_commands` defaults to empty list (not hardcoded commands)'
+  - '`repo_state.json` uses `adapter` field instead of codex-specific fields'
+  - After step completion, CLI prints git status and suggested commit commands
+  - CLI does NOT auto-commit (prints commands for user to run)
+  - '`step.summary.json` **always** written (even on ProtocolError/Escalation) for drift visibility'
+  - CI green (ruff + mypy + pytest)
+  - '`test_adapters.py` asserts "claude" exists and "codex" does NOT exist'
+  goal: Refactor step execution for Claude interactive mode with soft determinism and remove Codex
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-17-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- allowed_paths:
+  - src/spec/executor/adapters/**
+  - src/spec/executor/contract.py
+  - tests/executor/**
+  description: Remove Codex Adapter
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  outputs:
+  - src/spec/executor/adapters/codex.py
+  - src/spec/executor/adapters/__init__.py
+  - src/spec/executor/contract.py
+  - tests/executor/test_adapters.py
+  prompt: "Delete the Codex adapter and remove all references from the codebase.\n1. **Delete** `src/spec/executor/adapters/codex.py`\n\
+    2. **Update** `src/spec/executor/adapters/__init__.py`:\n   - Remove `CodexAdapter` import\n   - Remove\
+    \ from `_ADAPTERS` registry\n   - Remove from `__all__`\n3. **Update** `src/spec/executor/contract.py`:\n\
+    \   - Delete `CodexConfig` dataclass\n   - Delete `CODEX_ALLOWED_COMMANDS` constant\n   - Delete `CODEX_FORBIDDEN_COMMANDS`\
+    \ constant\n   - Remove `codex_config` field from `StepContract`\n   - Add `adapter: dict[str, Any]\
+    \ = field(default_factory=lambda: {\"name\": \"claude\", \"mode\": \"interactive\"})`\n   - Change\
+    \ `verification_commands` default to `field(default_factory=list)`\n4. **Update** `tests/executor/test_adapters.py`:\n\
+    \   - Delete all `TestCodexAdapter*` classes\n   - Delete `TestForbiddenCommands`, `TestTokenAwareMatching`,\
+    \ etc.\n   - Update `TestAdapterRegistry` to assert \"claude\" exists and \"codex\" does NOT exist\n\
+    5. **Verify** with `grep -r \"codex\" src/ tests/` - should return no results"
+  role: agentic
+  step_id: step-001
+  verification_commands:
+  - ruff check src/spec/executor/adapters/ src/spec/executor/contract.py tests/executor/
+  - mypy src/spec/executor/adapters/ src/spec/executor/contract.py
+  - pytest tests/executor/test_adapters.py -v
+- allowed_paths:
+  - src/spec/executor/runner.py
+  - tests/executor/**
+  description: Update Runner for Soft Determinism
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  outputs:
+  - src/spec/executor/runner.py
+  prompt: "Update the step runner to implement soft determinism and remove Codex-specific code.\n1. **Update**\
+    \ `src/spec/executor/runner.py`:\n   a. **Skip reset for Claude interactive iter-0** (around line\
+    \ 269):\n   ```python\n   # Compute soft determinism flag once (before loop)\n   is_soft_determinism\
+    \ = (\n       self.adapter_name == \"claude\"\n       and contract.adapter.get(\"mode\") == \"interactive\"\
+    \n   )\n   for iteration in range(max_iterations):\n       should_reset = True\n       if iteration\
+    \ == 0 and is_soft_determinism:\n           should_reset = False\n       if should_reset:\n      \
+    \     self._reset_to_baseline(baseline)\n   ```\n   b. **Update repo_state.json** (around line 245):\n\
+    \   ```python\n   # OLD: \"codex_sandbox_mode\": contract.codex_config.sandbox_mode,\n   # NEW:\n\
+    \   \"adapter\": contract.adapter,\n   ```\n   c. **Delete `_build_codex_command` method** (around\
+    \ line 715)\n   d. **Change default adapter** from \"codex\" to \"claude\" (line 115)\n   e. **Add\
+    \ step.summary.json** in `_finalize_artifacts` (this already runs on ALL paths including errors):\n\
+    \   Note: `_finalize_artifacts` is called in a finalization path that runs even on ProtocolError/Escalation,\n\
+    \   so step.summary.json will always be written for drift visibility.\n   ```python\n   # Write step.summary.json\
+    \ - ALWAYS written for drift visibility\n   step_summary = {\n       \"adapter\": self.adapter_name,\n\
+    \       \"mode\": contract.adapter.get(\"mode\", \"unknown\"),\n       \"baseline_commit\": result.baseline_sha,\n\
+    \       \"changed_files\": result.touched_files,\n       \"verification_passed\": result.verification_report.get(\"\
+    passed\", False) if result.verification_report else None,\n       \"scope_ok\": result.policy_report.get(\"\
+    passed\", False) if result.policy_report else None,\n       \"termination_reason\": result.termination_reason.value,\n\
+    \       \"error\": result.error,  # Include error message for failed runs\n   }\n   (run_dir / \"\
+    step.summary.json\").write_text(json.dumps(step_summary, indent=2))\n   ```"
+  role: agentic
+  step_id: step-002
+  verification_commands:
+  - ruff check src/spec/executor/runner.py
+  - mypy src/spec/executor/runner.py
+  - pytest tests/executor/test_runner.py -v
+- allowed_paths:
+  - src/spec/executor/adapters/claude.py
+  - tests/executor/**
+  description: Fix Claude Adapter Termination
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  outputs:
+  - src/spec/executor/adapters/claude.py
+  prompt: "Update the Claude adapter to return normally on success instead of always raising EscalationRequired.\n\
+    1. **Update** `src/spec/executor/adapters/claude.py`:\n   Remove the unconditional `EscalationRequired`\
+    \ at the end of `_execute_interactive` (around line 218-221).\n   The method should end like this:\n\
+    \   ```python\n   # Capture repo state after\n   repo_state_after = self._capture_repo_state(repo_root)\n\
+    \   (output_dir / \"repo_state_after.json\").write_text(\n       json.dumps(repo_state_after, indent=2)\n\
+    \   )\n   # Backfill missing artifacts\n   warnings = self._backfill_artifacts(output_dir, repo_root)\n\
+    \   for warning in warnings:\n       logger.warning(f\"Artifact backfill: {warning}\")\n   # Validate\
+    \ agent.json - raises ProtocolError if can't validate\n   self._validate_agent_json(output_dir / \"\
+    agent.json\")\n   # Normal exit - return cleanly\n   # Runner handles scope check + verification +\
+    \ escalation decisions\n   ```\n   **Do NOT raise EscalationRequired** on normal exit. Only raise:\n\
+    \   - `ProtocolError` if Claude exits non-zero\n   - `ProtocolError` if artifacts missing and cannot\
+    \ be backfilled"
+  role: agentic
+  step_id: step-003
+  verification_commands:
+  - ruff check src/spec/executor/adapters/claude.py
+  - mypy src/spec/executor/adapters/claude.py
+  - pytest tests/executor/test_claude_adapter.py -v
+- allowed_paths:
+  - src/spec/cli/spec.py
+  description: CLI Commit Commands
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  outputs:
+  - src/spec/cli/spec.py
+  prompt: "Update the CLI to print commit commands after step completion instead of auto-committing.\n\
+    1. **Update** `src/spec/cli/spec.py`:\n   After `runner.run_step()` returns, add:\n   ```python\n\
+    \   # After successful execution or escalation with artifacts\n   if result.termination_reason in\
+    \ (TerminationReason.PASS, TerminationReason.ESCALATE_NEEDS_HUMAN):\n       # Show status\n      \
+    \ typer.echo(\"\\n\" + \"=\"*60)\n       if result.verification_report:\n           status = \"PASSED\"\
+    \ if result.verification_report.get(\"passed\") else \"FAILED\"\n           typer.echo(f\"Verification:\
+    \ {status}\")\n       # Show git status\n       subprocess.run([\"git\", \"status\", \"--short\"],\
+    \ cwd=project_root)\n       # Suggest commit\n       step_desc = step_def.get(\"description\", f\"\
+    Step {step_num}\")\n       commit_msg = f\"feat: {step_desc}\"\n       typer.echo(f\"\\nSuggested\
+    \ commit message: {commit_msg}\")\n       typer.echo(\"\\nTo commit these changes:\")\n       typer.echo(f'\
+    \  git add -A')\n       typer.echo(f'  git commit -m \"{commit_msg}\"')\n       typer.echo(\"\\nIf\
+    \ you want to keep working, don't commit yet.\")\n   ```\n2. **Ensure default adapter is \"claude\"\
+    ** (should already be set, verify around line 883)"
+  role: agentic
+  step_id: step-004
+  verification_commands:
+  - ruff check src/spec/cli/spec.py
+  - mypy src/spec/cli/spec.py
+- allowed_paths:
+  - src/**
+  - tests/**
+  description: Integration Testing
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  gate_ref: 'G2: Verification'
+  kind: code
+  prompt: 'Run full test suite and fix any remaining issues.
+
+    1. Run `pytest` and fix any failures
+
+    2. Run `ruff check .` and fix any lint errors
+
+    3. Run `mypy .` and fix any type errors
+
+    4. Verify `grep -r "codex" src/ tests/` returns no results'
+  role: agentic
+  step_id: step-005
+  verification_commands:
+  - ruff check .
+  - mypy .
+  - pytest -v
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/soft-determinism-slim-down
+spec_version: 1.0.0
+tier: C
+title: Soft determinism slim down
+updated: '2025-12-17T19:30:00+00:00'
+version: '0.1'
+

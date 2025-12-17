@@ -65,7 +65,7 @@ class TestAllowedPathMatching:
     def test_nested_path_matching(self) -> None:
         """Test deeply nested paths match correctly."""
         contract = make_contract(allowed_paths=["src/**"])
-        touched = ["src/spec/executor/adapters/codex.py"]
+        touched = ["src/spec/executor/adapters/claude.py"]
 
         result = check_scope(touched, contract)
 

@@ -653,7 +653,7 @@ class TestAutonomousModeDispatch:
             assert "step_num" in captured_args, "Autonomous runner should be called with --step"
             assert captured_args["step_num"] == 1
             assert captured_args["dry_run"] is False
-            assert captured_args["adapter"] == "codex"
+            assert captured_args["adapter"] == "claude"
         finally:
             os.chdir(old_cwd)
 

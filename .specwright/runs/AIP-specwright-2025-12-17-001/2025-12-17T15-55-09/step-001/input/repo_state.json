@@ -1,0 +1,8 @@
+{
+  "commit": "5e77115debfeb451ef720310ec4c0f4fc7f83b44",
+  "branch": "main",
+  "dirty": false,
+  "baseline": "5e77115debfeb451ef720310ec4c0f4fc7f83b44",
+  "codex_sandbox_mode": "read-only",
+  "codex_output_schema_path": ".specwright/artifacts/schemas/codex_output.schema.json"
+}
