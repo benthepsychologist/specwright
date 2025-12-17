@@ -1,0 +1,25 @@
+Script started on 2025-12-17 15:44:06+00:00 [TERM="xterm-256color" TTY="/dev/pts/3" COLUMNS="173" LINES="18"]
+The task is complete. The Claude adapter for specwright was already fully implemented at `src/spec/executor/adapters/claude.py`. Here's a summary:
+
+## Implementation Summary
+
+The `ClaudeAdapter` class at `src/spec/executor/adapters/claude.py:70` implements the `AgentAdapter` interface with:
+
+### Core Methods
+- **`name`** property - Returns `"claude"`
+- **`verify()`** - Checks `claude` CLI exists via `shutil.which`, sets `_script_available` flag for transcript recording
+- **`execute()`** - Dispatches to interactive or oneshot mode based on `contract.yaml`
+
+### Dual-Mode Support
+- **`_execute_interactive()`** - TUI mode with transcript recording via `script` command or PTY fallback
+- **`_execute_oneshot()`** - Non-interactive JSON output mode with hard timeout enforcement
+
+### Helper Methods
+- **`_capture_repo_state()`** - Returns `{"commit": "<sha>", "status": "<porcelain>"}`
+- **`_backfill_artifacts()`** - Generates missing `patch.diff`, `cmdlog.txt`, `agent.json` from git state
+- **`_validate_agent_json()`** - Ensures required fields exist (completion_status, confidence, files_modified, commands_executed)
+
+### Test Results
+All 27 tests pass, covering properties, verification, mode selection, validation, backfill, repo state capture, and execution scenarios.
+[?25h[?25h
+Script done on 2025-12-17 15:45:46+00:00 [COMMAND_EXIT_CODE="0"]

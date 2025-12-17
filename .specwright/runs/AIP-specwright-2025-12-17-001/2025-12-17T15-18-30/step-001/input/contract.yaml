@@ -1,0 +1,46 @@
+aip_id: AIP-specwright-2025-12-17-001
+allowed_paths:
+- src/**
+- tests/**
+baseline_commit: ''
+codex_config:
+  allowed_commands:
+  - cat
+  - diff
+  - echo
+  - find
+  - grep
+  - head
+  - ls
+  - mypy
+  - pytest
+  - python
+  - ruff
+  - tail
+  - wc
+  forbidden_commands:
+  - chmod 777
+  - curl
+  - git commit
+  - git push
+  - rm -rf
+  - scp
+  - ssh
+  - sudo
+  - wget
+  output_schema_path: .specwright/artifacts/schemas/codex_output.schema.json
+  sandbox_mode: read-only
+created_at: '2025-12-17T15:18:30.706612+00:00'
+forbidden_paths:
+- '*.lock'
+- .env*
+- .git/**
+- secrets/**
+max_iterations: 3
+step_id: step-001
+step_index: 0
+verification_commands:
+- ruff check .
+- mypy .
+- pytest
+verification_timeout: 300

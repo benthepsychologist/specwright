@@ -1,0 +1,12 @@
+# Commands executed during step-001 review
+
+CMD: glob src/spec/executor/adapters/*.py
+CMD: grep "class AgentAdapter" **/*.py
+CMD: grep "ProtocolError" **/*.py
+CMD: read src/spec/executor/adapters/base.py
+CMD: read src/spec/executor/adapters/claude.py
+CMD: read src/spec/executor/adapters/codex.py
+CMD: git diff
+
+# Summary: Verified that ClaudeAdapter already fully implements the specification.
+# No code changes were required.

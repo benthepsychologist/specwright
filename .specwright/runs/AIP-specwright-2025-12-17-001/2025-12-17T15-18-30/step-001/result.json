@@ -1,0 +1,17 @@
+{
+  "aip_id": "AIP-specwright-2025-12-17-001",
+  "step_idx": 0,
+  "step_id": "step-001",
+  "baseline_sha": "8c899bccdfd549ad7cf9925dbd39b9ddd9b51ae5",
+  "adapter_name": "claude",
+  "termination_reason": "FAIL_PATCH_APPLY",
+  "iterations_attempted": 2,
+  "artifacts_dir": "AIP-specwright-2025-12-17-001/2025-12-17T15-18-30/step-001",
+  "final_patch_path": null,
+  "touched_files": [],
+  "details": {
+    "error_message": "Patch does not apply cleanly: error: unrecognized input\n"
+  },
+  "dry_run": false,
+  "timestamp": "2025-12-17T15:20:43.974206+00:00"
+}

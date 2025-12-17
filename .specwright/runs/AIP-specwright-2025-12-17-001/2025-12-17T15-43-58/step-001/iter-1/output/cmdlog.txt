@@ -1,0 +1,14 @@
+# Commands executed during Claude adapter implementation verification
+
+CMD: cat /workspace/specwright/.specwright/runs/AIP-specwright-2025-12-17-001/2025-12-17T15-43-58/step-001/iter-1/output/.prompt.tmp
+CMD: glob src/spec/executor/adapters/**/*.py
+CMD: grep "class AgentAdapter" **/*.py
+CMD: grep "ProtocolError" **/*.py
+CMD: cat src/spec/executor/adapters/base.py
+CMD: cat src/spec/executor/adapters/codex.py
+CMD: cat src/spec/executor/adapters/claude.py
+CMD: cat src/spec/executor/adapters/__init__.py
+CMD: cat tests/executor/test_claude_adapter.py
+CMD: git diff
+CMD: pytest tests/executor/test_claude_adapter.py -v
+CMD: git diff > /workspace/specwright/.specwright/runs/AIP-specwright-2025-12-17-001/2025-12-17T15-43-58/step-001/iter-1/output/patch.diff
