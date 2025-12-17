@@ -783,6 +783,12 @@ def _run_autonomous_step(
 
     # Display step info
     step_def = plan[step_idx]
+
+    # Claude adapter runs in interactive mode by default - force single iteration
+    # (no auto-retry when human is babysitting)
+    if adapter == "claude" and max_iterations > 1:
+        max_iterations = 1
+
     typer.echo(f"\n{'='*60}")
     typer.secho(f"Executing Step {step_num}/{len(plan)} (autonomous mode)", bold=True)
     typer.echo(f"  ID: {step_def.get('id', f'step-{step_idx:03d}')}")
