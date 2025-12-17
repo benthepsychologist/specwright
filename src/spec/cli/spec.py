@@ -880,7 +880,7 @@ def run(
     dry_run: bool = typer.Option(False, "--dry-run", help="Write input bundle only, don't execute (autonomous mode only)"),
     allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Allow execution with dirty working tree (autonomous mode only)"),
     max_iterations: int = typer.Option(3, "--max-iterations", "-m", help="Maximum retry iterations (autonomous mode only)"),
-    adapter: str = typer.Option("codex", "--adapter", help="Agent adapter to use (autonomous mode only)"),
+    adapter: str = typer.Option("claude", "--adapter", help="Agent adapter to use (autonomous mode only)"),
 ):
     """Run an AIP - either in interactive HITL mode or autonomous step execution.
 
@@ -951,7 +951,7 @@ def run(
 
     # INTERACTIVE HITL MODE: no --step flag
     # Warn if autonomous-only flags are used
-    if dry_run or allow_dirty or max_iterations != 3 or adapter != "codex":
+    if dry_run or allow_dirty or max_iterations != 3 or adapter != "claude":
         typer.echo("Warning: --dry-run, --allow-dirty, --max-iterations, and --adapter are ignored in interactive mode.", err=True)
         typer.echo("  Use --step N to run in autonomous mode.", err=True)
         typer.echo()

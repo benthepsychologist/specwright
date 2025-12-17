@@ -221,13 +221,15 @@ class ClaudeAdapter(AgentAdapter):
         timeout: int,
     ) -> None:
         """Run claude with script command for transcript recording."""
-        # Write prompt to temp file for -p flag
+        # Write prompt to temp file
         prompt_file = transcript_path.parent / ".prompt.tmp"
         prompt_file.write_text(prompt)
 
         try:
             # script -q -c "claude ..." transcript.txt
-            claude_cmd = f'claude --dangerously-skip-permissions -p "{prompt_file}"'
+            # NOTE: -p means --print (non-interactive mode), NOT a prompt flag!
+            # The prompt is passed as a positional argument via $(cat ...)
+            claude_cmd = f'claude --dangerously-skip-permissions "$(cat {prompt_file})"'
             cmd = ["script", "-q", "-c", claude_cmd, str(transcript_path)]
 
             logger.info(f"Launching claude (interactive mode) in {repo_root}")
@@ -264,7 +266,9 @@ class ClaudeAdapter(AgentAdapter):
             return data
 
         try:
-            cmd = ["claude", "--dangerously-skip-permissions", "-p", str(prompt_file)]
+            # NOTE: -p means --print (non-interactive mode), NOT a prompt flag!
+            # The prompt is passed as a positional argument
+            cmd = ["claude", "--dangerously-skip-permissions", prompt]
             logger.info(f"Launching claude (interactive mode, PTY fallback) in {repo_root}")
 
             # Use pty.spawn for interactive session
@@ -309,13 +313,14 @@ class ClaudeAdapter(AgentAdapter):
         prompt = prompt_path.read_text()
 
         # Build command
+        # NOTE: --print is the non-interactive flag (aliased as -p)
+        # The prompt is passed as a positional argument, NOT via -p
         cmd = [
             "claude",
             "--print",
             "--output-format",
             "json",
             "--dangerously-skip-permissions",
-            "-p",
             prompt,
         ]
 
