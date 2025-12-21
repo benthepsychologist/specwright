@@ -95,5 +95,5 @@ strict = false
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["yaml.*", "typer.*", "jsonschema.*"]
+module = ["yaml.*", "typer.*", "jsonschema.*", "autogov", "autogov.*"]
 ignore_missing_imports = true

@@ -236,8 +236,7 @@ def test_create_without_owner_fails_when_no_default(temp_project):
             "Test Feature",
             "--tier", "C",
             "--goal", "Test error handling"
-
-])
+        ])
         assert result.exit_code == 1
         # Error messages go to stderr, but typer.testing combines them into output
         output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output
@@ -261,8 +260,7 @@ def test_create_generates_markdown_by_default(temp_project):
             "--tier", "C",
             "--owner", "alice",
             "--goal", "Test MD generation"
-
-])
+        ])
 
         assert result.exit_code == 0
         assert "Created Tier C spec at .specwright/specs/test-feature.md" in result.stdout
@@ -293,8 +291,7 @@ def test_create_with_yaml_flag_generates_yaml(temp_project):
             "--tier", "C",
             "--owner", "bob",
             "--goal", "Test YAML generation",
-
-"--yaml"
+            "--yaml"
         ])
 
         assert result.exit_code == 0
@@ -326,8 +323,7 @@ def test_compile_converts_md_to_yaml(temp_project):
             "--tier", "C",
             "--owner", "charlie",
             "--goal", "Test compilation"
-
-])
+        ])
 
         # Compile it - should now succeed with fixed templates
         result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
@@ -366,8 +362,7 @@ def test_compile_creates_output_directory(temp_project):
             "--tier", "C",
             "--owner", "dave",
             "--goal", "Test dir creation"
-
-])
+        ])
 
         # Ensure .specwright/aips/ doesn't exist
         aips_dir = temp_project / ".specwright" / "aips"
@@ -401,8 +396,7 @@ def test_validate_md_spec(temp_project):
             "--tier", "C",
             "--owner", "eve",
             "--goal", "Test validation"
-
-])
+        ])
 
         # Validate MD file directly
         result = runner.invoke(app, ["validate", ".specwright/specs/validate-test.md"])
@@ -428,8 +422,7 @@ def test_validate_yaml_aip(temp_project):
             "--tier", "C",
             "--owner", "frank",
             "--goal", "Test YAML validation"
-
-])
+        ])
         runner.invoke(app, ["compile", ".specwright/specs/yaml-validate.md"])
 
         # Validate compiled YAML
@@ -456,8 +449,7 @@ def test_validate_uses_current_spec(temp_project):
             "--tier", "C",
             "--owner", "grace",
             "--goal", "Test current validation"
-
-])
+        ])
         runner.invoke(app, ["config", "current.spec", ".specwright/specs/current-validate.md"])
 
         # Validate without arguments
@@ -636,7 +628,10 @@ class TestAutonomousModeDispatch:
         # Track if _run_autonomous_step was called and with what args
         captured_args = {}
 
-        def mock_autonomous_step(aip_path, step_num, dry_run, allow_dirty, max_iterations, adapter):
+        def mock_autonomous_step(
+            aip_path, step_num, dry_run, allow_dirty, max_iterations, adapter,
+            governance_bundle=None, autogov_project=None, autogov_source=None
+        ):
             captured_args["step_num"] = step_num
             captured_args["dry_run"] = dry_run
             captured_args["adapter"] = adapter
@@ -666,7 +661,10 @@ class TestAutonomousModeDispatch:
 
         captured_args = {}
 
-        def mock_autonomous_step(aip_path, step_num, dry_run, allow_dirty, max_iterations, adapter):
+        def mock_autonomous_step(
+            aip_path, step_num, dry_run, allow_dirty, max_iterations, adapter,
+            governance_bundle=None, autogov_project=None, autogov_source=None
+        ):
             captured_args.update({
                 "step_num": step_num,
                 "dry_run": dry_run,

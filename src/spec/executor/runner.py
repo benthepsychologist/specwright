@@ -136,6 +136,7 @@ class StepRunner:
         max_iterations: int = 3,
         allow_dirty: bool = False,
         autogov_policy: dict[str, Any] | None = None,
+        governance_context: dict[str, Any] | None = None,
     ) -> StepResult:
         """
         Execute a step through its full lifecycle.
@@ -147,6 +148,7 @@ class StepRunner:
             max_iterations: Maximum retry attempts
             allow_dirty: Allow execution with dirty working tree
             autogov_policy: Optional autogov policy for scope constraints
+            governance_context: Optional autogov governance context for prompt/contract
 
         Returns:
             StepResult with termination reason and artifacts
@@ -223,6 +225,20 @@ class StepRunner:
             )
             return self._finalize_artifacts(result, run_dir)
 
+        # Add governance context to contract if available
+        # This is separate from forbidden_paths - governance paths are guidance
+        if governance_context:
+            contract.governance = {
+                "guidance": {
+                    "forbidden_paths": governance_context.get("autogov_forbidden_paths", []),
+                    "policy_name": governance_context.get("autogov_policy_name"),
+                    "policy_version": governance_context.get("autogov_policy_version"),
+                    "arch_decisions": governance_context.get("autogov_arch_decisions", []),
+                    "policy_rules": governance_context.get("autogov_policy_rules", []),
+                },
+                "autogov": governance_context.get("autogov", {}),
+            }
+
         # Write input bundle (always, even if we fail later)
         input_dir = run_dir / "input"
         output_dir = run_dir / "output"
@@ -233,7 +249,7 @@ class StepRunner:
         save_contract(contract, input_dir / "contract.yaml")
 
         # Write prompt.md
-        prompt_content = self._build_prompt(step, contract)
+        prompt_content = self._build_prompt(step, contract, governance_context)
         (input_dir / "prompt.md").write_text(prompt_content)
 
         # Write repo_state.json
@@ -689,12 +705,65 @@ class StepRunner:
 
         return result
 
-    def _build_prompt(self, step: dict[str, Any], contract: StepContract) -> str:
-        """Build the prompt for the agent."""
+    def _build_prompt(
+        self,
+        step: dict[str, Any],
+        contract: StepContract,
+        governance_context: dict[str, Any] | None = None,
+    ) -> str:
+        """Build the prompt for the agent.
+
+        If governance_context is provided, the prompt begins with a
+        deterministic governance header: === GOVERNANCE (AUTOGOV) ===
+        """
+        prompt_parts: list[str] = []
+
+        # Prepend governance header if available
+        if governance_context:
+            policy_name = governance_context.get("autogov_policy_name", "unknown")
+            policy_version = governance_context.get("autogov_policy_version", "0.0.0")
+            prompt_parts.extend([
+                "=== GOVERNANCE (AUTOGOV) ===",
+                f"Policy: {policy_name} v{policy_version}",
+                "",
+            ])
+
+            # Add governance guidance section
+            arch_decisions = governance_context.get("autogov_arch_decisions", [])
+            policy_rules = governance_context.get("autogov_policy_rules", [])
+            forbidden_paths = governance_context.get("autogov_forbidden_paths", [])
+
+            if arch_decisions:
+                prompt_parts.append("### Architecture Decisions")
+                for decision in arch_decisions:
+                    line = f"- **{decision.get('id', 'ADR')}**: {decision.get('title', '')}"
+                    if decision.get('summary'):
+                        line += f" - {decision['summary']}"
+                    prompt_parts.append(line)
+                prompt_parts.append("")
+
+            if policy_rules:
+                prompt_parts.append("### Policy Rules")
+                for rule in policy_rules:
+                    line = f"- **{rule.get('id', 'RULE')}**: {rule.get('name', '')}"
+                    if rule.get('description'):
+                        line += f" - {rule['description']}"
+                    prompt_parts.append(line)
+                prompt_parts.append("")
+
+            if forbidden_paths:
+                prompt_parts.append("### Governance Forbidden Paths (advisory)")
+                for fp in forbidden_paths:
+                    prompt_parts.append(f"- `{fp.get('path', '')}` - {fp.get('reason', '')}")
+                prompt_parts.append("")
+
+            prompt_parts.append("---")
+            prompt_parts.append("")
+
         step_id = step.get("step_id") or step.get("id", "unknown")
         # Support both 'prompt' and 'description' fields for step objective
         prompt_text = step.get("prompt") or step.get("description", "No prompt provided.")
-        prompt_parts = [
+        prompt_parts.extend([
             f"# Step: {step_id}",
             "",
             "## Objective",
@@ -703,7 +772,7 @@ class StepRunner:
             "## Scope Constraints",
             "",
             "### Allowed Paths",
-        ]
+        ])
 
         for path in contract.allowed_paths:
             prompt_parts.append(f"- `{path}`")

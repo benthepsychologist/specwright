@@ -1,0 +1,361 @@
+aip_id: AIP-specwright-2025-12-19-001
+context:
+  background: '> [User-provided or default background]
+
+
+    {% if autogov %}'
+  constraints:
+  - '{{ rule.description }}'
+created: '2025-12-19T16:02:37.675950+00:00'
+meta:
+  created_at: '2025-12-19T16:02:37.675950+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - '`spec create --autogov specwright --tier B --title "Test" --goal "Test goal"` produces `.specwright/specs/test.md`
+    with governance sections populated'
+  - '`spec create --tier B --title "Test" --goal "Test"` (without --autogov) fails when `autogov.enabled:
+    true` in config'
+  - 'Generated spec''s governance guidance labeled: "Governance Guidance (autogov, non-enforced in v1)"'
+  - Generated spec's `Context > Governance` section includes ADR summaries from `arch.decisions`
+  - 'Generated spec frontmatter includes `autogov: { project, source, captured_at }` for audit'
+  - Execution contract includes `governance.guidance.forbidden_paths` (separate from `forbidden_paths`)
+  - Old contracts without `governance` field still deserialize and run (backward compat)
+  - 'Agent prompt begins with deterministic header: `=== GOVERNANCE (AUTOGOV) ===` with policy name +
+    version'
+  - '`spec run --autogov specwright --step 1` injects governance export into agent prompt'
+  - Registry source resolved from `.specwright.yaml` only (no `--source` CLI flag)
+  - New module `src/spec/autogov/` exists with loader.py, context_builder.py
+  - Autogov imports are lazy (inside loader methods), with `TYPE_CHECKING` imports for type hints
+  - Base `SpecwrightError(exit_code)` exception with centralized CLI handling
+  - '`pytest tests/autogov/ --cov=spec.autogov --cov-fail-under=85` passes'
+  - '`ruff check src/spec/autogov/` passes'
+  - '`mypy src/spec/autogov/` passes'
+  goal: Make --autogov <project> required for spec create and spec run, loading governance artifacts to
+    enrich specs and execution contracts with policy constraints and architecture context
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-19-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- allowed_paths:
+  - src/spec/autogov/**
+  - tests/autogov/**
+  description: Create autogov module with loader and centralized exceptions
+  forbidden_paths:
+  - src/spec/cli/**
+  - src/spec/compiler/**
+  - src/spec/executor/**
+  - .git/**
+  gate_ref: 'G0: Plan Approval'
+  kind: code
+  outputs:
+  - src/spec/autogov/__init__.py
+  - src/spec/autogov/loader.py
+  - src/spec/autogov/exceptions.py
+  - tests/autogov/__init__.py
+  - tests/autogov/test_loader.py
+  prompt: "Create the `src/spec/autogov/` module with:\n1. `__init__.py` - Minimal, NO autogov imports\
+    \ at top level\n   - Only export exception classes and lazy loader\n   - This keeps `spec list`, `spec\
+    \ validate` etc working if autogov env is broken\n2. `exceptions.py` - Centralized exit-code handling:\n\
+    \   ```python\n   class SpecwrightError(Exception):\n       \"\"\"Base exception with exit code for\
+    \ centralized CLI handling.\"\"\"\n       exit_code: int = 1\n       def __init__(self, message: str,\
+    \ exit_code: int | None = None):\n           super().__init__(message)\n           if exit_code is\
+    \ not None:\n               self.exit_code = exit_code\n   class AutogovNotInstalledError(SpecwrightError):\n\
+    \       exit_code = 1\n   class GovernanceNotFoundError(SpecwrightError):\n       exit_code = 2\n\
+    \   class GovernanceInvalidError(SpecwrightError):\n       exit_code = 3\n   class RegistryConfigError(SpecwrightError):\n\
+    \       exit_code = 4\n   class CLIUsageError(SpecwrightError):\n       exit_code = 5\n   ```\n3.\
+    \ `loader.py` - GovernanceLoader class with LAZY imports + TYPE_CHECKING:\n   ```python\n   from typing\
+    \ import TYPE_CHECKING\n   if TYPE_CHECKING:\n       from autogov.models import PolicyPack, ArchPack,\
+    \ StatePack\n   class GovernanceLoader:\n       def load_policy(self, project: str, source: str) ->\
+    \ \"PolicyPack\":\n           try:\n               from autogov import load_artifact\n           except\
+    \ ImportError:\n               raise AutogovNotInstalledError(\n                   \"This repo is\
+    \ configured to use autogov, but autogov failed to load. \"\n                   \"Install or fix the\
+    \ environment.\"\n               )\n           # ... load logic\n   ```\n   - `load_policy(project,\
+    \ source) -> PolicyPack` (raises if missing)\n   - `load_arch(project, source) -> ArchPack` (raises\
+    \ if missing)\n   - `load_state(project, source) -> StatePack | None` (warns if missing)\n   - `load_all(project,\
+    \ source) -> GovernanceBundle`\n   - Use autogov types directly - no wrapper types\nWrite tests in\
+    \ `tests/autogov/test_loader.py`:\n- Test successful load of each artifact type\n- Test missing policy\
+    \ raises GovernanceNotFoundError (exit_code=2)\n- Test missing arch raises GovernanceNotFoundError\
+    \ (exit_code=2)\n- Test missing state returns None with warning\n- Test missing autogov package raises\
+    \ AutogovNotInstalledError (exit_code=1)"
+  role: coding_agent
+  step_id: step-001
+  verification_commands:
+  - ruff check src/spec/autogov/
+  - mypy src/spec/autogov/
+  - pytest tests/autogov/test_loader.py -v
+- allowed_paths:
+  - src/spec/autogov/**
+  - tests/autogov/**
+  description: Create context builder
+  forbidden_paths:
+  - src/spec/cli/**
+  - src/spec/compiler/**
+  - src/spec/executor/**
+  - .git/**
+  gate_ref: 'G0: Plan Approval'
+  kind: code
+  outputs:
+  - src/spec/autogov/context_builder.py
+  - tests/autogov/test_context_builder.py
+  - tests/autogov/fixtures/sample_policy.yaml
+  - tests/autogov/fixtures/sample_arch.yaml
+  prompt: "Create `src/spec/autogov/context_builder.py` with SpecContextBuilder class:\n1. `build_forbidden_paths(policy:\
+    \ PolicyPack) -> list[dict]`\n   - Extract paths from `policy.constraints.deny.paths`\n   - Return\
+    \ list of `{\"path\": str, \"reason\": str}` dicts\n   - Format as glob patterns (append `/**` if\
+    \ needed)\n2. `build_governance_context(bundle: GovernanceBundle, project: str, source: str) -> dict`\n\
+    \   - Return dict with all template variables:\n     - `autogov` dict: `{\"project\": str, \"source\"\
+    : str, \"captured_at\": ISO timestamp}`\n     - `autogov_policy_name`, `autogov_policy_version`\n\
+    \     - `autogov_arch_name`, `autogov_arch_version`\n     - `autogov_arch_decisions` (list of decision\
+    \ dicts)\n     - `autogov_policy_rules` (list of rule dicts, severity=error only)\n     - `autogov_forbidden_paths`\
+    \ (from build_forbidden_paths)\n3. `build_prompt_header(policy: PolicyPack) -> str`\n   - Return deterministic\
+    \ header for agent prompt:\n     ```\n     === GOVERNANCE (AUTOGOV) ===\n     Policy: {name} v{version}\n\
+    \     ```\n4. `merge_with_template_context(bundle: GovernanceBundle, base_context: dict, project:\
+    \ str, source: str) -> dict`\n   - Merge governance context into base Jinja2 context\n   - Include\
+    \ `captured_at` timestamp\nWrite tests in `tests/autogov/test_context_builder.py`:\n- Test each builder\
+    \ method with realistic fixtures\n- Test with missing optional fields in artifacts\n- Test prompt\
+    \ header format is deterministic\n- Standard assertion-based tests (no snapshots)"
+  role: coding_agent
+  step_id: step-002
+  verification_commands:
+  - ruff check src/spec/autogov/
+  - mypy src/spec/autogov/
+  - pytest tests/autogov/ -v
+- allowed_paths:
+  - config/templates/specs/**
+  - tests/autogov/**
+  - src/spec/autogov/**
+  description: Add governance blocks to existing templates
+  forbidden_paths:
+  - src/spec/cli/**
+  - src/spec/compiler/**
+  - .git/**
+  gate_ref: 'G0: Plan Approval'
+  kind: code
+  outputs:
+  - tests/autogov/test_template.py
+  prompt: "Modify existing tier templates to include conditional governance blocks:\n1. Edit `config/templates/specs/tier-a-template.md`:\n\
+    \   - Add `autogov` frontmatter field (structured: `project`, `source`, `captured_at`)\n   - Add `{%\
+    \ if autogov %}` governance section under Context\n   - Add separate section labeled: \"Governance\
+    \ Guidance (autogov, non-enforced in v1)\"\n2. Edit `config/templates/specs/tier-b-template.md`:\n\
+    \   - Same changes as tier-a\n3. Edit `config/templates/specs/tier-c-template.md`:\n   - Same changes\
+    \ as tier-a\nSingle template per tier. No parallel *-autogov-template.md files.\nTemplate variables\
+    \ to support:\n- `autogov` - Dict with `project`, `source`, `captured_at` keys (or None)\n- `autogov_policy_name`,\
+    \ `autogov_policy_version`\n- `autogov_arch_name`, `autogov_arch_version`\n- `autogov_arch_decisions`\
+    \ - List of decision dicts\n- `autogov_policy_rules` - List of rule dicts\n- `autogov_forbidden_paths`\
+    \ - List of path dicts with `path` and `reason`\nWrite template tests in `tests/autogov/test_template.py`:\n\
+    - Test rendering with governance context populated\n- Test governance section appears in output\n\
+    - Test label is exactly: \"Governance Guidance (autogov, non-enforced in v1)\"\n- Standard assertion-based\
+    \ tests (no snapshots)"
+  role: coding_agent
+  step_id: step-003
+  verification_commands:
+  - pytest tests/autogov/test_template.py -v
+- allowed_paths:
+  - src/spec/cli/spec.py
+  - src/spec/autogov/**
+  - tests/cli/test_spec_create.py
+  - tests/autogov/**
+  description: Make --autogov required on spec create (when enabled)
+  forbidden_paths:
+  - src/spec/compiler/**
+  - src/spec/executor/**
+  - .git/**
+  - '*.lock'
+  gate_ref: 'G1: Code Readiness'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Code Quality:
+      - '`ruff check .` passes'
+      - '`mypy src/spec/cli/ src/spec/autogov/` passes'
+      - No `--source` CLI flag exists
+      - Exit codes match spec (1/2/3/4/5)
+      - Error messages include actionable guidance
+      Integration:
+      - Works with real autogov registry (manual verification)
+      - Generated spec compiles successfully
+      Testing:
+      - 'Test: create with valid autogov produces governance section'
+      - 'Test: missing --autogov when enabled exits 5'
+      - 'Test: missing source when enabled exits 4'
+      - 'Test: nonexistent project exits 2'
+      - 'Test: invalid artifact exits 3'
+  kind: code
+  outputs:
+  - tests/cli/test_spec_create.py
+  prompt: "Modify `src/spec/cli/spec.py` `create()` function:\n1. Change `title` from positional argument\
+    \ to required option:\n   ```python\n   title: str = typer.Option(..., \"--title\", \"-t\", help=\"\
+    Spec title (required)\")\n   ```\n2. Add `--autogov` option (required when autogov.enabled):\n   ```python\n\
+    \   autogov_project: str | None = typer.Option(None, \"--autogov\", help=\"Autogov project name\"\
+    )\n   ```\n3. Check config and validate (failure precedence):\n   ```python\n   autogov_cfg = cfg.get(\"\
+    autogov\", {})\n   autogov_enabled = autogov_cfg.get(\"enabled\", False)\n   if autogov_enabled:\n\
+    \       if \"source\" not in autogov_cfg:\n           raise RegistryConfigError(\"Missing autogov.source\
+    \ in .specwright.yaml\")\n       if not autogov_project:\n           raise CLIUsageError(\"--autogov\
+    \ is required when autogov.enabled: true\")\n   ```\n4. CLI must provide centralized exception handler\
+    \ that catches `SpecwrightError` and exits with `e.exit_code`, printing `Error: {message}` to stderr.\
+    \ (Implementation mechanism left to implementer.)\n5. Load governance (lazy import, exceptions bubble\
+    \ up to handler):\n   ```python\n   if autogov_enabled:\n       from spec.autogov.loader import GovernanceLoader\n\
+    \       loader = GovernanceLoader()\n       bundle = loader.load_all(autogov_project, autogov_cfg[\"\
+    source\"])\n   ```\n6. Use SpecContextBuilder to merge governance into template context with captured_at\n\
+    7. Use same tier template (with governance conditional block)\nWrite/update tests in `tests/cli/test_spec_create.py`:\n\
+    - Test `--autogov` with valid project produces spec with governance\n- Test missing `--autogov` when\
+    \ enabled fails with exit code 5 (CLIUsageError)\n- Test missing config autogov.source when enabled\
+    \ fails with exit code 4\n- Test autogov import failure when enabled fails with exit code 1\n- Test\
+    \ `--autogov nonexistent` fails with exit code 2\n- Test invalid artifact fails with exit code 3"
+  role: agentic
+  step_id: step-004
+  verification_commands:
+  - ruff check src/spec/cli/spec.py src/spec/autogov/
+  - mypy src/spec/cli/spec.py src/spec/autogov/
+  - pytest tests/cli/test_spec_create.py tests/autogov/ -v
+- allowed_paths:
+  - src/spec/cli/spec.py
+  - src/spec/executor/runner.py
+  - src/spec/executor/contract.py
+  - src/spec/autogov/**
+  - tests/cli/test_spec_run.py
+  - tests/executor/test_runner.py
+  - tests/executor/test_contract.py
+  description: Make --autogov required on spec run (when enabled)
+  forbidden_paths:
+  - src/spec/compiler/**
+  - .git/**
+  - '*.lock'
+  gate_ref: 'G1: Code Readiness'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Code Quality:
+      - '`ruff check .` passes'
+      - '`mypy .` passes'
+      - Governance loaded once at run() level, not per-step
+      - No `--source` CLI flag exists
+      - Centralized exception handler catches SpecwrightError
+      Governance Semantics:
+      - Contract has optional `governance.guidance.forbidden_paths` field
+      - Contract `forbidden_paths` does NOT contain autogov paths
+      - Agent prompt begins with `=== GOVERNANCE (AUTOGOV) ===`
+      - Old contracts without governance field still deserialize
+      Testing:
+      - Missing --autogov when enabled fails with exit 5
+      - Exit codes match spec (1/2/3/4/5)
+  kind: code
+  outputs:
+  - tests/cli/test_spec_run.py
+  prompt: "Modify `src/spec/cli/spec.py` `run()` and `_run_autonomous_step()`:\n1. Add `--autogov` option\
+    \ (required when autogov.enabled):\n   ```python\n   autogov_project: str | None = typer.Option(None,\
+    \ \"--autogov\", help=\"Autogov project name\")\n   ```\n2. Same config validation as create (uses\
+    \ centralized exception handler)\n3. Load governance once at run() level, pass bundle to _run_autonomous_step()\n\
+    4. Modify StepContract dataclass in `src/spec/executor/contract.py`:\n   ```python\n   @dataclass\n\
+    \   class StepContract:\n       # ... existing fields ...\n       governance: dict | None = None \
+    \ # NEW: optional for backward compat\n   ```\n5. In contract builder, populate governance guidance\
+    \ (NOT forbidden_paths):\n   ```python\n   if bundle:\n       contract.governance = {\n          \
+    \ \"guidance\": {\n               \"forbidden_paths\": [\n                   {\"path\": p.path, \"\
+    reason\": p.reason}\n                   for p in bundle.policy.constraints.deny.paths\n          \
+    \     ]\n           }\n       }\n   ```\n6. Modify prompt building in StepRunner:\n   - Use `build_prompt_header(bundle.policy)`\
+    \ from context_builder\n   - Prepend: `=== GOVERNANCE (AUTOGOV) ===\\nPolicy: {name} v{version}\\\
+    n`\n   - Then include full governance export\n7. Ensure contract serialization handles optional governance\
+    \ field (backward compat)\nWrite tests in `tests/cli/test_spec_run.py`:\n- Test contract has `governance.guidance.forbidden_paths`\
+    \ (separate from forbidden_paths)\n- Test old contracts without governance field still load\n- Test\
+    \ prompt begins with `=== GOVERNANCE (AUTOGOV) ===`\n- Test missing --autogov when enabled fails with\
+    \ exit code 5 (CLIUsageError)\n- Test nonexistent project exits 2"
+  role: agentic
+  step_id: step-005
+  verification_commands:
+  - ruff check src/spec/cli/ src/spec/executor/ src/spec/autogov/
+  - mypy src/spec/cli/ src/spec/executor/ src/spec/autogov/
+  - pytest tests/cli/test_spec_run.py tests/executor/test_runner.py tests/executor/test_contract.py -v
+- allowed_paths:
+  - src/spec/core/loader.py
+  - src/spec/cli/spec.py
+  - tests/core/test_loader.py
+  - tests/cli/test_spec_create.py
+  description: Add autogov config section
+  forbidden_paths:
+  - src/spec/compiler/**
+  - src/spec/executor/**
+  - .git/**
+  gate_ref: 'G1: Code Readiness'
+  kind: code
+  prompt: "Extend `.specwright.yaml` schema and loader:\n1. Update `src/spec/core/loader.py` to recognize\
+    \ `autogov` section:\n   ```yaml\n   autogov:\n     enabled: true   # Autogov required when true\n\
+    \     source: org     # patterns | org\n   ```\n2. Update `spec init` to prompt for autogov config:\n\
+    \   - Ask: \"Enable autogov governance? (y/n)\"\n   - If yes, ask: \"Registry source? (org/patterns)\"\
+    \n   - Write autogov section to config\n3. Validation rules (handled by RegistryConfigError):\n  \
+    \ - If `autogov.enabled` missing → default to `false` (backward compat)\n   - If `autogov.enabled:\
+    \ false` → `source` is optional/ignored\n   - If `autogov.enabled: true` but `autogov.source` missing\
+    \ → exit 4\nWrite tests:\n- Test config loading with autogov section\n- Test config loading without\
+    \ autogov section (enabled defaults to false)\n- Test autogov.enabled: true but missing source raises\
+    \ RegistryConfigError\n- Test spec init creates autogov section when enabled"
+  role: coding_agent
+  step_id: step-006
+  verification_commands:
+  - ruff check src/spec/core/ src/spec/cli/
+  - mypy src/spec/core/ src/spec/cli/
+  - pytest tests/core/test_loader.py tests/cli/test_spec_create.py -v
+- description: Full integration test
+  gate_ref: 'G2: Pre-Release'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Quality:
+      - '`ruff check .` passes'
+      - '`mypy .` passes'
+      - CLI help shows --autogov as required
+      Test Coverage:
+      - '`pytest --cov=spec.autogov --cov-fail-under=85` passes'
+      - Integration tests pass
+      - No regressions in existing tests
+  kind: code
+  outputs:
+  - tests/integration/test_autogov_integration.py
+  prompt: "1. Create integration test in `tests/integration/test_autogov_integration.py`:\n   - End-to-end:\
+    \ create spec with autogov, compile, validate\n   - End-to-end: run step with autogov, verify contract\
+    \ has governance paths\n   - Test with mock autogov registry fixtures\n   - Standard assertion-based\
+    \ tests (no snapshots)\n2. Add autogov as required dependency to `pyproject.toml`:\n   ```toml\n \
+    \  dependencies = [\n       # ... existing deps\n       \"autogov>=0.1.0\",\n   ]\n   ```\n3. Update\
+    \ CLI help text to indicate --autogov is required"
+  role: coding_agent
+  step_id: step-007
+  verification_commands:
+  - pytest tests/integration/test_autogov_integration.py -v
+  - pytest --cov=spec.autogov --cov-fail-under=85
+  - ruff check .
+  - mypy .
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/autogov-integration
+spec_version: 1.0.0
+tier: B
+title: Autogov Integration for Spec Creation and Execution
+updated: '2025-12-19T19:00:00+00:00'
+version: '0.1'
+

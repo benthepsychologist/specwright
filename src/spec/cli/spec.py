@@ -4,14 +4,32 @@ import json
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml  # type: ignore[import]
 
 try:
-    from importlib.resources import files  # type: ignore[attr-defined]
+    from importlib.resources import files  # type: ignore[attr-defined,no-redef]
 except ImportError:
-    from importlib_resources import files  # type: ignore[import-untyped]
+    from importlib_resources import files  # type: ignore[import-untyped,no-redef]
+
+import functools
+
+from spec.autogov.exceptions import SpecwrightError
+
+
+def _specwright_exception_handler(func):
+    """Decorator to catch SpecwrightError and exit with proper exit code."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except SpecwrightError as e:
+            typer.secho(f"Error: {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(e.exit_code)
+    return wrapper
+
 
 app = typer.Typer(help="Specwright CLI for managing Agentic Implementation Plans")
 
@@ -169,8 +187,14 @@ def find_config() -> tuple[Path | None, dict]:
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
     claude: bool = typer.Option(True, "--claude/--no-claude", help="Install Claude Code slash commands"),
+    autogov: bool = typer.Option(False, "--autogov", help="Enable autogov governance integration"),
 ):
-    """Initialize Specwright configuration in current directory."""
+    """Initialize Specwright configuration in current directory.
+
+    Examples:
+        spec init              # Basic setup without autogov
+        spec init --autogov    # Enable autogov (prompts for registry source)
+    """
     config_path = Path.cwd() / ".specwright.yaml"
 
     if config_path.exists() and not force:
@@ -179,6 +203,21 @@ def init(
         raise typer.Exit(1)
 
     config = get_default_config()
+
+    # Add autogov section if enabled (prompt for source interactively)
+    if autogov:
+        import click
+        typer.echo("Autogov governance enabled.")
+        source = typer.prompt(
+            "Registry source (org/patterns)",
+            type=click.Choice(["org", "patterns"]),
+            default="org",
+        )
+        config["autogov"] = {
+            "enabled": True,
+            "source": source,
+        }
+        typer.echo(f"✓ Autogov enabled with source: {source}")
 
     with open(config_path, "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
@@ -347,6 +386,7 @@ def config(
 
 
 @app.command()
+@_specwright_exception_handler
 def create(
     title: str = typer.Argument(..., help="Spec title"),
     tier: RiskTier | None = typer.Option(None, "--tier", "-t", help="Risk tier (A/B/C)"),
@@ -356,17 +396,43 @@ def create(
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
     set_current: bool = typer.Option(False, "--set-current", help="Set as current working spec"),
     yaml_mode: bool = typer.Option(False, "--yaml", help="Generate YAML directly (legacy mode)"),
+    autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
 ):
     """Create a new spec from template (Markdown by default, YAML with --yaml flag).
 
     Examples:
-        spec create "Add User Avatars"                    # Uses defaults
+        spec create "Add User Avatars"                                   # Uses defaults
         spec create "Add User Avatars" --tier C --goal "Allow profile pictures"
         spec create "Refactor Auth" --set-current
+        spec create "Add OAuth" --autogov myproject --tier B             # With governance
     """
+    from spec.autogov.exceptions import CLIUsageError, RegistryConfigError
 
     # Get config
     config_path, cfg = find_config()
+
+    # Check autogov configuration
+    autogov_cfg = cfg.get("autogov", {})
+    autogov_enabled = autogov_cfg.get("enabled", False)
+    governance_bundle = None
+
+    if autogov_enabled:
+        # Validate config has source
+        if "source" not in autogov_cfg:
+            raise RegistryConfigError(
+                "Missing autogov.source in .specwright.yaml. "
+                "Add 'autogov.source: org' or 'autogov.source: patterns' to your config."
+            )
+        # Require --autogov flag when enabled
+        if not autogov_project:
+            raise CLIUsageError(
+                "--autogov is required when autogov.enabled: true in .specwright.yaml. "
+                "Use: spec create <title> --autogov <project-name>"
+            )
+        # Load governance (lazy import)
+        from spec.autogov.loader import GovernanceLoader
+        loader = GovernanceLoader()
+        governance_bundle = loader.load_all(autogov_project, autogov_cfg["source"])
     project_root = config_path.parent if config_path else Path.cwd()
 
     # Get tier from config if not provided
@@ -481,20 +547,38 @@ def create(
         # Generate timestamps
         now = datetime.now().astimezone().isoformat()
 
+        # Build base template context
+        base_context = {
+            "tier": tier.value,
+            "title": title,
+            "owner": owner,
+            "goal": goal,
+            "branch": branch,
+            "project_slug": project_slug,
+            "created": now,
+            "updated": now,
+        }
+
+        # Merge governance context if available
+        if governance_bundle is not None:
+            from spec.autogov.context_builder import SpecContextBuilder
+            context_builder = SpecContextBuilder()
+            template_context = context_builder.merge_with_template_context(
+                bundle=governance_bundle,
+                base_context=base_context,
+                project=autogov_project,  # type: ignore[arg-type]
+                source=autogov_cfg["source"],
+            )
+        else:
+            template_context = base_context
+
         # Use Jinja2 to render template
-        from jinja2 import Template
+        from jinja2 import BaseLoader, Environment
+        # Use Environment with trim_blocks/lstrip_blocks for cleaner output
+        env = Environment(loader=BaseLoader(), trim_blocks=True, lstrip_blocks=True)
         template_content = template_path.read_text()
-        template = Template(template_content)
-        rendered = template.render(
-            tier=tier.value,
-            title=title,
-            owner=owner,
-            goal=goal,
-            branch=branch,
-            project_slug=project_slug,
-            created=now,
-            updated=now
-        )
+        template = env.from_string(template_content)
+        rendered = template.render(**template_context)
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(rendered)
@@ -799,9 +883,15 @@ def _run_autonomous_step(
     allow_dirty: bool,
     max_iterations: int,
     adapter: str,
+    governance_bundle: Any = None,
+    autogov_project: str | None = None,
+    autogov_source: str | None = None,
 ) -> None:
     """
     Run a step autonomously with scope enforcement.
+
+    Args:
+        governance_bundle: Optional GovernanceBundle from autogov loader
 
     Exit codes:
         0 = PASS (step completed successfully)
@@ -851,6 +941,17 @@ def _run_autonomous_step(
     runs_dir = project_root / ".specwright" / "runs"
     runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
 
+    # Build governance context if bundle is available
+    governance_context = None
+    if governance_bundle is not None and autogov_project and autogov_source:
+        from spec.autogov.context_builder import SpecContextBuilder
+        context_builder = SpecContextBuilder()
+        governance_context = context_builder.build_governance_context(
+            bundle=governance_bundle,
+            project=autogov_project,
+            source=autogov_source,
+        )
+
     # Execute step
     result = runner.run_step(
         aip=aip,
@@ -858,6 +959,7 @@ def _run_autonomous_step(
         dry_run=dry_run,
         max_iterations=max_iterations,
         allow_dirty=allow_dirty,
+        governance_context=governance_context,
     )
 
     # Display result
@@ -931,6 +1033,7 @@ def _run_autonomous_step(
 
 
 @app.command()
+@_specwright_exception_handler
 def run(
     aip_path: Path | None = typer.Argument(None, help="Path to AIP YAML file (uses current AIP if omitted)"),
     step: int | None = typer.Option(None, "--step", "-s", help="Run specific step autonomously (1-based). Without this flag, runs interactive HITL mode."),
@@ -939,6 +1042,7 @@ def run(
     allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Allow execution with dirty working tree (autonomous mode only)"),
     max_iterations: int = typer.Option(3, "--max-iterations", "-m", help="Maximum retry iterations (autonomous mode only)"),
     adapter: str = typer.Option("claude", "--adapter", help="Agent adapter to use (autonomous mode only)"),
+    autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
 ):
     """Run an AIP - either in interactive HITL mode or autonomous step execution.
 
@@ -967,6 +1071,7 @@ def run(
         spec run --step 2 --allow-dirty --max-iterations 5
     """
     from spec.audit import GateAuditLogger
+    from spec.autogov.exceptions import CLIUsageError, RegistryConfigError
     from spec.cli.interactive import (
         confirm_gate_override,
         display_approval_summary,
@@ -979,6 +1084,29 @@ def run(
 
     # Get config
     config_path, cfg = find_config()
+
+    # Check autogov configuration and load governance ONCE at run() level
+    autogov_cfg = cfg.get("autogov", {})
+    autogov_enabled = autogov_cfg.get("enabled", False)
+    governance_bundle = None
+
+    if autogov_enabled:
+        # Validate config has source
+        if "source" not in autogov_cfg:
+            raise RegistryConfigError(
+                "Missing autogov.source in .specwright.yaml. "
+                "Add 'autogov.source: org' or 'autogov.source: patterns' to your config."
+            )
+        # Require --autogov flag when enabled
+        if not autogov_project:
+            raise CLIUsageError(
+                "--autogov is required when autogov.enabled: true in .specwright.yaml. "
+                "Use: spec run --autogov <project-name> --step <N>"
+            )
+        # Load governance (lazy import, exceptions bubble up to handler)
+        from spec.autogov.loader import GovernanceLoader
+        loader = GovernanceLoader()
+        governance_bundle = loader.load_all(autogov_project, autogov_cfg["source"])
 
     # If no aip_path provided, use current AIP
     if aip_path is None:
@@ -1004,6 +1132,9 @@ def run(
             allow_dirty=allow_dirty,
             max_iterations=max_iterations,
             adapter=adapter,
+            governance_bundle=governance_bundle,
+            autogov_project=autogov_project,
+            autogov_source=autogov_cfg.get("source") if autogov_enabled else None,
         )
         return  # Never reached due to typer.Exit in _run_autonomous_step
 
@@ -1235,7 +1366,8 @@ def gate_list(
 
         typer.secho(f"Step: {approval.get('step_id')}", bold=True)
         typer.echo(f"  Gate: {approval.get('gate_ref')}")
-        typer.secho(f"  Decision: {approval.get('decision').upper()}", fg=color)
+        decision = approval.get("decision", "unknown")
+        typer.secho(f"  Decision: {decision.upper()}", fg=color)
         typer.echo(f"  Reviewer: {approval.get('reviewer')}")
         typer.echo(f"  Timestamp: {approval.get('timestamp')}")
 

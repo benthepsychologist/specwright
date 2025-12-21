@@ -68,6 +68,10 @@ class StepContract:
     created_at: str = ""
     baseline_commit: str = ""
 
+    # Governance (optional, for autogov integration)
+    # This is separate from forbidden_paths - governance paths are guidance, not enforcement
+    governance: dict[str, Any] | None = None
+
     def __post_init__(self) -> None:
         if not self.created_at:
             self.created_at = datetime.now(UTC).isoformat()
@@ -203,7 +207,7 @@ def save_contract(contract: StepContract, path: Path) -> None:
 
     Uses deterministic serialization (sorted keys).
     """
-    data = {
+    data: dict[str, Any] = {
         "aip_id": contract.aip_id,
         "step_id": contract.step_id,
         "step_index": contract.step_index,
@@ -217,13 +221,20 @@ def save_contract(contract: StepContract, path: Path) -> None:
         "baseline_commit": contract.baseline_commit,
     }
 
+    # Only include governance if present (backward compat)
+    if contract.governance is not None:
+        data["governance"] = contract.governance
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=True)
 
 
 def load_contract(path: Path) -> StepContract:
-    """Load a StepContract from a YAML file."""
+    """Load a StepContract from a YAML file.
+
+    Backward compatible: contracts without governance field load correctly.
+    """
     with open(path) as f:
         data = yaml.safe_load(f)
 
@@ -241,4 +252,5 @@ def load_contract(path: Path) -> StepContract:
         max_iterations=data.get("max_iterations", 3),
         created_at=data.get("created_at", ""),
         baseline_commit=data.get("baseline_commit", ""),
+        governance=data.get("governance"),  # Optional, None if not present
     )

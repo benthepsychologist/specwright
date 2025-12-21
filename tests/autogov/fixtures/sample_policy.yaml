@@ -1,0 +1,40 @@
+# Sample PolicyPack fixture for testing
+name: specwright-policy
+version: "1.2.0"
+
+constraints:
+  deny:
+    paths:
+      - path: ".git"
+        reason: "Version control metadata is protected"
+      - path: "secrets/"
+        reason: "Secrets directory is forbidden"
+      - path: ".env"
+        reason: "Environment files contain sensitive data"
+      - path: "node_modules"
+        reason: "Dependencies should not be modified directly"
+
+rules:
+  - id: RULE-001
+    name: no-hardcoded-secrets
+    description: "Credentials must not be hardcoded in source files"
+    severity: error
+    category: security
+
+  - id: RULE-002
+    name: require-type-hints
+    description: "All public functions must have type hints"
+    severity: error
+    category: code-quality
+
+  - id: RULE-003
+    name: prefer-async
+    description: "Prefer async/await for I/O operations"
+    severity: warning
+    category: performance
+
+  - id: RULE-004
+    name: require-tests
+    description: "All new code must have corresponding tests"
+    severity: error
+    category: testing

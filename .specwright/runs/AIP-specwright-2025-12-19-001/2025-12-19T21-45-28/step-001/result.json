@@ -1,0 +1,17 @@
+{
+  "aip_id": "AIP-specwright-2025-12-19-001",
+  "step_idx": 0,
+  "step_id": "step-001",
+  "baseline_sha": "853ae0894cc31b31f614f59de15e0de0646ef867",
+  "adapter_name": "claude",
+  "termination_reason": "FAIL_DIRTY_WORKTREE",
+  "iterations_attempted": 0,
+  "artifacts_dir": "AIP-specwright-2025-12-19-001/2025-12-19T21-45-28/step-001",
+  "final_patch_path": null,
+  "touched_files": [],
+  "details": {
+    "error_message": "Working tree is dirty. Use --allow-dirty to override."
+  },
+  "dry_run": false,
+  "timestamp": "2025-12-19T21:45:28.595940+00:00"
+}

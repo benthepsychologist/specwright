@@ -8,5 +8,5 @@ user:
   default_owner: benthepsychologist
   default_tier: C
 current:
-  spec: .specwright/specs/soft-determinism-slim-down.md
-  aip: /workspace/specwright/.specwright/aips/soft-determinism-slim-down.yaml
+  spec: .specwright/specs/autogov-spec-creation.md
+  aip: /workspace/specwright/.specwright/aips/autogov-spec-creation.yaml

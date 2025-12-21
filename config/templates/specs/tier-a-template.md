@@ -12,6 +12,12 @@ updated: {{ updated }}
 orchestrator_contract: "standard"
 repo:
   working_branch: "{{ branch }}"
+{% if autogov %}
+autogov:
+  project: {{ autogov.project }}
+  source: {{ autogov.source }}
+  captured_at: {{ autogov.captured_at }}
+{% endif %}
 ---
 
 # {{ title }}
@@ -40,6 +46,38 @@ repo:
 - No PHI exposure
 - Threat model reviewed
 - Add specific constraints here
+{% if autogov %}
+
+### Governance
+
+> Governance Guidance (autogov, non-enforced in v1)
+
+**Policy:** {{ autogov_policy_name }} v{{ autogov_policy_version }}
+**Architecture:** {{ autogov_arch_name }} v{{ autogov_arch_version }}
+{% if autogov_arch_decisions %}
+
+#### Architecture Decisions
+{% for decision in autogov_arch_decisions %}
+- **{{ decision.id }}**: {{ decision.title }}{% if decision.summary %} - {{ decision.summary }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if autogov_policy_rules %}
+
+#### Policy Rules (Error Severity)
+{% for rule in autogov_policy_rules %}
+- **{{ rule.id }}**: {{ rule.name }}{% if rule.description %} - {{ rule.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if autogov_forbidden_paths %}
+
+#### Forbidden Paths
+{% for fp in autogov_forbidden_paths %}
+- `{{ fp.path }}` - {{ fp.reason }}
+{% endfor %}
+{% endif %}
+{% endif %}
 
 ## Plan
 
