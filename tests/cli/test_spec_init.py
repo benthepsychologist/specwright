@@ -24,8 +24,18 @@ class TestDefaultConfig:
     """Tests for default configuration."""
 
     def test_default_config_no_autogov(self) -> None:
-        """Default config does not include autogov section."""
+        """Default config (v0.6) does not include autogov section."""
         config = get_default_config()
+
+        assert "autogov" not in config
+        # v0.6 format: governor-based (new default)
+        assert config["version"] == "0.6"
+        assert "governor" in config
+        assert config["governor"]["path"] == "~/.local/local-governor"
+
+    def test_legacy_config_has_paths(self) -> None:
+        """Legacy config (v0.1) has paths and user sections."""
+        config = get_default_config(legacy=True)
 
         assert "autogov" not in config
         assert config["version"] == "0.1"

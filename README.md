@@ -19,8 +19,17 @@ Specwright is a **CLI tool** that governs AI-assisted development through struct
 3. **`spec validate`** - Schema-validate the compiled AIP
 4. **`spec run`** - Execute steps with agent adapters (Claude, Codex)
 
-### Key Architecture
+### Key Architecture (v0.6+)
 
+**Four-Layer Model:**
+```
+L3: Ephemeral     → Claude sessions, temporary workspaces
+L2: Target Repos  → Multiple repos receiving AIP execution
+L1: Specwright    → CLI, compiler, executor, adapters
+L0: Local Governor → Centralized storage (~/.local/local-governor/)
+```
+
+**Source Layout:**
 ```
 src/spec/
 ├── cli/spec.py              # Typer CLI - all commands defined here
@@ -28,15 +37,22 @@ src/spec/
 │   ├── parser.py            # Token-based MD parser (markdown-it-py)
 │   └── compiler.py          # Deterministic YAML generator
 ├── executor/                # Step execution engine
-│   ├── executor.py          # Main executor loop
+│   ├── runner.py            # StepRunner
 │   ├── contract.py          # StepContract dataclass
 │   └── adapters/            # Agent adapters
 │       ├── base.py          # AdapterResult, BaseAdapter
-│       ├── claude_adapter.py # Claude CLI integration
-│       └── codex_adapter.py # OpenAI Codex (legacy)
-├── autogov/                 # Governance integration
-│   ├── loader.py            # Loads project.build.yaml from local-governor
-│   ├── context_builder.py   # Builds template context from governance
+│       └── claude_adapter.py # Claude CLI integration
+├── governor/                # L0 integration (NEW in v0.6)
+│   ├── locator.py           # Find/validate governor path
+│   ├── reader.py            # Read specs/AIPs from governor
+│   ├── writer.py            # Write errors/provenance
+│   ├── materializer.py      # Copy AIPs to repo workspace
+│   ├── targets.py           # Multi-repo target resolution
+│   ├── splitter.py          # Split specs into repo-scoped AIPs
+│   └── coordinator.py       # Cross-repo execution
+├── autogov/                 # Governance context integration
+│   ├── loader.py            # Loads project.build.yaml
+│   ├── context_builder.py   # Builds template context
 │   └── exceptions.py        # AutogovNotInstalledError, etc.
 ├── templates/               # Jinja2 spec templates (tier-a/b/c-template.md)
 └── core/                    # Shared utilities
@@ -117,7 +133,17 @@ class AdapterResult:
 
 ### Configuration
 
-**`.specwright.yaml`** in project root:
+**`.specwright.yaml`** in project root (v0.6 - Governor Mode):
+```yaml
+version: "0.6"
+governor:
+  path: ~/.local/local-governor
+autogov:
+  enabled: true
+  source: patterns  # or "org"
+```
+
+**Legacy Config (v0.1 - Repo-Local Mode):**
 ```yaml
 version: "0.1"
 paths:
@@ -126,9 +152,6 @@ paths:
 user:
   default_owner: myname
   default_tier: B
-autogov:
-  enabled: true
-  source: patterns  # or "org"
 ```
 
 **Governance Source:** Project build files are loaded from:

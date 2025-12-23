@@ -8,12 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
-- Actual agent execution (replace checklist mode)
-- State persistence
 - Automated gate approvals (Slack/email)
 - Metrics tracking dashboard
 - Integration with Dogfold scaffolding
 - Full Gorch orchestration integration
+
+## [0.6.0] - 2025-12-23
+
+### Added - Local Governor Integration (BREAKING)
+
+- **Four-layer architecture**: L0 (governor), L1 (specwright), L2 (repos), L3 (ephemeral)
+- **Centralized storage**: Specs and AIPs now stored in `~/.local/local-governor/`
+- **Error tracking**: Persistent error records in governor with `ErrorRecord` dataclass
+- **Provenance tracking**: Execution history stored in `~/.local/local-governor/provenance/`
+- **Auto-materialization**: AIPs automatically copied from governor to repo workspace
+- **Multi-repo specs**: Single spec can target multiple repositories
+- **AIP splitting**: Compile one spec into N repo-scoped AIPs
+- **Cross-repo coordination**: `MultiRepoCoordinator` for sequential execution
+
+### Added - Governor Module
+
+- `GovernorLocator`: Find and validate local-governor path
+- `GovernorReader`: Read specs and AIPs from governor
+- `GovernorWriter`: Write specs, AIPs, errors, and provenance
+- `Materializer`: Copy AIPs to repo workspaces for execution
+- `TargetResolver`: Resolve multi-repo targets from spec's `targets` block
+- `AIPSplitter`: Split multi-repo specs into repo-scoped AIPs
+- `MultiRepoCoordinator`: Coordinate execution across repositories
+
+### Changed - Config Format (BREAKING)
+
+- **New config version**: `version: "0.6"` with `governor:` section
+- **Legacy mode**: v0.1 configs with `paths:` section still work (repo-local mode)
+- **Default adapter mode**: Claude adapter now defaults to `oneshot` mode
+
+### Changed - CLI Commands
+
+- `spec create`: Now writes to governor storage by default
+- `spec compile`: Now writes AIPs to governor storage by default
+- `spec run`: Integrates with governor (auto-materialize, error tracking, provenance)
+
+### Migration
+
+See `artifacts/docs/migration-guide.md` for step-by-step migration from legacy v0.1 config to v0.6.
+
+**Quick migration:**
+1. Create governor: `mkdir -p ~/.local/local-governor/{specs,aips,errors,provenance}`
+2. Copy specs: `cp .specwright/specs/*.md ~/.local/local-governor/specs/`
+3. Update config: Change `version: "0.1"` to `version: "0.6"`, replace `paths:` with `governor:`
 
 ## [0.5.0] - 2025-11-10
 
@@ -134,7 +176,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.6.0
 [0.5.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.5.0
 [0.4.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.4.0
 [0.3.2]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.2

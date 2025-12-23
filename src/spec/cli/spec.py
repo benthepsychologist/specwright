@@ -12,7 +12,7 @@ import yaml  # type: ignore[import]
 try:
     from importlib.resources import files  # type: ignore[attr-defined,no-redef]
 except ImportError:
-    from importlib_resources import files  # type: ignore[import-untyped,no-redef]
+    from importlib_resources import files  # type: ignore[import-untyped,no-redef,import-not-found]
 
 import functools
 
@@ -130,24 +130,38 @@ def get_schema_path() -> Path:
     raise FileNotFoundError("Could not find aip.schema.json")
 
 
-def get_default_config() -> dict:
-    """Get default Specwright configuration."""
+def get_default_config(*, legacy: bool = False) -> dict:
+    """Get default Specwright configuration.
+
+    Args:
+        legacy: If True, return legacy v0.1 format. Otherwise v0.6 minimal format.
+    """
+    if legacy:
+        # Legacy v0.1 format (deprecated)
+        return {
+            "version": "0.1",
+            "paths": {
+                "specs": ".specwright/specs",
+                "aips": ".specwright/aips",
+            },
+            "repo": {
+                "default_branch": "main"
+            },
+            "user": {
+                "default_owner": None,  # Default owner for new specs
+                "default_tier": None    # Default tier (A/B/C) for new specs
+            },
+            "current": {
+                "spec": None,  # Path to current working .md spec
+                "aip": None    # Path to current compiled .yaml AIP
+            }
+        }
+
+    # New v0.6 minimal format - governor-based
     return {
-        "version": "0.1",
-        "paths": {
-            "specs": ".specwright/specs",
-            "aips": ".specwright/aips",
-        },
-        "repo": {
-            "default_branch": "main"
-        },
-        "user": {
-            "default_owner": None,  # Default owner for new specs
-            "default_tier": None    # Default tier (A/B/C) for new specs
-        },
-        "current": {
-            "spec": None,  # Path to current working .md spec
-            "aip": None    # Path to current compiled .yaml AIP
+        "version": "0.6",
+        "governor": {
+            "path": "~/.local/local-governor"
         }
     }
 
@@ -183,17 +197,87 @@ def find_config() -> tuple[Path | None, dict]:
     return None, get_default_config()
 
 
+def is_legacy_config(cfg: dict) -> bool:
+    """Check if config is legacy v0.1 format (has paths section)."""
+    return cfg.get("version") == "0.1" or "paths" in cfg
+
+
+def _get_project_name(cfg: dict, project_root: Path) -> str:
+    """Get project name from config or default to directory name."""
+    # Try config's project_slug
+    project = cfg.get("project_slug")
+    if project:
+        return project
+    # Try autogov source
+    autogov = cfg.get("autogov", {})
+    if autogov.get("source"):
+        return autogov["source"]
+    # Default to directory name
+    return project_root.name
+
+
+def get_specs_path(cfg: dict, project_root: Path) -> Path:
+    """Get specs path based on config version.
+
+    For v0.6 (governor): Returns governor/projects/{project}/specs path
+    For v0.1 (legacy): Returns .specwright/specs
+    """
+    if is_legacy_config(cfg):
+        specs_dir = cfg.get("paths", {}).get("specs", ".specwright/specs")
+        path = Path(specs_dir)
+        if not path.is_absolute():
+            path = project_root / path
+        return path
+    else:
+        # v0.6: Use governor path with project structure
+        governor_path = Path(cfg.get("governor", {}).get("path", "~/.local/local-governor")).expanduser()
+        project = _get_project_name(cfg, project_root)
+        return governor_path / "projects" / project / "specs"
+
+
+def get_aips_path(cfg: dict, project_root: Path) -> Path:
+    """Get AIPs path based on config version.
+
+    For v0.6 (governor): Returns governor/projects/{project}/aips path
+    For v0.1 (legacy): Returns .specwright/aips
+    """
+    if is_legacy_config(cfg):
+        aips_dir = cfg.get("paths", {}).get("aips", ".specwright/aips")
+        path = Path(aips_dir)
+        if not path.is_absolute():
+            path = project_root / path
+        return path
+    else:
+        # v0.6: Use governor path with project structure
+        governor_path = Path(cfg.get("governor", {}).get("path", "~/.local/local-governor")).expanduser()
+        project = _get_project_name(cfg, project_root)
+        return governor_path / "projects" / project / "aips"
+
+
+def get_user_default(cfg: dict, key: str) -> str | None:
+    """Get user default value from config (works for both v0.1 and v0.6)."""
+    # v0.1: user.default_owner, user.default_tier
+    if is_legacy_config(cfg):
+        return cfg.get("user", {}).get(key)
+    # v0.6: No user defaults stored in config
+    return None
+
+
 @app.command()
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
     claude: bool = typer.Option(True, "--claude/--no-claude", help="Install Claude Code slash commands"),
     autogov: bool = typer.Option(False, "--autogov", help="Enable autogov governance integration"),
+    legacy_mode: bool = typer.Option(False, "--legacy-mode", help="Use legacy v0.1 repo-local config (deprecated)"),
+    governor_path: str | None = typer.Option(None, "--governor", help="Custom local-governor path"),
 ):
     """Initialize Specwright configuration in current directory.
 
     Examples:
-        spec init              # Basic setup without autogov
-        spec init --autogov    # Enable autogov (prompts for registry source)
+        spec init                    # v0.6 minimal config (governor-based)
+        spec init --autogov          # Enable autogov (prompts for registry source)
+        spec init --legacy-mode      # v0.1 repo-local specs (deprecated)
+        spec init --governor /path   # Custom governor location
     """
     config_path = Path.cwd() / ".specwright.yaml"
 
@@ -202,7 +286,15 @@ def init(
         typer.echo("  Use --force to overwrite", err=True)
         raise typer.Exit(1)
 
-    config = get_default_config()
+    # Get config based on mode
+    config = get_default_config(legacy=legacy_mode)
+
+    if legacy_mode:
+        typer.secho("Warning: --legacy-mode is deprecated. Consider using v0.6 format.", fg=typer.colors.YELLOW)
+
+    # Set custom governor path if provided
+    if governor_path and not legacy_mode:
+        config["governor"]["path"] = governor_path
 
     # Add autogov section if enabled (prompt for source interactively)
     if autogov:
@@ -226,8 +318,26 @@ def init(
     spec_dir = Path.cwd() / ".specwright"
     spec_dir.mkdir(exist_ok=True)
 
-    # Create subdirectories
-    (spec_dir / "aips").mkdir(exist_ok=True)
+    # Create tmp directory for materialized AIPs (v0.6 model)
+    if not legacy_mode:
+        tmp_dir = spec_dir / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        typer.echo(f"✓ Created {tmp_dir} (for materialized AIPs)")
+
+        # Update .gitignore if it exists
+        gitignore_path = Path.cwd() / ".gitignore"
+        if gitignore_path.exists():
+            gitignore_content = gitignore_path.read_text()
+            if ".specwright/tmp/" not in gitignore_content:
+                with open(gitignore_path, "a") as f:
+                    f.write("\n# Specwright ephemeral artifacts\n.specwright/tmp/\n")
+                typer.echo("✓ Added .specwright/tmp/ to .gitignore")
+    else:
+        # Legacy mode: Create subdirectories for repo-local specs/aips
+        (spec_dir / "specs").mkdir(exist_ok=True)
+        (spec_dir / "aips").mkdir(exist_ok=True)
+
+    # Common directories
     (spec_dir / "runs").mkdir(exist_ok=True)
     (spec_dir / "artifacts" / "schemas").mkdir(parents=True, exist_ok=True)
 
@@ -437,7 +547,7 @@ def create(
 
     # Get tier from config if not provided
     if tier is None:
-        default_tier_str = cfg.get("user", {}).get("default_tier")
+        default_tier_str = get_user_default(cfg, "default_tier")
         if default_tier_str:
             tier = RiskTier(default_tier_str)
             typer.echo(f"Using default tier: {tier.value}")
@@ -448,7 +558,7 @@ def create(
 
     # Get owner from config if not provided
     if owner is None:
-        owner = cfg.get("user", {}).get("default_owner")
+        owner = get_user_default(cfg, "default_owner")
         if owner is None:
             typer.secho("Error: No owner specified", fg=typer.colors.RED, err=True)
             typer.echo("  Use --owner flag or set default owner with: spec config user <username>", err=True)
@@ -470,7 +580,7 @@ def create(
         aip_id = get_next_aip_id()
 
         if output is None:
-            output = Path(cfg["paths"]["aips"]) / f"{slug}.yaml"
+            output = get_aips_path(cfg, project_root) / f"{slug}.yaml"
 
         # Try to find YAML template (for backward compatibility)
         try:
@@ -519,7 +629,7 @@ def create(
     else:
         # NEW DEFAULT: Generate Markdown
         if output is None:
-            output = Path(cfg["paths"]["specs"]) / f"{slug}.md"
+            output = get_specs_path(cfg, project_root) / f"{slug}.md"
 
         # Get template using helper function (works in both dev and installed mode)
         try:
@@ -653,10 +763,8 @@ def compile(
     project_root = config_path.parent if config_path else Path.cwd()
 
     if output is None:
-        # Default: specs/foo.md → aips/foo.yaml (relative to project root)
-        aips_path = Path(cfg["paths"]["aips"])
-        if not aips_path.is_absolute():
-            aips_path = project_root / aips_path
+        # Default: specs/foo.md → aips/foo.yaml
+        aips_path = get_aips_path(cfg, project_root)
         output = aips_path / (spec_path.stem + ".yaml")
 
     # Create parent directory if it doesn't exist
@@ -709,7 +817,7 @@ def compile(
             spec_path=str(spec_path),
             aip_path=str(output),
             source_hash=f"sha256:{source_hash}",
-            compiler_version="0.5.0"
+            compiler_version="0.6.0"
         )
 
         # Update current AIP in config
@@ -890,6 +998,12 @@ def _run_autonomous_step(
     """
     Run a step autonomously with scope enforcement.
 
+    For v0.6 governor config:
+    - Auto-materializes AIP from governor if needed
+    - Writes errors to local-governor on failure
+    - Writes provenance to local-governor on completion
+    - Cleans up materialized files after run
+
     Args:
         governance_bundle: Optional GovernanceBundle from autogov loader
 
@@ -898,14 +1012,46 @@ def _run_autonomous_step(
         1 = FAIL_* (scope violation, patch apply failure, verification failure, protocol error, dirty worktree)
         2 = ESCALATE_* (needs human review, ambiguous)
     """
+    from datetime import datetime
+
     from spec.executor import StepRunner, TerminationReason
 
     # Get config
     config_path, cfg = find_config()
     project_root = config_path.parent if config_path else Path.cwd()
 
-    # Load AIP
-    with open(aip_path) as f:
+    # Governor integration setup
+    materialized_path: Path | None = None
+    governor_paths = None
+    using_governor = not is_legacy_config(cfg)
+
+    if using_governor:
+        try:
+            from spec.governor import GovernorLocator
+            locator = GovernorLocator(config=cfg)
+            if locator.exists():
+                governor_paths = locator.find()
+        except Exception as e:
+            typer.echo(f"Warning: Could not access governor: {e}", err=True)
+            governor_paths = None
+
+    # Load AIP (may need to materialize from governor first)
+    actual_aip_path = aip_path
+
+    # If v0.6 config and AIP path doesn't exist locally, try to materialize from governor
+    if using_governor and governor_paths and not aip_path.exists():
+        aip_id = aip_path.stem  # Assume path is AIP ID
+        try:
+            from spec.governor import Materializer
+            materializer = Materializer(governor_paths)
+            materialized_path = materializer.materialize_aip(aip_id, project_root)
+            actual_aip_path = materialized_path
+            typer.echo(f"✓ Materialized {aip_id} from governor")
+        except Exception as e:
+            typer.echo(f"Error: Could not materialize AIP: {e}", err=True)
+            raise typer.Exit(EXIT_FAIL)
+
+    with open(actual_aip_path) as f:
         aip = yaml.safe_load(f)
 
     # Validate step number
@@ -1028,6 +1174,71 @@ def _run_autonomous_step(
         typer.secho("\n⚠ Step requires human review.", fg=typer.colors.YELLOW)
     else:
         typer.secho("\n✗ Step failed.", fg=typer.colors.RED)
+
+    # Governor integration: write errors/provenance and cleanup
+    if using_governor and governor_paths and not dry_run:
+        aip_id = aip.get("aip_id", "unknown")
+        repo_name = project_root.name
+
+        try:
+            from spec.governor import GovernorWriter
+            from spec.governor.provenance import ProvenanceSnapshot, RunStatus
+
+            writer = GovernorWriter(governor_paths)
+
+            # Write error record on failure
+            if exit_code == EXIT_FAIL and result.error:
+                from spec.governor.errors import ErrorRecord, ErrorType
+
+                # Map termination reason to error type
+                error_type_map = {
+                    TerminationReason.FAIL_SCOPE: ErrorType.FAIL_SCOPE,
+                    TerminationReason.FAIL_PATCH_APPLY: ErrorType.FAIL_PATCH_APPLY,
+                    TerminationReason.FAIL_VERIFY_RETRYABLE: ErrorType.FAIL_VERIFY_RETRYABLE,
+                    TerminationReason.FAIL_ADAPTER_PROTOCOL: ErrorType.FAIL_ADAPTER_PROTOCOL,
+                    TerminationReason.FAIL_DIRTY_WORKTREE: ErrorType.FAIL_DIRTY_WORKTREE,
+                    TerminationReason.GATE_REJECTED: ErrorType.GATE_REJECTED,
+                }
+                error_type = error_type_map.get(result.termination_reason, ErrorType.GOVERNOR_ERROR)
+
+                error_record = ErrorRecord(
+                    error_id=f"ERR-{datetime.now().strftime('%Y-%m-%d')}-{step_num:03d}",
+                    error_type=error_type,
+                    message=result.error,
+                    timestamp=datetime.now(),
+                    repo=repo_name,
+                    aip_ref=f"aips/{aip_id}.yaml",
+                    step=step_num,
+                )
+                error_path = writer.write_error(error_record)
+                typer.echo(f"✓ Error recorded to governor: {error_path.name}")
+
+            # Write provenance on completion (success or failure)
+            run_status = RunStatus.COMPLETED if exit_code == EXIT_PASS else RunStatus.FAILED
+            provenance = ProvenanceSnapshot(
+                run_id=f"RUN-{datetime.now().strftime('%Y-%m-%d')}-{step_num:03d}",
+                aip_ref=f"aips/{aip_id}.yaml",
+                repo=repo_name,
+                started_at=datetime.now(),  # Approximate
+                status=run_status,
+                steps_executed=[step_num],
+            )
+            prov_path = writer.write_provenance(provenance)
+            typer.echo(f"✓ Provenance recorded to governor: {prov_path.name}")
+
+        except Exception as e:
+            typer.echo(f"Warning: Could not write to governor: {e}", err=True)
+
+        # Cleanup materialized files
+        if materialized_path and materialized_path.exists():
+            try:
+                from spec.governor import Materializer
+                materializer = Materializer(governor_paths)
+                count = materializer.cleanup(project_root)
+                if count > 0:
+                    typer.echo(f"✓ Cleaned up {count} materialized file(s)")
+            except Exception as e:
+                typer.echo(f"Warning: Could not cleanup materialized files: {e}", err=True)
 
     raise typer.Exit(exit_code)
 
@@ -1430,6 +1641,253 @@ def gate_report(
             typer.echo(f"    Rejected: {stats['rejected']}")
             typer.echo(f"    Deferred: {stats['deferred']}")
             typer.echo(f"    Conditional: {stats['conditional']}")
+
+    typer.echo()
+
+
+@app.command()
+def materialize(
+    aip_id: str = typer.Argument(..., help="AIP ID to materialize from governor"),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Output directory (default: .specwright/tmp/)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing materialized file"),
+):
+    """Materialize an AIP from local-governor to repo workspace.
+
+    Copies the AIP from governor storage to the local repo's .specwright/tmp/
+    directory for execution.
+
+    Examples:
+        spec materialize AIP-project-2025-12-22-001
+        spec materialize AIP-001 --output ./custom-path/
+        spec materialize AIP-001 --force
+    """
+    from spec.governor import GovernorLocator, Materializer
+    from spec.governor.locator import GovernorNotFoundError, GovernorValidationError
+
+    # Get config
+    config_path, cfg = find_config()
+    project_root = config_path.parent if config_path else Path.cwd()
+
+    # Find governor
+    try:
+        locator = GovernorLocator(cfg)
+        paths = locator.find()
+    except GovernorNotFoundError as e:
+        typer.secho("Error: " + str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+    except GovernorValidationError as e:
+        typer.secho("Error: " + str(e), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    # Materialize AIP
+    materializer = Materializer(paths)
+
+    target_repo = output.parent if output else project_root
+
+    try:
+        aip_path = materializer.materialize_aip(aip_id, target_repo, force=force)
+        typer.secho(f"✓ Materialized {aip_id} to {aip_path}", fg=typer.colors.GREEN)
+        typer.echo("  Ready for execution with: spec run")
+    except FileNotFoundError:
+        typer.secho(f"Error: AIP '{aip_id}' not found in governor", fg=typer.colors.RED, err=True)
+        typer.echo("  Available AIPs:", err=True)
+        from spec.governor import GovernorReader
+        reader = GovernorReader(paths)
+        for aid in reader.list_aips()[:10]:
+            typer.echo(f"    - {aid}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.secho(f"Error: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def migrate(
+    from_repo: bool = typer.Option(False, "--from-repo", help="Migrate repo-local specs/AIPs to governor"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be migrated without making changes"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files in governor"),
+):
+    """Migrate from legacy repo-local specs to governor model.
+
+    Moves specs and AIPs from .specwright/specs/ and .specwright/aips/
+    to local-governor, and updates .specwright.yaml to v0.6 format.
+
+    Examples:
+        spec migrate --from-repo --dry-run    # Preview migration
+        spec migrate --from-repo               # Execute migration
+        spec migrate --from-repo --force       # Overwrite existing in governor
+    """
+    from spec.governor import GovernorLocator, GovernorReader, GovernorWriter
+    from spec.governor.locator import GovernorNotFoundError
+
+    if not from_repo:
+        typer.echo("Error: Please specify --from-repo to migrate from repo-local to governor", err=True)
+        typer.echo("  Usage: spec migrate --from-repo", err=True)
+        raise typer.Exit(1)
+
+    # Get config
+    config_path, cfg = find_config()
+    if not config_path:
+        typer.echo("Error: No .specwright.yaml found. Nothing to migrate.", err=True)
+        raise typer.Exit(1)
+
+    project_root = config_path.parent
+
+    # Check for legacy specs/aips directories
+    specs_dir = project_root / cfg.get("paths", {}).get("specs", ".specwright/specs")
+    aips_dir = project_root / cfg.get("paths", {}).get("aips", ".specwright/aips")
+
+    if not specs_dir.is_absolute():
+        specs_dir = project_root / specs_dir
+    if not aips_dir.is_absolute():
+        aips_dir = project_root / aips_dir
+
+    specs_to_migrate = list(specs_dir.glob("*.md")) if specs_dir.exists() else []
+    aips_to_migrate = list(aips_dir.glob("*.yaml")) if aips_dir.exists() else []
+
+    if not specs_to_migrate and not aips_to_migrate:
+        typer.echo("No specs or AIPs found to migrate.")
+        raise typer.Exit(0)
+
+    # Find governor
+    try:
+        locator = GovernorLocator(cfg)
+        paths = locator.find()
+    except GovernorNotFoundError:
+        typer.secho("Error: local-governor not found.", fg=typer.colors.RED, err=True)
+        typer.echo("  Run 'governor init' to create local-governor first.", err=True)
+        raise typer.Exit(1)
+
+    reader = GovernorReader(paths)
+    writer = GovernorWriter(paths)
+
+    typer.echo(f"\n{'='*60}")
+    typer.secho("Migration Preview" if dry_run else "Migrating", bold=True)
+    typer.echo(f"{'='*60}\n")
+
+    typer.echo(f"Source: {project_root}")
+    typer.echo(f"Target: {paths.root}\n")
+
+    migrated_specs = 0
+    migrated_aips = 0
+    skipped = 0
+
+    # Migrate specs
+    if specs_to_migrate:
+        typer.secho("Specs:", bold=True)
+        for spec_path in specs_to_migrate:
+            slug = spec_path.stem
+
+            if reader.spec_exists(slug) and not force:
+                typer.echo(f"  ⏭  {slug}.md (already exists, use --force)")
+                skipped += 1
+            else:
+                typer.echo(f"  → {slug}.md")
+                if not dry_run:
+                    content = spec_path.read_text()
+                    writer.write_spec(slug, content)
+                    migrated_specs += 1
+        typer.echo()
+
+    # Migrate AIPs
+    if aips_to_migrate:
+        typer.secho("AIPs:", bold=True)
+        for aip_path in aips_to_migrate:
+            aip_id = aip_path.stem
+
+            if reader.aip_exists(aip_id) and not force:
+                typer.echo(f"  ⏭  {aip_id}.yaml (already exists, use --force)")
+                skipped += 1
+            else:
+                typer.echo(f"  → {aip_id}.yaml")
+                if not dry_run:
+                    with open(aip_path) as f:
+                        aip = yaml.safe_load(f)
+                    writer.write_aip(aip_id, aip)
+                    migrated_aips += 1
+        typer.echo()
+
+    # Update config to v0.6
+    if not dry_run and (migrated_specs > 0 or migrated_aips > 0):
+        new_config = {
+            "version": "0.6",
+            "governor": {
+                "path": str(paths.root),
+            },
+        }
+        if cfg.get("autogov", {}).get("enabled"):
+            new_config["autogov"] = cfg["autogov"]
+
+        save_config(config_path, new_config)
+        typer.secho("✓ Updated .specwright.yaml to v0.6 format", fg=typer.colors.GREEN)
+
+        # Create tmp directory
+        tmp_dir = project_root / ".specwright" / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        typer.secho(f"✓ Created {tmp_dir}", fg=typer.colors.GREEN)
+
+    # Summary
+    typer.echo(f"\n{'='*60}")
+    if dry_run:
+        typer.secho("Dry Run Summary:", bold=True)
+        typer.echo(f"  Specs to migrate: {len(specs_to_migrate) - skipped}")
+        typer.echo(f"  AIPs to migrate: {len(aips_to_migrate)}")
+        typer.echo(f"  Would skip: {skipped}")
+        typer.echo("\nRun without --dry-run to execute migration.")
+    else:
+        typer.secho("Migration Complete:", bold=True)
+        typer.echo(f"  Specs migrated: {migrated_specs}")
+        typer.echo(f"  AIPs migrated: {migrated_aips}")
+        typer.echo(f"  Skipped: {skipped}")
+
+    typer.echo(f"{'='*60}\n")
+
+
+@app.command("list")
+def list_specs(
+    specs: bool = typer.Option(True, "--specs/--no-specs", help="List specs"),
+    aips: bool = typer.Option(True, "--aips/--no-aips", help="List AIPs"),
+):
+    """List specs and AIPs in local-governor.
+
+    Examples:
+        spec list              # List both specs and AIPs
+        spec list --no-aips    # List only specs
+        spec list --no-specs   # List only AIPs
+    """
+    from spec.governor import GovernorLocator, GovernorReader
+    from spec.governor.locator import GovernorNotFoundError, GovernorValidationError
+
+    # Get config
+    _, cfg = find_config()
+
+    # Find governor
+    try:
+        locator = GovernorLocator(cfg)
+        paths = locator.find()
+    except (GovernorNotFoundError, GovernorValidationError) as e:
+        typer.secho(f"Error: {e}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    reader = GovernorReader(paths)
+
+    if specs:
+        spec_list = reader.list_specs()
+        typer.secho(f"\nSpecs ({len(spec_list)}):", bold=True)
+        if spec_list:
+            for slug in spec_list:
+                typer.echo(f"  - {slug}")
+        else:
+            typer.echo("  (none)")
+
+    if aips:
+        aip_list = reader.list_aips()
+        typer.secho(f"\nAIPs ({len(aip_list)}):", bold=True)
+        if aip_list:
+            for aip_id in aip_list:
+                typer.echo(f"  - {aip_id}")
+        else:
+            typer.echo("  (none)")
 
     typer.echo()
 

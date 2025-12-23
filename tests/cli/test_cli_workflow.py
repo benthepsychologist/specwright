@@ -69,14 +69,16 @@ def test_config_discovery_uses_defaults_when_not_found(tmp_path):
         os.chdir(tmp_path)
         found_path, found_config = find_config()
         assert found_path is None
-        assert "paths" in found_config
-        assert found_config["paths"]["specs"] == ".specwright/specs"
+        # v0.6 format: governor-based config (new default)
+        assert found_config["version"] == "0.6"
+        assert "governor" in found_config
+        assert found_config["governor"]["path"] == "~/.local/local-governor"
     finally:
         os.chdir(old_cwd)
 
 
 def test_init_creates_config_file(temp_project):
-    """Test spec init creates .specwright.yaml."""
+    """Test spec init creates .specwright.yaml with v0.6 format."""
     import os
     old_cwd = os.getcwd()
     try:
@@ -89,8 +91,90 @@ def test_init_creates_config_file(temp_project):
         assert config_path.exists()
 
         config = yaml.safe_load(config_path.read_text())
+        # v0.6 format: governor-based (new default)
+        assert config["version"] == "0.6"
+        assert "governor" in config
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_init_legacy_mode_creates_v01_config(temp_project):
+    """Test spec init --legacy-mode creates v0.1 config."""
+    import os
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        result = runner.invoke(app, ["init", "--legacy-mode"])
+        assert result.exit_code == 0
+        assert "Created" in result.stdout
+
+        config_path = temp_project / ".specwright.yaml"
+        assert config_path.exists()
+
+        config = yaml.safe_load(config_path.read_text())
+        # Legacy v0.1 format: repo-local paths
         assert config["version"] == "0.1"
         assert "paths" in config
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_create_with_v06_governor_config(tmp_path):
+    """Test spec create with v0.6 governor config writes to governor path."""
+    import os
+
+    # Setup: create mock governor directory with project structure
+    governor_dir = tmp_path / "local-governor"
+    project_specs = governor_dir / "projects" / "test-project" / "specs"
+    project_aips = governor_dir / "projects" / "test-project" / "aips"
+    project_specs.mkdir(parents=True)
+    project_aips.mkdir(parents=True)
+
+    # Setup: create project directory with v0.6 config
+    # Note: autogov.enabled: false so we don't need --autogov flag or build files
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    config_path = project_dir / ".specwright.yaml"
+    config = {
+        "version": "0.6",
+        "governor": {
+            "path": str(governor_dir)
+        },
+        "project_slug": "test-project",
+        "autogov": {
+            "enabled": False
+        }
+    }
+    config_path.write_text(yaml.dump(config))
+
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(project_dir)
+
+        # Create a spec - should write to governor/projects/{project}/specs/
+        result = runner.invoke(app, [
+            "create",
+            "Governor Feature",
+            "--tier", "C",
+            "--owner", "alice",
+            "--goal", "Test governor path"
+        ])
+
+        assert result.exit_code == 0
+        assert "Created Tier C spec" in result.stdout
+        assert "governor-feature.md" in result.stdout
+
+        # Verify spec was written to governor project path
+        spec_path = project_specs / "governor-feature.md"
+        assert spec_path.exists(), f"Expected spec at {spec_path}"
+
+        content = spec_path.read_text()
+        assert "tier: C" in content
+        assert "owner: alice" in content
+
+        # Verify NOT written to repo-local path
+        local_spec_path = project_dir / ".specwright" / "specs" / "governor-feature.md"
+        assert not local_spec_path.exists(), "Spec should NOT be in repo-local path"
     finally:
         os.chdir(old_cwd)
 
@@ -146,7 +230,7 @@ def test_config_displays_loaded_config(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         result = runner.invoke(app, ["config", "--show"])
         assert result.exit_code == 0
@@ -200,7 +284,7 @@ def test_create_without_owner_uses_default(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
         runner.invoke(app, ["config", "user", "defaultuser"])
 
         # Create without --owner flag
@@ -228,7 +312,7 @@ def test_create_without_owner_fails_when_no_default(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Try to create without --owner and no default
         result = runner.invoke(app, [
@@ -252,7 +336,7 @@ def test_create_generates_markdown_by_default(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         result = runner.invoke(app, [
             "create",
@@ -263,7 +347,9 @@ def test_create_generates_markdown_by_default(temp_project):
         ])
 
         assert result.exit_code == 0
-        assert "Created Tier C spec at .specwright/specs/test-feature.md" in result.stdout
+        # Check for key parts of success message (path may be absolute or relative)
+        assert "Created Tier C spec" in result.stdout
+        assert "test-feature.md" in result.stdout
 
         spec_path = temp_project / ".specwright" / "specs" / "test-feature.md"
         assert spec_path.exists()
@@ -283,7 +369,7 @@ def test_create_with_yaml_flag_generates_yaml(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         result = runner.invoke(app, [
             "create",
@@ -295,7 +381,9 @@ def test_create_with_yaml_flag_generates_yaml(temp_project):
         ])
 
         assert result.exit_code == 0
-        assert "Created Tier C AIP at .specwright/aips/legacy-test.yaml" in result.stdout
+        # Check for key parts of success message (path may be absolute or relative)
+        assert "Created Tier C AIP" in result.stdout
+        assert "legacy-test.yaml" in result.stdout
 
         aip_path = temp_project / ".specwright" / "aips" / "legacy-test.yaml"
         assert aip_path.exists()
@@ -314,7 +402,7 @@ def test_compile_converts_md_to_yaml(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create MD spec
         runner.invoke(app, [
@@ -353,7 +441,7 @@ def test_compile_creates_output_directory(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create MD spec
         runner.invoke(app, [
@@ -387,7 +475,7 @@ def test_validate_md_spec(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create MD spec
         runner.invoke(app, [
@@ -413,7 +501,7 @@ def test_validate_yaml_aip(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create and compile
         runner.invoke(app, [
@@ -440,7 +528,7 @@ def test_validate_uses_current_spec(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create spec and set as current
         runner.invoke(app, [
@@ -467,7 +555,7 @@ def test_validate_fails_on_invalid_spec(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Create an invalid spec with missing required fields
         invalid_spec = temp_project / ".specwright" / "specs" / "invalid.md"
@@ -499,7 +587,7 @@ def test_run_fails_without_aip(temp_project):
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
-        runner.invoke(app, ["init"])
+        runner.invoke(app, ["init", "--legacy-mode"])
 
         # Try to run without any AIP
         result = runner.invoke(app, ["run"])

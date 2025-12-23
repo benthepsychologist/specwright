@@ -60,7 +60,7 @@ def test_log_spec_compiled(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     log_file = tmp_artifacts / "execution_history.jsonl"
@@ -69,7 +69,7 @@ def test_log_spec_compiled(logger, tmp_artifacts):
 
     assert entry["event"] == "spec_compiled"
     assert entry["metadata"]["source_hash"] == "sha256:abc123"
-    assert entry["metadata"]["compiler_version"] == "0.5.0"
+    assert entry["metadata"]["compiler_version"] == "0.6.0"
 
 
 def test_log_execution_started(logger, tmp_artifacts):
@@ -148,7 +148,7 @@ def test_get_events_no_filter(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     events = logger.get_events()
@@ -201,7 +201,7 @@ def test_get_events_filter_by_event_type(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     events = logger.get_events(event_type="spec_compiled")
@@ -253,7 +253,7 @@ def test_get_timeline(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     timeline = logger.get_timeline()
@@ -301,7 +301,7 @@ def test_get_aip_history(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
     logger.log_execution_started(
         aip_id=aip_id,
@@ -340,7 +340,7 @@ def test_multiple_events_append(logger, tmp_artifacts):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     # Read all lines
@@ -439,7 +439,7 @@ def test_get_events_filter_by_since(logger):
         spec_path="specs/test.md",
         aip_path="aips/test.yaml",
         source_hash="sha256:abc123",
-        compiler_version="0.5.0"
+        compiler_version="0.6.0"
     )
 
     # Get events after cutoff

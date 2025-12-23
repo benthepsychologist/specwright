@@ -366,7 +366,7 @@ Release to PyPI when you reach **stable checkpoints**:
 ✅ **Good times to release:**
 - Completed a cohesive set of features
 - Fixed critical bugs
-- Reached a version milestone (0.4.0, 0.5.0, 1.0.0)
+- Reached a version milestone (0.4.0, 0.6.0, 1.0.0)
 - After successful dogfooding for a week
 
 ❌ **Don't release after:**

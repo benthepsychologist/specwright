@@ -1,0 +1,405 @@
+aip_id: AIP-specwright-2025-12-22-001
+context:
+  background: 'Specwright currently operates with an implicit model where specs are created "near" repos,
+    repos can advance semi-independently, and governance is advisory rather than authoritative. This causes
+    architectural friction:
+
+
+    1. **Invisible work**: Specs scattered across repos make it hard to answer "what work exists?"
+
+    2. **Repo-level drift**: Repos can diverge from governance without detection
+
+    3. **Cross-repo awkwardness**: Multi-repo specs have unclear ownership
+
+    4. **Silent failures**: Execution errors are lost in CLI output, not tracked structurally
+
+
+    The new model establishes a clear four-layer architecture:
+
+
+    - **L0 (local-governor)**: Intent, governance, specs, AIPs, errors, provenance
+
+    - **L1 (Specwright)**: Compilation, validation, orchestration, materialization
+
+    - **L2 (Repos)**: Code, tests, tooling—execution only
+
+    - **L3 (Ephemeral)**: Temp materialized AIPs, execution logs, agent transcripts'
+  constraints:
+  - 'Breaking change**: This is a MAJOR version bump (v0.4.0)'
+  - 'Migration required**: Existing repo-local specs must be migrated to local-governor'
+  - 'local-governor dependency**: Requires local-governor to be installed/configured'
+  - 'Backward compatibility**: Provide `--legacy-mode` flag for transition period'
+  - 'No repo sovereignty**: Repos MUST NOT contain canonical specs or AIPs'
+created: '2025-12-22T21:26:59.576438+00:00'
+meta:
+  created_at: '2025-12-22T21:26:59.576438+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - '`spec create` writes specs to `local-governor` by default, not repo-local `.specwright/specs/`'
+  - '`.specwright.yaml` becomes a minimal pointer file (governor path + autogov flags only)'
+  - AIP compilation reads specs from `local-governor` and validates against governance
+  - Execution materializes AIPs temporarily in repos (`.specwright/tmp/`, gitignored)
+  - Structured error records are generated and stored in `local-governor/errors/`
+  - Provenance snapshots optionally written back to `local-governor/runs/`
+  - Repos no longer contain canonical specs or AIPs
+  - Multi-repo specs with explicit `targets` declaration work correctly
+  - 85% test coverage achieved
+  - Defect density ≤ 1.5
+  - Migration path documented for existing repo-local specs
+  goal: Transform Specwright from repo-local spec management to a centralized governance-driven compiler
+    and execution coordinator
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-22-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- description: Architecture Planning
+  gate_ref: 'G0: Plan Approval'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Architecture Review:
+      - Four-layer architecture (L0-L3) clearly defined
+      - Data flow between layers documented
+      - local-governor integration points identified
+      - No circular dependencies introduced
+      - Rollback strategy for failed migrations
+      Resource Planning:
+      - 'Effort estimates are reasonable (estimate: 3-4 days)'
+      - Timeline is achievable
+      - Required skills/tools identified
+      Risk Assessment:
+      - Breaking change impact assessed
+      - Migration complexity estimated
+      - Fallback mechanisms defined
+      - User communication plan drafted
+  kind: code
+  outputs:
+  - artifacts/plan/wbs.md
+  - artifacts/plan/file-touch-map.yaml
+  - artifacts/plan/architecture-layers.md
+  - artifacts/plan/migration-strategy.md
+  prompt: "Produce detailed work breakdown and file-touch map for the four-layer architecture:\n1. **L0\
+    \ Integration**: How Specwright reads from local-governor\n   - Spec location: `~/.local/local-governor/specs/`\n\
+    \   - AIP location: `~/.local/local-governor/aips/`\n   - Error records: `~/.local/local-governor/errors/`\n\
+    \   - Provenance: `~/.local/local-governor/runs/`\n2. **L1 Compilation Changes**:\n   - `spec create`\
+    \ → writes to local-governor\n   - `spec compile` → reads from local-governor, validates governance\n\
+    \   - New `spec materialize` command for execution prep\n3. **L2 Repo Changes**:\n   - `.specwright.yaml`\
+    \ minimal pointer format\n   - `.specwright/tmp/` for materialized execution\n   - Remove `.specwright/specs/`\
+    \ and `.specwright/aips/`\n4. **L3 Ephemeral Handling**:\n   - Gitignore patterns for execution residue\n\
+    \   - Cleanup strategies"
+  role: coding_agent
+  step_id: step-001
+- description: Schema and Data Model Updates
+  gate_ref: 'G0: Plan Approval'
+  kind: code
+  outputs:
+  - artifacts/schemas/specwright-config.schema.json
+  - artifacts/schemas/error-record.schema.json
+  - artifacts/schemas/provenance.schema.json
+  - artifacts/prompts/test-strategy.md
+  prompt: "Design and document the updated data models:\n1. **Minimal `.specwright.yaml` schema**:\n```yaml\n\
+    governor:\n  path: ~/.local/local-governor  # or absolute path\nautogov:\n  enabled: true\n  source:\
+    \ org  # or \"patterns\"\n```\n2. **Multi-repo spec `targets` schema**:\n```yaml\ntargets:\n  - repo:\
+    \ storacle\n    scope: src/storacle/**\n  - repo: injester\n    scope: src/injester/**\n```\n3. **Structured\
+    \ error record schema** (for `local-governor/errors/`):\n```yaml\nerror_id: ERR-2025-12-22-001\nspec_ref:\
+    \ specs/feature-x.md\naip_ref: aips/AIP-2025-12-22-001.yaml\nrepo: specwright\nstep: 3\nerror_type:\
+    \ FAIL_VERIFY\nmessage: \"pytest failed with 3 errors\"\ntimestamp: 2025-12-22T21:30:00Z\ncontext:\n\
+    \  command: \"pytest -q\"\n  exit_code: 1\n  output_snippet: \"...\"\n```\n4. **Provenance snapshot\
+    \ schema** (for `local-governor/runs/`):\n```yaml\nrun_id: RUN-2025-12-22-001\naip_ref: aips/AIP-2025-12-22-001.yaml\n\
+    started_at: 2025-12-22T21:30:00Z\ncompleted_at: 2025-12-22T21:45:00Z\nstatus: COMPLETED\nsteps_executed:\
+    \ [1, 2, 3]\ngovernance_snapshot:\n  commit: abc123\n  policies: [...]\n```"
+  role: coding_agent
+  step_id: step-002
+- allowed_paths:
+  - src/spec/**
+  - tests/**
+  - docs/**
+  - config/schemas/**
+  description: Core Infrastructure Implementation
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  - infra/**
+  gate_ref: 'G1: Code Readiness'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Code Quality:
+      - Code follows project style guide
+      - No linting errors (ruff check passes)
+      - Type hints complete (mypy passes)
+      - No hardcoded secrets or credentials
+      - Error handling is comprehensive
+      Documentation:
+      - Docstrings for all public functions
+      - Module-level documentation
+      - Usage examples in docstrings
+      Testing:
+      - Unit tests for all new modules
+      - Governor path resolution tested
+      - Error record serialization tested
+      - Provenance snapshot tested
+      - Mock local-governor for tests
+  kind: code
+  outputs:
+  - artifacts/code/governor-module.md
+  - artifacts/code/runbook.md
+  prompt: "Implement the core infrastructure changes:\n1. **Governor Integration Module** (`src/spec/governor/`):\n\
+    \   - `locator.py`: Find and validate local-governor path\n   - `reader.py`: Read specs/AIPs from\
+    \ local-governor\n   - `writer.py`: Write specs/AIPs/errors to local-governor\n   - `materializer.py`:\
+    \ Materialize AIPs into repo workspaces\n2. **Updated Config Loading** (`src/spec/core/config.py`):\n\
+    \   - Parse minimal `.specwright.yaml` format\n   - Resolve governor path (env var → config → default)\n\
+    \   - Validate governor exists and is accessible\n3. **Error Records** (`src/spec/governor/errors.py`):\n\
+    \   - `ErrorRecord` dataclass\n   - Write structured errors to `local-governor/errors/`\n   - Index\
+    \ by spec, AIP, repo, date\n4. **Provenance Tracking** (`src/spec/governor/provenance.py`):\n   -\
+    \ `ProvenanceSnapshot` dataclass\n   - Capture governance state at execution time\n   - Write to `local-governor/runs/`"
+  role: agentic
+  step_id: step-003
+  verification_commands:
+  - ruff check src/spec/governor/
+  - mypy src/spec/governor/
+  - pytest tests/governor/ -q
+- allowed_paths:
+  - src/spec/cli/**
+  - tests/cli/**
+  - docs/**
+  description: CLI Command Updates
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  - infra/**
+  gate_ref: 'G1: Code Readiness'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Code Quality:
+      - All CLI commands updated
+      - Backward compatibility flags work
+      - Error messages are helpful
+      - Help text is accurate
+      Documentation:
+      - CLI help updated
+      - Command reference documented
+      - Migration guide references CLI changes
+      Testing:
+      - CLI integration tests pass
+      - Legacy mode tested
+      - Multi-repo targets tested
+      - Materialization tested
+  kind: code
+  outputs:
+  - artifacts/code/cli-changes.md
+  - artifacts/code/command-reference.md
+  prompt: "Update CLI commands for the new governance model:\n1. **`spec init`** changes:\n   - Generate\
+    \ minimal `.specwright.yaml` (governor pointer only)\n   - Prompt for governor path if not found\n\
+    \   - Create `.specwright/tmp/` (gitignored)\n   - Remove `.specwright/specs` and `.specwright/aips`\
+    \ creation\n   - Add `--legacy-mode` for backward compatibility\n2. **`spec create`** changes:\n \
+    \  - Default output to `local-governor/specs/<slug>.md`\n   - Support `--targets` flag for multi-repo\
+    \ specs\n   - Remove repo-local spec creation (unless `--legacy-mode`)\n   - Validate governance before\
+    \ writing\n3. **`spec compile`** changes:\n   - Read spec from local-governor\n   - Write AIP to `local-governor/aips/`\n\
+    \   - Embed governance snapshot in AIP\n   - Validate targets exist\n4. **New `spec materialize` command**:\n\
+    \   - Read AIP from local-governor\n   - Copy to repo's `.specwright/tmp/`\n   - Resolve target repo\
+    \ workspace\n   - Return materialization path\n5. **`spec run`** changes:\n   - Auto-materialize AIP\
+    \ before execution\n   - Write errors to local-governor on failure\n   - Write provenance on completion\n\
+    \   - Clean up materialized files after run"
+  role: agentic
+  step_id: step-004
+  verification_commands:
+  - ruff check src/spec/cli/
+  - mypy src/spec/cli/
+  - pytest tests/cli/ -q
+- allowed_paths:
+  - src/spec/**
+  - tests/**
+  - docs/**
+  description: Multi-Repo Spec Support
+  forbidden_paths:
+  - .git/**
+  - '*.lock'
+  - .env*
+  - secrets/**
+  - infra/**
+  gate_ref: 'G1: Code Readiness'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Code Quality:
+      - Target resolution handles edge cases
+      - AIP splitting is deterministic
+      - Cross-repo errors properly aggregated
+      Testing:
+      - Multi-repo spec creation tested
+      - AIP splitting tested
+      - Cross-repo execution tested
+  kind: code
+  outputs:
+  - artifacts/code/multi-repo-impl.md
+  prompt: "Implement multi-repo spec and AIP handling:\n1. **Spec Target Resolution**:\n   - Parse `targets`\
+    \ block from spec\n   - Resolve repo paths (from registry or explicit paths)\n   - Validate scopes\
+    \ against repo structure\n2. **AIP Splitting**:\n   - Compile single spec into multiple repo-scoped\
+    \ AIPs\n   - Each AIP references parent spec\n   - Each AIP has isolated allowed_paths\n3. **Cross-Repo\
+    \ Execution Coordination**:\n   - Execute AIPs in target order\n   - Aggregate errors across repos\n\
+    \   - Single provenance record for multi-repo run"
+  role: agentic
+  step_id: step-005
+  verification_commands:
+  - ruff check .
+  - mypy .
+  - pytest tests/ -k "multi_repo or targets" -q
+- description: Full Test Suite
+  gate_ref: 'G2: Pre-Release'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Integration Testing:
+      - End-to-end spec creation workflow tested
+      - End-to-end execution workflow tested
+      - Error record generation tested
+      - Provenance tracking tested
+      - Legacy mode tested
+      Quality Metrics:
+      - Defect density ≤ 1.5
+      - No critical bugs
+      - No high-severity security issues
+      Test Coverage:
+      - Full test suite passes
+      - Test coverage ≥ 85%
+      - No flaky tests identified
+      - New governor module fully tested
+  kind: code
+  outputs:
+  - artifacts/test/coverage.xml
+  - artifacts/test/test-results.md
+  - artifacts/test/migration-test-results.md
+  prompt: 'Run full test suite and generate coverage report. Focus areas:
+
+    1. **Governor module tests** (new)
+
+    2. **CLI command tests** (updated)
+
+    3. **Integration tests** (new scenarios)
+
+    4. **Migration tests** (repo-local → governor)'
+  role: coding_agent
+  step_id: step-006
+- description: Documentation and Migration Guide
+  gate_ref: 'G2: Pre-Release'
+  kind: code
+  outputs:
+  - artifacts/docs/migration-guide.md
+  - artifacts/docs/architecture-overview.md
+  prompt: 'Update all documentation for the new architecture:
+
+    1. **README.md**: Update architecture diagram and data flows
+
+    2. **DEVELOPMENT.md**: New development workflow
+
+    3. **MIGRATION.md** (new): Step-by-step migration from v0.3 to v0.4
+
+    4. **docs/architecture.md** (new): Four-layer architecture deep dive
+
+    5. **CHANGELOG.md**: v0.4.0 breaking changes
+
+    **Migration Guide Topics:**
+
+    - Pre-migration checklist
+
+    - Backing up repo-local specs
+
+    - Installing/configuring local-governor
+
+    - Migrating specs: `spec migrate --from-repo`
+
+    - Updating `.specwright.yaml`
+
+    - Verifying migration
+
+    - Rollback procedure'
+  role: coding_agent
+  step_id: step-007
+- description: Release Governance
+  gate_ref: 'G3: Deployment Approval'
+  gate_review:
+    approval_metadata:
+      date: ''
+      rationale: ''
+      reviewer: ''
+    checklist:
+      Compliance:
+      - Decision log complete and accurate
+      - Breaking change documented in CHANGELOG
+      - Migration guide reviewed for completeness
+      - Deprecation timeline communicated
+      Deployment Readiness:
+      - All tests pass
+      - Documentation updated
+      - Version bumped to 0.4.0
+      - PyPI release prepared
+      Stakeholder Approval:
+      - Architecture review complete
+      - Migration path validated
+      - User communication drafted
+      - Final signoff received
+  kind: code
+  outputs:
+  - artifacts/governance/decision-log.md
+  - artifacts/governance/compliance-checklist.md
+  - artifacts/governance/release-notes-v0.4.0.md
+  prompt: 'Document decisions and verify compliance for v0.4.0 release:
+
+    1. **Breaking Change Justification**: Why this architectural change is necessary
+
+    2. **Deprecation Schedule**: Legacy mode availability timeline
+
+    3. **Communication Plan**: How to notify users
+
+    4. **Rollback Plan**: If critical issues discovered post-release'
+  role: coding_agent
+  step_id: step-008
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/local-governance-major-revision
+spec_version: 1.0.0
+tier: A
+title: Local Governance Major Revision
+updated: '2025-12-22T21:26:59.576438+00:00'
+version: '0.1'
+
