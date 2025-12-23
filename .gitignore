@@ -50,6 +50,9 @@ dmypy.json
 # Spec artifacts
 .aip_artifacts/
 artifacts/
+runs/
+.specwright/runs/
+.specwright/artifacts/
 *.compiled.yaml
 
 # Generated specs (keep templates, ignore compiled)
