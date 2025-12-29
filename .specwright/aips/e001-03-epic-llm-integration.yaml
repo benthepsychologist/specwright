@@ -1,0 +1,171 @@
+aip_id: AIP-specwright-2025-12-28-001
+context:
+  background: ''
+  constraints: []
+created: '2025-12-26T00:00:00+00:00'
+meta:
+  created_at: '2025-12-26T00:00:00+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - LLM config loads from `~/.local/local-governor/config.yaml`
+  - LLM client works with `llm` package
+  - Timeout handling works correctly
+  - Autogov governance pack injected into prompts
+  - '`spec epic check` command works end-to-end'
+  - Exit code 4 on config error
+  - Exit code 5 on LLM error
+  - Graceful degradation when LLM disabled
+  - Documentation complete in docs/epics.md
+  - Integration tests pass
+  goal: 'Wire up LLM execution for checks: config loading, llm package client, autogov injection, and
+    spec epic check command'
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-28-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- description: LLM Config
+  kind: code
+  prompt: "Create `src/spec/llm/config.py` for LLM configuration.\nDefine `LLMConfigError(SpecwrightError)`\
+    \ with exit_code = 4.\nDefine dataclass:\n```python\n@dataclass\nclass LLMConfig:\n    enabled: bool\
+    \ = False\n    timeout_s: int = 120\n    # Note: model is NOT here - it comes from check.model or\
+    \ epic.defaults.model\n```\nImplement:\n- `get_governor_config_path() -> Path`: Return `~/.local/local-governor/config.yaml`\
+    \ expanded.\n- `load_llm_config() -> LLMConfig`: Load LLM config from governor config.yaml. If file\
+    \ doesn't exist, return LLMConfig with enabled=False. If file exists but llm section missing, return\
+    \ disabled. Parse llm section into LLMConfig. Raise LLMConfigError on parse error.\n- `require_llm_enabled()\
+    \ -> LLMConfig`: Load config and raise LLMConfigError if not enabled. Include helpful message about\
+    \ how to enable."
+  role: coding_agent
+  step_id: step-001
+- description: LLM Client
+  kind: code
+  prompt: "Create `src/spec/llm/client.py` wrapping the `llm` package.\nDefine `LLMExecutionError(SpecwrightError)`\
+    \ with exit_code = 5.\nImplement `LLMClient` class:\n```python\nclass LLMClient:\n    def __init__(self,\
+    \ config: LLMConfig, model_name: str):\n        self.config = config\n        self.model_name = model_name\
+    \  # from check.model or epic.defaults.model\n        self._model = None\n    def _get_model(self):\n\
+    \        \"\"\"Lazy-load the LLM model.\"\"\"\n        if self._model is None:\n            try:\n\
+    \                import llm\n                self._model = llm.get_model(self.model_name)\n      \
+    \      except ImportError:\n                raise LLMExecutionError(\n                    \"llm package\
+    \ not installed. Run: pip install llm\",\n                    exit_code=5\n                )\n   \
+    \         except llm.UnknownModelError:\n                raise LLMExecutionError(\n              \
+    \      f\"Model '{self.model_name}' not found. \"\n                    f\"Run 'llm models' to see\
+    \ available models, or \"\n                    f\"'llm install llm-<provider>' to add a provider.\"\
+    ,\n                    exit_code=5\n                )\n            except Exception as e:\n      \
+    \          raise LLMExecutionError(f\"Failed to load model {self.model_name}: {e}\")\n        return\
+    \ self._model\n    def prompt(self, text: str) -> str:\n        \"\"\"\n        Send prompt to LLM\
+    \ and return response.\n        Handles timeouts and translates errors to LLMExecutionError.\n   \
+    \     \"\"\"\n        # Use signal.alarm for timeout (self.config.timeout_s)\n        # Call model.prompt(text)\
+    \ - use llm package defaults for temperature/tokens\n        # Return response.text()\n        # Catch\
+    \ exceptions and wrap in LLMExecutionError\n        ...\n    def prompt_with_system(self, system:\
+    \ str, user: str) -> str:\n        \"\"\"Send prompt with system message.\"\"\"\n        ...\n```\n\
+    Use `signal.SIGALRM` for timeout handling. Clean up alarm in finally block.\nAdd `llm` to pyproject.toml\
+    \ dependencies."
+  role: coding_agent
+  step_id: step-002
+- description: Autogov Context Injection
+  kind: code
+  prompt: "Update `src/spec/checks/inputs.py` to handle governance_pack input type properly.\nReplace\
+    \ the placeholder implementation of `_gather_governance_pack`:\n```python\ndef _gather_governance_pack(input_def:\
+    \ CheckInput, epic: Epic) -> GatheredInput:\n    \"\"\"\n    Gather governance context from autogov.\n\
+    \    Loads governance bundle and exports to markdown.\n    \"\"\"\n    if not epic.governance or not\
+    \ epic.governance.enabled:\n        return GatheredInput(\n            type=\"governance_pack\",\n\
+    \            source=\"autogov (disabled)\",\n            content=\"[Governance not enabled for this\
+    \ epic]\"\n        )\n    try:\n        from spec.autogov.loader import GovernanceLoader\n       \
+    \ from spec.autogov.context_builder import SpecContextBuilder\n        loader = GovernanceLoader()\n\
+    \        bundle = loader.load_all(\n            epic.governance.project,\n            epic.governance.source,\n\
+    \        )\n        builder = SpecContextBuilder()\n        markdown = builder.export_to_markdown(\n\
+    \            bundle,\n            include=epic.governance.include,\n        )\n        return GatheredInput(\n\
+    \            type=\"governance_pack\",\n            source=f\"autogov:{epic.governance.project}\"\
+    ,\n            content=markdown,\n        )\n    except Exception as e:\n        return GatheredInput(\n\
+    \            type=\"governance_pack\",\n            source=\"autogov (error)\",\n            content=f\"\
+    [Failed to load governance: {e}]\"\n        )\n```\nAlso add `export_to_markdown` method to `SpecContextBuilder`\
+    \ if not exists.\nHandle import errors gracefully - if autogov module not available, return error\
+    \ message in content."
+  role: coding_agent
+  step_id: step-003
+- description: Wire Check Command
+  kind: code
+  prompt: 'Update `src/spec/cli/epic.py` to implement the full `check` command.
+
+    Handle all error cases with correct exit codes:
+
+    - Exit 2: Epic or check not found
+
+    - Exit 4: LLM config error
+
+    - Exit 5: LLM execution error'
+  role: coding_agent
+  step_id: step-004
+- description: Documentation
+  kind: code
+  prompt: 'Create documentation for the epic system.
+
+    Create `docs/epics.md`:
+
+    1. Introduction - What are epics, when to use them
+
+    2. Directory structure - Where epics live
+
+    3. Epic schema - Full schema reference
+
+    4. CLI commands - All commands with examples
+
+    5. LLM checks - How to configure and run
+
+    6. Workflow walkthrough - Step-by-step usage
+
+    Update `README.md` to add epics to feature list and link to docs/epics.md.
+
+    Ensure all CLI commands have clear --help text with examples.'
+  role: coding_agent
+  step_id: step-005
+- description: Integration Tests
+  kind: code
+  prompt: 'Create end-to-end integration tests for the epic system.
+
+    Create `tests/integration/test_epic_e2e.py`:
+
+    Test full workflows:
+
+    1. Create epic → add target → add spec → set-current → status
+
+    2. mark-done → status shows done with checkmark
+
+    3. validate detects cycles, missing refs
+
+    4. check with LLM disabled returns exit 4 with message
+
+    5. check with mock LLM returns report
+
+    Use temporary directories for governor root.
+
+    Mock LLM calls for deterministic tests.'
+  role: coding_agent
+  step_id: step-006
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/epic-system
+spec_version: 1.0.0
+tier: B
+title: Epic LLM Integration
+updated: '2025-12-26T00:00:00+00:00'
+version: '0.1'
+

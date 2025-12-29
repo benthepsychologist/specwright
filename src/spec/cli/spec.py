@@ -33,6 +33,11 @@ def _specwright_exception_handler(func):
 
 app = typer.Typer(help="Specwright CLI for managing Agentic Implementation Plans")
 
+# Register epic subcommands
+from spec.cli.epic import epic_app
+
+app.add_typer(epic_app, name="epic")
+
 
 class RiskTier(str, Enum):
     """Risk tier enumeration."""

@@ -1,0 +1,357 @@
+"""Tests for epic CLI commands."""
+
+import os
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from spec.cli.spec import app
+
+
+@pytest.fixture
+def runner():
+    """CLI test runner."""
+    return CliRunner()
+
+
+@pytest.fixture
+def temp_governor(tmp_path: Path):
+    """Create a temporary governor directory with an epic."""
+    epics_dir = tmp_path / "epics"
+    epics_dir.mkdir()
+
+    # Create a valid epic
+    epic_dir = epics_dir / "test-epic"
+    epic_dir.mkdir()
+    (epic_dir / "checks").mkdir()
+    (epic_dir / "reports").mkdir()
+    (epic_dir / "artifacts" / "snapshots").mkdir(parents=True)
+    (epic_dir / "notes.md").write_text("# Test Epic\n")
+
+    epic_yaml = '''version: "0.1"
+kind: epic
+id: test-epic
+title: "Test Epic"
+owner: testuser
+created: 2025-12-26T00:00:00Z
+updated: 2025-12-26T00:00:00Z
+
+intent:
+  goal: "Test the epic system"
+  narrative: "A test narrative."
+
+targets:
+  - id: myrepo
+    repo_path: /workspace/myrepo
+    default_branch: main
+
+specs:
+  - id: spec-001
+    repo: myrepo
+    branch: feat/test
+    path: specs/test.md
+    status: active
+
+state:
+  status: active
+  current_spec: spec-001
+  history:
+    - id: EVT-0001
+      at: 2025-12-26T00:00:00Z
+      event: epic.created
+      actor: human
+'''
+    (epic_dir / "epic.yaml").write_text(epic_yaml)
+
+    old_env = os.environ.get("SPECWRIGHT_GOVERNOR_ROOT")
+    os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = str(tmp_path)
+
+    yield tmp_path
+
+    if old_env:
+        os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = old_env
+    else:
+        del os.environ["SPECWRIGHT_GOVERNOR_ROOT"]
+
+
+class TestEpicHelp:
+    """Tests for --help on epic commands."""
+
+    def test_epic_help(self, runner: CliRunner):
+        """epic --help works."""
+        result = runner.invoke(app, ["epic", "--help"])
+        assert result.exit_code == 0
+        assert "Epic management commands" in result.output
+
+    def test_epic_create_help(self, runner: CliRunner):
+        """epic create --help works."""
+        result = runner.invoke(app, ["epic", "create", "--help"])
+        assert result.exit_code == 0
+        assert "--goal" in result.output
+
+    def test_epic_add_target_help(self, runner: CliRunner):
+        """epic add-target --help works."""
+        result = runner.invoke(app, ["epic", "add-target", "--help"])
+        assert result.exit_code == 0
+        assert "--repo-path" in result.output
+
+    def test_epic_add_spec_help(self, runner: CliRunner):
+        """epic add-spec --help works."""
+        result = runner.invoke(app, ["epic", "add-spec", "--help"])
+        assert result.exit_code == 0
+        assert "--depends-on" in result.output
+
+    def test_epic_set_current_help(self, runner: CliRunner):
+        """epic set-current --help works."""
+        result = runner.invoke(app, ["epic", "set-current", "--help"])
+        assert result.exit_code == 0
+        assert "--spec" in result.output
+
+    def test_epic_mark_done_help(self, runner: CliRunner):
+        """epic mark-done --help works."""
+        result = runner.invoke(app, ["epic", "mark-done", "--help"])
+        assert result.exit_code == 0
+        assert "--note" in result.output
+
+    def test_epic_status_help(self, runner: CliRunner):
+        """epic status --help works."""
+        result = runner.invoke(app, ["epic", "status", "--help"])
+        assert result.exit_code == 0
+        assert "DAG visualization" in result.output
+
+    def test_epic_list_help(self, runner: CliRunner):
+        """epic list --help works."""
+        result = runner.invoke(app, ["epic", "list", "--help"])
+        assert result.exit_code == 0
+
+    def test_epic_validate_help(self, runner: CliRunner):
+        """epic validate --help works."""
+        result = runner.invoke(app, ["epic", "validate", "--help"])
+        assert result.exit_code == 0
+        assert "Validate" in result.output
+
+    def test_epic_check_help(self, runner: CliRunner):
+        """epic check --help works."""
+        result = runner.invoke(app, ["epic", "check", "--help"])
+        assert result.exit_code == 0
+        assert "LLM" in result.output
+
+
+class TestEpicStatus:
+    """Tests for epic status command."""
+
+    def test_status_shows_title(self, runner: CliRunner, temp_governor: Path):
+        """Status shows epic title."""
+        result = runner.invoke(app, ["epic", "status", "test-epic"])
+        assert result.exit_code == 0
+        assert "Test Epic" in result.output
+
+    def test_status_shows_specs(self, runner: CliRunner, temp_governor: Path):
+        """Status shows specs."""
+        result = runner.invoke(app, ["epic", "status", "test-epic"])
+        assert result.exit_code == 0
+        assert "spec-001" in result.output
+
+    def test_status_shows_icons(self, runner: CliRunner, temp_governor: Path):
+        """Status shows status icons."""
+        result = runner.invoke(app, ["epic", "status", "test-epic"])
+        assert result.exit_code == 0
+        # Active spec should show arrow
+        assert "→" in result.output
+
+    def test_status_not_found(self, runner: CliRunner, temp_governor: Path):
+        """Status returns exit 2 for unknown epic."""
+        result = runner.invoke(app, ["epic", "status", "nonexistent"])
+        assert result.exit_code == 2
+
+
+class TestEpicValidate:
+    """Tests for epic validate command."""
+
+    def test_validate_valid(self, runner: CliRunner, temp_governor: Path):
+        """Validate returns 0 for valid epic."""
+        result = runner.invoke(app, ["epic", "validate", "test-epic"])
+        assert result.exit_code == 0
+        assert "valid" in result.output.lower()
+
+    def test_validate_not_found(self, runner: CliRunner, temp_governor: Path):
+        """Validate returns 2 for unknown epic."""
+        result = runner.invoke(app, ["epic", "validate", "nonexistent"])
+        assert result.exit_code == 2
+
+    def test_validate_invalid_returns_3(self, runner: CliRunner, temp_governor: Path):
+        """Validate returns 3 for invalid epic."""
+        # Break the epic
+        epic_file = temp_governor / "epics" / "test-epic" / "epic.yaml"
+        content = epic_file.read_text()
+        # Change repo to unknown
+        content = content.replace("repo: myrepo", "repo: unknown-repo")
+        epic_file.write_text(content)
+
+        result = runner.invoke(app, ["epic", "validate", "test-epic"])
+        assert result.exit_code == 3
+
+
+class TestEpicList:
+    """Tests for epic list command."""
+
+    def test_list_shows_epics(self, runner: CliRunner, temp_governor: Path):
+        """List shows existing epics."""
+        result = runner.invoke(app, ["epic", "list"])
+        assert result.exit_code == 0
+        assert "test-epic" in result.output
+
+    def test_list_empty(self, runner: CliRunner, tmp_path: Path):
+        """List handles empty governor."""
+        epics_dir = tmp_path / "epics"
+        epics_dir.mkdir(parents=True)
+
+        old_env = os.environ.get("SPECWRIGHT_GOVERNOR_ROOT")
+        os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = str(tmp_path)
+
+        try:
+            result = runner.invoke(app, ["epic", "list"])
+            assert result.exit_code == 0
+            assert "No epics found" in result.output
+        finally:
+            if old_env:
+                os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = old_env
+            else:
+                del os.environ["SPECWRIGHT_GOVERNOR_ROOT"]
+
+
+class TestEpicCheck:
+    """Tests for epic check command (placeholder)."""
+
+    def test_check_returns_4(self, runner: CliRunner, temp_governor: Path):
+        """Check returns exit 4 for unimplemented LLM."""
+        result = runner.invoke(app, ["epic", "check", "test-epic"])
+        assert result.exit_code == 4
+        assert "not yet implemented" in result.output.lower()
+
+
+class TestEpicCreate:
+    """Tests for epic create command."""
+
+    def test_create_requires_goal(self, runner: CliRunner, temp_governor: Path):
+        """Create requires --goal option."""
+        result = runner.invoke(app, ["epic", "create", "New Epic"])
+        assert result.exit_code != 0
+
+    def test_create_requires_owner(self, runner: CliRunner, temp_governor: Path):
+        """Create requires owner (from config or --owner)."""
+        result = runner.invoke(app, ["epic", "create", "New Epic", "--goal", "Test"])
+        # Should fail because no owner
+        assert result.exit_code != 0 or "owner" in result.output.lower()
+
+
+class TestEpicAddTarget:
+    """Tests for epic add-target command."""
+
+    def test_add_target(self, runner: CliRunner, temp_governor: Path):
+        """add-target adds a target."""
+        result = runner.invoke(
+            app,
+            [
+                "epic",
+                "add-target",
+                "test-epic",
+                "--id",
+                "new-repo",
+                "--repo-path",
+                "/workspace/new",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Added target" in result.output
+
+
+class TestEpicAddSpec:
+    """Tests for epic add-spec command."""
+
+    def test_add_spec(self, runner: CliRunner, temp_governor: Path):
+        """add-spec adds a spec."""
+        result = runner.invoke(
+            app,
+            [
+                "epic",
+                "add-spec",
+                "test-epic",
+                "--id",
+                "spec-002",
+                "--repo",
+                "myrepo",
+                "--branch",
+                "main",
+                "--path",
+                "specs/new.md",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Added spec" in result.output
+
+    def test_add_spec_invalid_repo(self, runner: CliRunner, temp_governor: Path):
+        """add-spec fails for invalid repo."""
+        result = runner.invoke(
+            app,
+            [
+                "epic",
+                "add-spec",
+                "test-epic",
+                "--id",
+                "spec-002",
+                "--repo",
+                "unknown",
+                "--branch",
+                "main",
+                "--path",
+                "test.md",
+            ],
+        )
+        assert result.exit_code != 0
+
+
+class TestEpicSetCurrent:
+    """Tests for epic set-current command."""
+
+    def test_set_current(self, runner: CliRunner, temp_governor: Path):
+        """set-current sets current spec."""
+        # First add another spec
+        runner.invoke(
+            app,
+            [
+                "epic",
+                "add-spec",
+                "test-epic",
+                "--id",
+                "spec-002",
+                "--repo",
+                "myrepo",
+                "--branch",
+                "main",
+                "--path",
+                "test.md",
+            ],
+        )
+
+        result = runner.invoke(
+            app,
+            ["epic", "set-current", "test-epic", "--spec", "spec-002"],
+        )
+        assert result.exit_code == 0
+        assert "Set current spec" in result.output
+
+
+class TestEpicMarkDone:
+    """Tests for epic mark-done command."""
+
+    def test_mark_done(self, runner: CliRunner, temp_governor: Path):
+        """mark-done marks spec done."""
+        result = runner.invoke(
+            app,
+            ["epic", "mark-done", "test-epic", "--spec", "spec-001"],
+        )
+        assert result.exit_code == 0
+        assert "Marked spec" in result.output
+        assert "done" in result.output.lower()

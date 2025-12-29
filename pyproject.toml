@@ -41,6 +41,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "questionary>=2.0.0",
     "rich>=13.0.0",
+    "dacite>=1.8.0",
+    "ruamel.yaml>=0.18.0",
 ]
 
 [project.optional-dependencies]

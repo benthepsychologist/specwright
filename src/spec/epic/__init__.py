@@ -1,0 +1,91 @@
+"""Epic management module for Specwright.
+
+This module provides dataclasses, DAG utilities, and CRUD operations
+for managing epics - multi-spec implementation plans with dependency tracking.
+"""
+
+from spec.epic.dag import (
+    DAGError,
+    detect_cycle,
+    get_ready_specs,
+    topological_sort,
+)
+from spec.epic.loader import (
+    EpicNotFoundError,
+    EpicValidationError,
+    get_epic_path,
+    get_governor_root,
+    list_epics,
+    load_epic,
+    load_epic_from_path,
+)
+from spec.epic.writer import (
+    add_spec,
+    add_target,
+    append_history,
+    create_epic,
+    generate_event_id,
+    mark_spec_done,
+    save_epic,
+    set_current_spec,
+    update_spec_status,
+)
+from spec.epic.schema import (
+    Actor,
+    Check,
+    CheckInput,
+    CheckScope,
+    Defaults,
+    Epic,
+    EpicState,
+    EventType,
+    GovernanceConfig,
+    HistoryEvent,
+    Intent,
+    ResponseContract,
+    RunContext,
+    SpecRef,
+    SpecStatus,
+    Target,
+    Verification,
+)
+
+__all__ = [
+    "Actor",
+    "Check",
+    "CheckInput",
+    "CheckScope",
+    "DAGError",
+    "Defaults",
+    "Epic",
+    "EpicNotFoundError",
+    "EpicState",
+    "EpicValidationError",
+    "EventType",
+    "GovernanceConfig",
+    "HistoryEvent",
+    "Intent",
+    "ResponseContract",
+    "RunContext",
+    "SpecRef",
+    "SpecStatus",
+    "Target",
+    "Verification",
+    "add_spec",
+    "add_target",
+    "append_history",
+    "create_epic",
+    "detect_cycle",
+    "generate_event_id",
+    "get_epic_path",
+    "get_governor_root",
+    "get_ready_specs",
+    "list_epics",
+    "load_epic",
+    "load_epic_from_path",
+    "mark_spec_done",
+    "save_epic",
+    "set_current_spec",
+    "topological_sort",
+    "update_spec_status",
+]

@@ -1,0 +1,274 @@
+aip_id: AIP-specwright-2025-12-28-001
+context:
+  background: ''
+  constraints: []
+created: '2025-12-26T00:00:00+00:00'
+meta:
+  created_at: '2025-12-26T00:00:00+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+  - All dataclasses defined with proper types
+  - Validation methods raise SpecwrightError with correct exit codes
+  - DAG cycle detection works and reports cycle path
+  - Epic create produces correct directory structure
+  - All CLI commands respond to --help
+  - Status command renders readable DAG with icons
+  - Validate command returns exit 0 or 3
+  - Unit tests pass with >80% coverage
+  goal: Implement epic dataclasses, schema validation, DAG cycle detection, persistence, and core CLI
+    commands
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-28-001
+  logging: jsonl
+  state_machine:
+    events:
+    - run_step
+    - await_gate
+    - approve
+    - reject
+    - retry
+    - escalate
+    - complete
+    states:
+    - pending
+    - running
+    - awaiting_human
+    - failed
+    - succeeded
+    - rolled_back
+plan:
+- description: Epic Dataclasses
+  kind: code
+  prompt: 'Create `src/spec/epic/schema.py` with dataclasses for the epic model.
+
+    Define these enums:
+
+    - `SpecStatus`: planned, active, blocked, done, abandoned
+
+    - `EventType`: epic.created, epic.updated, spec.activated, spec.blocked, spec.done, spec.abandoned,
+    check.completed, check.failed, step.started, step.completed, step.failed
+
+    - `Actor`: human, specwright, llm
+
+    - `CheckScope`: spec, epic
+
+    Define these dataclasses:
+
+    - `Target`: id, repo_path, default_branch, governor_project (optional)
+
+    - `CheckInput`: type, path (optional), args (optional list), target (optional), range (optional),
+    include (optional list)
+
+    - `ResponseContract`: verdicts list, required_sections list
+
+    - `Check`: id, name, scope, prompt_ref, model (optional), default_spec (optional), response_contract
+    (optional), inputs list
+
+    - `SpecRef`: id, repo, branch, path, status, depends_on list, expectations list, checks list
+
+    - `HistoryEvent`: id, at, event, actor, spec_id (optional), check_id (optional), verdict (optional),
+    report (optional), note (optional), step (optional int), plan_artifact (optional str), commit (optional
+    str), verification (optional object with commands list and status str)
+
+    - `EpicState`: status, current_spec (optional), history list
+
+    - `Intent`: goal, narrative
+
+    - `RunContext`: governor_root, env_override (optional), cli_bin, cwd_policy
+
+    - `GovernanceConfig`: enabled, source, project, include list
+
+    - `Defaults`: model (optional)
+
+    - `Epic`: version, kind, id, title, owner, created, updated, intent, targets, specs, checks, state,
+    run_context (optional), governance (optional), defaults (optional)
+
+    Add validation methods to Epic:
+
+    - `validate() -> list[str]`: Run all validations, return list of errors
+
+    - `_validate_target_refs()`: Check specs[].repo exists in targets
+
+    - `_validate_dag()`: Check no cycles in depends_on
+
+    - `_validate_check_refs()`: Check specs[].checks exist
+
+    - `_validate_current_spec()`: Check current_spec is active if set
+
+    Add helper methods to Epic:
+
+    - `get_spec(spec_id) -> SpecRef | None`
+
+    - `get_check(check_id) -> Check | None`
+
+    - `get_target(target_id) -> Target | None`
+
+    - `topological_order() -> list[SpecRef]`
+
+    Use `dacite` for YAML → dataclass conversion.'
+  role: coding_agent
+  step_id: step-001
+- description: DAG Utilities
+  kind: code
+  prompt: 'Create `src/spec/epic/dag.py` with topological sort and cycle detection.
+
+    Define `DAGError` exception with `message` and `cycle` (optional list of spec IDs).
+
+    Implement:
+
+    - `topological_sort(specs: list[SpecRef]) -> list[SpecRef]`: Return specs in dependency order. Raise
+    DAGError if cycle detected.
+
+    - `detect_cycle(specs: list[SpecRef]) -> list[str] | None`: Return cycle path if found, else None.
+
+    - `get_ready_specs(specs: list[SpecRef]) -> list[SpecRef]`: Return specs whose dependencies are all
+    done.
+
+    Use Kahn''s algorithm or DFS for topological sort. On cycle detection, return the full cycle path
+    for clear error messages.'
+  role: coding_agent
+  step_id: step-002
+- description: Epic Loader
+  kind: code
+  prompt: 'Create `src/spec/epic/loader.py` for loading epics from YAML.
+
+    Define exceptions:
+
+    - `EpicNotFoundError(SpecwrightError)`: exit_code = 2
+
+    - `EpicValidationError(SpecwrightError)`: exit_code = 3
+
+    Implement:
+
+    - `get_governor_root() -> Path`: Check `SPECWRIGHT_GOVERNOR_ROOT` env var first, else use `~/.local/local-governor`.
+    Always expand and resolve.
+
+    - `get_epic_path(epic_id: str) -> Path`: Return path to epic directory
+
+    - `load_epic(epic_id: str) -> Epic`: Load epic from governor. Raise EpicNotFoundError if not found.
+
+    - `load_epic_from_path(path: Path) -> Epic`: Load and validate epic from YAML file. Use dacite for
+    deserialization. Run validation and raise EpicValidationError with clear message on failure.
+
+    - `list_epics() -> list[str]`: Return list of epic IDs in governor.
+
+    Use `ruamel.yaml` for better error messages with line numbers if available, else `pyyaml`.'
+  role: coding_agent
+  step_id: step-003
+- description: Epic Writer
+  kind: code
+  prompt: 'Create `src/spec/epic/writer.py` for creating and updating epics.
+
+    Implement:
+
+    - `create_epic(id, title, owner, goal, narrative="") -> Epic`: Create new epic with directory structure
+    (`checks/`, `reports/`, `artifacts/snapshots/`), stub `notes.md`, and `epic.yaml`. Return loaded Epic.
+
+    - `save_epic(epic: Epic, update_timestamp: bool = True)`: Write epic.yaml. Update `updated` field
+    if update_timestamp=True.
+
+    - `add_target(epic: Epic, target: Target)`: Add target and save.
+
+    - `add_spec(epic: Epic, spec: SpecRef)`: Validate repo ref and DAG, add spec, save. Raise on invalid.
+
+    - `update_spec_status(epic: Epic, spec_id: str, status: SpecStatus, note: str | None = None)`: Update
+    status and append history event.
+
+    - `set_current_spec(epic: Epic, spec_id: str)`: Set current spec, mark it active, append history.
+
+    - `mark_spec_done(epic: Epic, spec_id: str, note: str | None = None)`: Mark spec done, append history,
+    suggest next spec.
+
+    - `append_history(epic: Epic, event: HistoryEvent)`: Append event and save.
+
+    - `generate_event_id(epic: Epic) -> str`: Generate next EVT-XXXX id. Must be monotonic: `next = max(existing
+    numeric IDs) + 1`. Format as EVT-0001, EVT-0002, etc.
+
+    Use `ruamel.yaml` for round-trip YAML preservation if available.'
+  role: coding_agent
+  step_id: step-004
+- description: Epic CLI Commands
+  kind: code
+  prompt: "Create `src/spec/cli/epic.py` with Typer commands for epic management.\nCreate Typer app: `epic_app\
+    \ = typer.Typer(help=\"Epic management commands\")`\nImplement commands:\n```python\n@epic_app.command()\n\
+    def create(\n    title: str = typer.Argument(..., help=\"Epic title\"),\n    id: str = typer.Option(None,\
+    \ \"--id\", help=\"Epic ID (auto-generated if not provided)\"),\n    goal: str = typer.Option(...,\
+    \ \"--goal\", \"-g\", help=\"One-line goal statement\"),\n    owner: str = typer.Option(None, \"--owner\"\
+    , help=\"Owner username\"),\n): ...\n@epic_app.command(\"add-target\")\ndef add_target(\n    epic_id:\
+    \ str = typer.Argument(..., help=\"Epic ID\"),\n    target_id: str = typer.Option(..., \"--id\", help=\"\
+    Target ID\"),\n    repo_path: str = typer.Option(..., \"--repo-path\", help=\"Absolute path to repo\"\
+    ),\n    default_branch: str = typer.Option(\"main\", \"--branch\", help=\"Default branch\"),\n   \
+    \ governor_project: str = typer.Option(None, \"--governor-project\", help=\"Link to governor project\"\
+    ),\n): ...\n@epic_app.command(\"add-spec\")\ndef add_spec(\n    epic_id: str = typer.Argument(...,\
+    \ help=\"Epic ID\"),\n    spec_id: str = typer.Option(..., \"--id\", help=\"Spec ID\"),\n    repo:\
+    \ str = typer.Option(..., \"--repo\", help=\"Target repo ID\"),\n    branch: str = typer.Option(...,\
+    \ \"--branch\", help=\"Working branch\"),\n    path: str = typer.Option(..., \"--path\", help=\"Spec\
+    \ path relative to governor\"),\n    depends_on: List[str] = typer.Option([], \"--depends-on\", help=\"\
+    Dependency spec IDs\"),\n    expectation: List[str] = typer.Option([], \"--expectation\", \"-e\",\
+    \ help=\"Expectations\"),\n): ...\n@epic_app.command(\"set-current\")\ndef set_current(\n    epic_id:\
+    \ str = typer.Argument(..., help=\"Epic ID\"),\n    spec_id: str = typer.Option(..., \"--spec\", \"\
+    -s\", help=\"Spec ID to set as current\"),\n): ...\n@epic_app.command(\"mark-done\")\ndef mark_done(\n\
+    \    epic_id: str = typer.Argument(..., help=\"Epic ID\"),\n    spec_id: str = typer.Option(..., \"\
+    --spec\", \"-s\", help=\"Spec ID to mark done\"),\n    note: str = typer.Option(None, \"--note\",\
+    \ \"-n\", help=\"Completion note\"),\n): ...\n@epic_app.command()\ndef status(epic_id: str = typer.Argument(...,\
+    \ help=\"Epic ID\")): ...\n@epic_app.command(\"list\")\ndef list_epics(): ...\n@epic_app.command()\n\
+    def validate(epic_id: str = typer.Argument(..., help=\"Epic ID\")): ...\n```\nStatus output should\
+    \ show:\n- Epic title and overall status\n- Current spec indicator (→)\n- DAG visualization with status\
+    \ icons: ✓ done, → active, ○ planned, ✗ blocked, ⊘ abandoned\n- Check summary\nAdd placeholder for\
+    \ `check` command that returns exit 4 with message about LLM integration.\nRegister in main CLI (`src/spec/cli/spec.py`):\
+    \ `app.add_typer(epic_app, name=\"epic\")`"
+  role: coding_agent
+  step_id: step-005
+- description: Comprehensive Test Suite for Epic Core
+  kind: code
+  prompt: 'Create comprehensive tests for the epic core module.
+
+    Create test files:
+
+    - `tests/epic/__init__.py`
+
+    - `tests/epic/test_schema.py`: Dataclass validation tests
+
+    - `tests/epic/test_dag.py`: Cycle detection, topological sort
+
+    - `tests/epic/test_loader.py`: Load/parse tests, error cases
+
+    - `tests/epic/test_writer.py`: Create/update tests
+
+    - `tests/cli/test_epic.py`: CLI integration tests
+
+    Test cases:
+
+    - Valid epic loads successfully
+
+    - Invalid target ref raises EpicValidationError (exit 3)
+
+    - DAG cycle detected and reported with cycle path
+
+    - Unknown check ref detected
+
+    - current_spec must be active
+
+    - create produces correct directory structure
+
+    - add-spec validates before adding
+
+    - status renders correctly with icons
+
+    - validate returns correct exit codes (0 or 3)
+
+    Use pytest fixtures for sample epics.'
+  role: coding_agent
+  step_id: step-006
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/epic-system
+spec_version: 1.0.0
+tier: B
+title: Epic Core - Schema, DAG, and CRUD
+updated: '2025-12-26T00:00:00+00:00'
+version: '0.1'
+
