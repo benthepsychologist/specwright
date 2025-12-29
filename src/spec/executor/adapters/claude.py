@@ -371,15 +371,13 @@ class ClaudeAdapter(AgentAdapter):
         prompt = prompt_path.read_text()
 
         # Build command with allowlist constraints
-        # NOTE: --print is the non-interactive flag (aliased as -p)
-        # The prompt is passed as a positional argument, NOT via -p
+        # NOTE: With --print, Claude Code requires input via stdin, not positional arg
         cmd = [
             "claude",
             "--print",
             "--output-format", "json",
             "--dangerously-skip-permissions",
             "--allowedTools", ALLOWED_TOOLS_ONESHOT,
-            prompt,
         ]
 
         # Check for schema file
@@ -396,6 +394,7 @@ class ClaudeAdapter(AgentAdapter):
         proc = subprocess.Popen(
             cmd,
             cwd=repo_root,
+            stdin=subprocess.PIPE,  # Pass prompt via stdin
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -403,7 +402,7 @@ class ClaudeAdapter(AgentAdapter):
         )
 
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
         except subprocess.TimeoutExpired:
             # Kill the entire process group
             try:

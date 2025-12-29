@@ -572,6 +572,10 @@ class TestOneshotConstraints:
                 allowedtools_idx = cmd.index("--allowedTools")
                 assert cmd[allowedtools_idx + 1] == ALLOWED_TOOLS_ONESHOT
 
+                # Verify prompt passed via stdin
+                call_kwargs = mock_popen.call_args[1]
+                assert call_kwargs.get("stdin") == subprocess.PIPE
+
     def test_oneshot_uses_skip_permissions(self) -> None:
         """Test that oneshot mode uses --dangerously-skip-permissions."""
         adapter = ClaudeAdapter()
