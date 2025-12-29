@@ -143,9 +143,9 @@ plan:
 
     Test full workflows:
 
-    1. Create epic → add target → add spec → set-current → status
+    1. Create epic ??? add target ??? add spec ??? set-current ??? status
 
-    2. mark-done → status shows done with checkmark
+    2. mark-done ??? status shows done with checkmark
 
     3. validate detects cycles, missing refs
 

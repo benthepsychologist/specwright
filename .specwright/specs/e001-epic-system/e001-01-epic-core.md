@@ -23,8 +23,8 @@ Implement the foundational epic system: dataclasses, schema validation, DAG cycl
 ## Non-Goals
 
 - LLM check execution (e001-02-epic-checks)
-- LLM client integration (e001-03-epic-llm-integration)
-- Autogov context injection (e001-03-epic-llm-integration)
+- LLM client integration (e001-04-epic-llm-integration)
+- Autogov context injection (e001-04-epic-llm-integration)
 
 ---
 

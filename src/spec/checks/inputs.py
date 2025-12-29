@@ -373,7 +373,7 @@ def _gather_governance_pack(input_def: CheckInput, epic: Epic) -> GatheredInput:
 
     content = (
         "Governance pack is a placeholder in e001-02-epic-checks. "
-        "It is implemented in e001-03-epic-llm-integration.\n\n"
+        "It is implemented in e001-04-epic-llm-integration.\n\n"
         f"Requested include sections: {include}"
     )
 

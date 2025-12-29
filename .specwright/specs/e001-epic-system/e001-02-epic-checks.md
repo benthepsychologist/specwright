@@ -20,12 +20,12 @@ depends_on:
 
 ## Goal
 
-Implement the check subsystem: prompt resolution, input gathering, report writing, and history recording. **This spec does NOT include actual LLM execution** - it creates a stub executor that writes "NOT_RUN" reports. e001-03-epic-llm-integration wires up the actual LLM.
+Implement the check subsystem: prompt resolution, input gathering, report writing, and history recording. **This spec does NOT include actual LLM execution** - it creates a stub executor that writes "NOT_RUN" reports. e001-04-epic-llm-integration wires up the actual LLM.
 
 ## Non-Goals
 
 - Actual LLM calls (stub only)
-- Autogov context injection (that's e001-03-epic-llm-integration)
+- Autogov context injection (that's e001-04-epic-llm-integration)
 
 ---
 
@@ -42,7 +42,7 @@ All specs in this epic use the same exit code taxonomy:
 | 4 | Config error (LLM disabled, missing config) |
 | 5 | LLM execution error (timeout, provider failure) |
 
-This spec primarily raises codes 1-2. Codes 4-5 are used by e001-03-epic-llm-integration.
+This spec primarily raises codes 1-2. Codes 4-5 are used by e001-04-epic-llm-integration.
 
 ---
 
@@ -284,7 +284,7 @@ Test cases:
 - Unknown input type raises InputGatherError
 - Report written with correct YAML frontmatter
 - Verdict parsed correctly from response (PASS, WARN, FAIL)
-- Default to WARN when verdict not found
+- Default to ERROR when verdict not found
 - Stub executor produces NOT_RUN verdict
 - History event appended on run_and_save
 
@@ -299,7 +299,7 @@ Use pytest fixtures and mocks for git/subprocess calls.
 ## Acceptance Criteria
 
 - [ ] Prompts resolved from epic checks/ directory
-- [ ] All 5 input types gathered correctly (governance_pack returns placeholder)
+- [ ] All required input types gathered correctly (governance_pack returns placeholder)
 - [ ] Reports written with YAML frontmatter and correct format
 - [ ] Verdict parsing handles all cases
 - [ ] Stub executor works without LLM client

@@ -1,172 +1,175 @@
 aip_id: AIP-specwright-2025-12-29-001
 context:
-  background: ''
+  background: ""
   constraints: []
-created: '2025-12-26T00:00:00+00:00'
+created: "2025-12-26T00:00:00+00:00"
 meta:
-  created_at: '2025-12-26T00:00:00+00:00'
+  created_at: "2025-12-26T00:00:00+00:00"
   created_by: benthepsychologist
 objective:
   acceptance_criteria:
-  - Prompts resolved from epic checks/ directory
-  - All 5 input types gathered correctly (governance_pack returns placeholder)
-  - Reports written with YAML frontmatter and correct format
-  - Verdict parsing handles all cases
-  - Stub executor works without LLM client
-  - History events appended correctly
-  - Unit tests pass with >80% coverage
-  goal: 'Implement check subsystem: prompt resolution, input gathering, report writing, and stub executor'
+    - Prompts resolved from epic checks/ directory
+    - All required input types gathered correctly (governance_pack returns placeholder)
+    - Reports written with YAML frontmatter and correct format
+    - Verdict parsing handles all cases
+    - Stub executor works without LLM client
+    - History events appended correctly
+    - Unit tests pass with >80% coverage
+  goal: "Implement check subsystem: prompt resolution, input gathering, report writing, and stub executor"
 orchestrator_contract:
   artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-29-001
   logging: jsonl
   state_machine:
     events:
-    - run_step
-    - await_gate
-    - approve
-    - reject
-    - retry
-    - escalate
-    - complete
+      - run_step
+      - await_gate
+      - approve
+      - reject
+      - retry
+      - escalate
+      - complete
     states:
-    - pending
-    - running
-    - awaiting_human
-    - failed
-    - succeeded
-    - rolled_back
+      - pending
+      - running
+      - awaiting_human
+      - failed
+      - succeeded
+      - rolled_back
 plan:
-- description: Prompt Resolver
-  kind: code
-  prompt: 'Create `src/spec/checks/resolver.py` for resolving check prompts.
+  - description: Prompt Resolver
+    kind: code
+    prompt: "Create `src/spec/checks/resolver.py` for resolving check prompts.
 
-    Define `PromptNotFoundError(SpecwrightError)` with exit_code = 2.
+      Define `PromptNotFoundError(SpecwrightError)` with exit_code = 2.
 
-    Implement:
+      Implement:
 
-    - `resolve_prompt(prompt_ref: str, epic_path: Path) -> str`: Read prompt file from `<epic_path>/<prompt_ref>`.
-    Return markdown content. Raise PromptNotFoundError if file doesn''t exist with clear error message
-    including the path.'
-  role: coding_agent
-  step_id: step-001
-- description: Input Gathering
-  kind: code
-  prompt: "Create `src/spec/checks/inputs.py` for gathering check inputs.\nDefine `InputGatherError(SpecwrightError)`\
-    \ with exit_code = 1.\nDefine dataclass:\n```python\n@dataclass\nclass GatheredInput:\n    type: str\
-    \       # epic, spec, file, git_diff, cli_output, governance_pack\n    source: str     # path, command,\
-    \ or description\n    content: str    # the actual content\n```\nImplement:\n- `gather_inputs(check:\
-    \ Check, epic: Epic, epic_path: Path) -> list[GatheredInput]`: Gather all inputs defined for a check.\
-    \ Iterate through check.inputs and call _gather_single for each.\n- `_gather_single(input_def: CheckInput,\
-    \ epic: Epic, epic_path: Path) -> GatheredInput`: Dispatch based on input_def.type.\nSupport these\
-    \ input types:\n- `type: epic` → Read epic.yaml from epic_path\n- `type: spec` → Read spec file from\
-    \ governor (path relative to governor root)\n- `type: file` → Read file from target repo (resolve\
-    \ target from input_def.target or first target)\n- `type: git_diff` → Run `git diff <range>` in target\
-    \ repo, capture output\n- `type: cli_output` → Execute command using args-based invocation (see below)\n\
-    - `type: governance_pack` → Load governance context (see precedence rules below)\nFor git_diff, use\
-    \ subprocess.run with cwd set to target.repo_path. Default range to \"HEAD~1..HEAD\" if not specified.\n\
-    For cli_output:\n- Build argv as `[epic.run_context.cli_bin] + input_def.args`\n- Set cwd based on\
-    \ `epic.run_context.cwd_policy`: governor → governor_root, repo → target.repo_path\n- Use `subprocess.run(argv,\
-    \ shell=False, capture_output=True, timeout=30)`\n- Never use shell=True unless input_def.tool ==\
-    \ \"shell\" (escape hatch, not recommended)\nFor governance_pack precedence:\n- If input_def.include\
-    \ is set → use it\n- Else if epic.governance.include is set → use that\n- Else → include all available\
-    \ (policy, arch, patterns)\nRaise InputGatherError on failures with descriptive message."
-  role: coding_agent
-  step_id: step-002
-- description: Report Writer
-  kind: code
-  prompt: "Create `src/spec/llm/reporter.py` for writing check reports.\nDefine dataclass:\n```python\n\
-    @dataclass\nclass CheckReport:\n    check_id: str\n    epic_id: str\n    spec_id: str | None\n   \
-    \ model: str                # llm model alias used (or \"stub\" if no LLM)\n    timestamp: datetime\n\
-    \    inputs: list[str]         # list of input source descriptions\n    verdict: str             \
-    \ # PASS, WARN, FAIL, ERROR, NOT_RUN\n    content: str              # markdown body\n```\nImplement:\n\
-    - `write_report(report: CheckReport, epic_path: Path) -> Path`: Write report to `reports/` directory.\
-    \ Filename format: `YYYYMMDD-HHMM-<check_id>.md`. Include YAML frontmatter with check_id, epic_id,\
-    \ spec_id (if present), model, timestamp, inputs, verdict. Return path to written report.\n- `parse_verdict(response:\
-    \ str, is_stub: bool = False) -> str`: Parse verdict from LLM response. Look for line starting with\
-    \ \"VERDICT:\". Accept PASS, WARN, FAIL, ERROR, NOT_RUN. If not found and is_stub=True, return NOT_RUN.\
-    \ If not found and is_stub=False (real LLM response), return ERROR (malformed output is an error,\
-    \ not a warning).\nReport format:\n```markdown\n---\ncheck_id: CHECK-xxx\nepic_id: e001-epic-system\n\
-    spec_id: e001-01-epic-core  # if applicable\nmodel: gpt-4o\ntimestamp: 2025-12-26T14:30:00Z\ninputs:\n\
-    \  - epic.yaml\n  - projects/specwright/specs/spec.md\nverdict: WARN\n---\n<markdown body from response>\n\
-    ```"
-  role: coding_agent
-  step_id: step-003
-- description: Stub Executor
-  kind: code
-  prompt: "Create `src/spec/checks/executor.py` for executing checks.\nImplement `CheckExecutor` class:\n\
-    ```python\nclass CheckExecutor:\n    def __init__(self, llm_client=None):\n        \"\"\"\n      \
-    \  Initialize executor.\n        llm_client: Optional LLM client. If None, uses stub.\n        \"\"\
-    \"\n        self.llm_client = llm_client\n    def execute(\n        self,\n        epic: Epic,\n \
-    \       check_id: str,\n        epic_path: Path,\n        spec_id: str | None = None,\n    ) -> CheckReport:\n\
-    \        \"\"\"\n        Execute a check and return report (does not save).\n        1. Find check\
-    \ by ID (raise ValueError if not found)\n        2. Resolve prompt from prompt_ref\n        3. Gather\
-    \ inputs\n        4. Assemble full prompt (template + inputs)\n        5. Call LLM (or stub if no\
-    \ client)\n        6. Parse verdict from response\n        7. Return CheckReport\n        \"\"\"\n\
-    \        ...\n    def run_and_save(\n        self,\n        epic: Epic,\n        check_id: str,\n\
-    \        epic_path: Path,\n        spec_id: str | None = None,\n    ) -> tuple[CheckReport, Path]:\n\
-    \        \"\"\"\n        Execute check, write report, update history.\n        Returns (report, report_path).\n\
-    \        \"\"\"\n        ...\n    def _assemble_prompt(self, template: str, inputs: list[GatheredInput])\
-    \ -> str:\n        \"\"\"Assemble full prompt with inputs section.\"\"\"\n        # Add inputs under\
-    \ \"# Inputs\" header with type and source\n        ...\n    def _stub_response(self, check: Check)\
-    \ -> str:\n        \"\"\"Generate stub response when no LLM client.\"\"\"\n        # Return formatted\
-    \ response with VERDICT: NOT_RUN\n        ...\n```\nWhen no LLM client is provided, `_stub_response`\
-    \ should return:\n```\nVERDICT: NOT_RUN\nSUMMARY: LLM integration not configured\n# Check Report:\
-    \ {check.name}\n## Status\nThis check was not executed because LLM integration is not configured.\n\
-    To enable LLM checks:\n1. Install llm package: `pip install llm`\n2. Configure a model: `llm keys\
-    \ set openai`\n3. Enable in config: `~/.local/local-governor/config.yaml` → `llm.enabled: true`\n\
-    4. Re-run this check\n## Inputs\n{number} inputs were gathered successfully.\n```\nNote: If input\
-    \ gathering fails, that's a different code path - exit 1 with VERDICT: ERROR, not NOT_RUN. NOT_RUN\
-    \ is only for \"LLM disabled but everything else worked.\"\nFor `run_and_save`, after writing report,\
-    \ append history event:\n- Generate event ID with `generate_event_id(epic)`\n- event type: `check.completed`\n\
-    - actor: `specwright` (always - CLI execution means specwright is the actor)\n- Include check_id,\
-    \ verdict, report path relative to epic_path"
-  role: coding_agent
-  step_id: step-004
-- description: Test Suite
-  kind: code
-  prompt: 'Create comprehensive tests for the check subsystem.
+      - `resolve_prompt(prompt_ref: str, epic_path: Path) -> str`: Read prompt file from `<epic_path>/<prompt_ref>`.
+      Return markdown content. Raise PromptNotFoundError if file doesn't exist with clear error message
+      including the path."
+    role: coding_agent
+    step_id: step-001
+  - description: Input Gathering
+    kind: code
+    prompt:
+      "Create `src/spec/checks/inputs.py` for gathering check inputs.\nDefine `InputGatherError(SpecwrightError)`\
+      \ with exit_code = 1.\nDefine dataclass:\n```python\n@dataclass\nclass GatheredInput:\n    type: str\
+      \       # epic, spec, file, git_diff, cli_output, governance_pack\n    source: str     # path, command,\
+      \ or description\n    content: str    # the actual content\n```\nImplement:\n- `gather_inputs(check:\
+      \ Check, epic: Epic, epic_path: Path) -> list[GatheredInput]`: Gather all inputs defined for a check.\
+      \ Iterate through check.inputs and call _gather_single for each.\n- `_gather_single(input_def: CheckInput,\
+      \ epic: Epic, epic_path: Path) -> GatheredInput`: Dispatch based on input_def.type.\nSupport these\
+      \ input types:\n- `type: epic` → Read epic.yaml from epic_path\n- `type: spec` → Read spec file from\
+      \ governor (path relative to governor root)\n- `type: file` → Read file from target repo (resolve\
+      \ target from input_def.target or first target)\n- `type: git_diff` → Run `git diff <range>` in target\
+      \ repo, capture output\n- `type: cli_output` → Execute command using args-based invocation (see below)\n\
+      - `type: governance_pack` → Load governance context (see precedence rules below)\nFor git_diff, use\
+      \ subprocess.run with cwd set to target.repo_path. Default range to \"HEAD~1..HEAD\" if not specified.\n\
+      For cli_output:\n- Build argv as `[epic.run_context.cli_bin] + input_def.args`\n- Set cwd based on\
+      \ `epic.run_context.cwd_policy`: governor → governor_root, repo → target.repo_path\n- Use `subprocess.run(argv,\
+      \ shell=False, capture_output=True, timeout=30)`\n- Never use shell=True unless input_def.tool ==\
+      \ \"shell\" (escape hatch, not recommended)\nFor governance_pack precedence:\n- If input_def.include\
+      \ is set → use it\n- Else if epic.governance.include is set → use that\n- Else → include all available\
+      \ (policy, arch, patterns)\nRaise InputGatherError on failures with descriptive message."
+    role: coding_agent
+    step_id: step-002
+  - description: Report Writer
+    kind: code
+    prompt:
+      "Create `src/spec/llm/reporter.py` for writing check reports.\nDefine dataclass:\n```python\n\
+      @dataclass\nclass CheckReport:\n    check_id: str\n    epic_id: str\n    spec_id: str | None\n   \
+      \ model: str                # llm model alias used (or \"stub\" if no LLM)\n    timestamp: datetime\n\
+      \    inputs: list[str]         # list of input source descriptions\n    verdict: str             \
+      \ # PASS, WARN, FAIL, ERROR, NOT_RUN\n    content: str              # markdown body\n```\nImplement:\n\
+      - `write_report(report: CheckReport, epic_path: Path) -> Path`: Write report to `reports/` directory.\
+      \ Filename format: `YYYYMMDD-HHMM-<check_id>.md`. Include YAML frontmatter with check_id, epic_id,\
+      \ spec_id (if present), model, timestamp, inputs, verdict. Return path to written report.\n- `parse_verdict(response:\
+      \ str, is_stub: bool = False) -> str`: Parse verdict from LLM response. Look for line starting with\
+      \ \"VERDICT:\". Accept PASS, WARN, FAIL, ERROR, NOT_RUN. If not found and is_stub=True, return NOT_RUN.\
+      \ If not found and is_stub=False (real LLM response), return ERROR (malformed output is an error,\
+      \ not a warning).\nReport format:\n```markdown\n---\ncheck_id: CHECK-xxx\nepic_id: e001-epic-system\n\
+      spec_id: e001-01-epic-core  # if applicable\nmodel: gpt-4o\ntimestamp: 2025-12-26T14:30:00Z\ninputs:\n\
+      \  - epic.yaml\n  - projects/specwright/specs/spec.md\nverdict: WARN\n---\n<markdown body from response>\n\
+      ```"
+    role: coding_agent
+    step_id: step-003
+  - description: Stub Executor
+    kind: code
+    prompt:
+      "Create `src/spec/checks/executor.py` for executing checks.\nImplement `CheckExecutor` class:\n\
+      ```python\nclass CheckExecutor:\n    def __init__(self, llm_client=None):\n        \"\"\"\n      \
+      \  Initialize executor.\n        llm_client: Optional LLM client. If None, uses stub.\n        \"\"\
+      \"\n        self.llm_client = llm_client\n    def execute(\n        self,\n        epic: Epic,\n \
+      \       check_id: str,\n        epic_path: Path,\n        spec_id: str | None = None,\n    ) -> CheckReport:\n\
+      \        \"\"\"\n        Execute a check and return report (does not save).\n        1. Find check\
+      \ by ID (raise ValueError if not found)\n        2. Resolve prompt from prompt_ref\n        3. Gather\
+      \ inputs\n        4. Assemble full prompt (template + inputs)\n        5. Call LLM (or stub if no\
+      \ client)\n        6. Parse verdict from response\n        7. Return CheckReport\n        \"\"\"\n\
+      \        ...\n    def run_and_save(\n        self,\n        epic: Epic,\n        check_id: str,\n\
+      \        epic_path: Path,\n        spec_id: str | None = None,\n    ) -> tuple[CheckReport, Path]:\n\
+      \        \"\"\"\n        Execute check, write report, update history.\n        Returns (report, report_path).\n\
+      \        \"\"\"\n        ...\n    def _assemble_prompt(self, template: str, inputs: list[GatheredInput])\
+      \ -> str:\n        \"\"\"Assemble full prompt with inputs section.\"\"\"\n        # Add inputs under\
+      \ \"# Inputs\" header with type and source\n        ...\n    def _stub_response(self, check: Check)\
+      \ -> str:\n        \"\"\"Generate stub response when no LLM client.\"\"\"\n        # Return formatted\
+      \ response with VERDICT: NOT_RUN\n        ...\n```\nWhen no LLM client is provided, `_stub_response`\
+      \ should return:\n```\nVERDICT: NOT_RUN\nSUMMARY: LLM integration not configured\n# Check Report:\
+      \ {check.name}\n## Status\nThis check was not executed because LLM integration is not configured.\n\
+      To enable LLM checks:\n1. Install llm package: `pip install llm`\n2. Configure a model: `llm keys\
+      \ set openai`\n3. Enable in config: `~/.local/local-governor/config.yaml` → `llm.enabled: true`\n\
+      4. Re-run this check\n## Inputs\n{number} inputs were gathered successfully.\n```\nNote: If input\
+      \ gathering fails, that's a different code path - exit 1 with VERDICT: ERROR, not NOT_RUN. NOT_RUN\
+      \ is only for \"LLM disabled but everything else worked.\"\nFor `run_and_save`, after writing report,\
+      \ append history event:\n- Generate event ID with `generate_event_id(epic)`\n- event type: `check.completed`\n\
+      - actor: `specwright` (always - CLI execution means specwright is the actor)\n- Include check_id,\
+      \ verdict, report path relative to epic_path"
+    role: coding_agent
+    step_id: step-004
+  - description: Test Suite
+    kind: code
+    prompt: "Create comprehensive tests for the check subsystem.
 
-    Create test files:
+      Create test files:
 
-    - `tests/checks/__init__.py`
+      - `tests/checks/__init__.py`
 
-    - `tests/checks/test_resolver.py`: Prompt resolution tests
+      - `tests/checks/test_resolver.py`: Prompt resolution tests
 
-    - `tests/checks/test_inputs.py`: Input gathering tests
+      - `tests/checks/test_inputs.py`: Input gathering tests
 
-    - `tests/checks/test_executor.py`: Executor tests with stub
+      - `tests/checks/test_executor.py`: Executor tests with stub
 
-    - `tests/llm/__init__.py`
+      - `tests/llm/__init__.py`
 
-    - `tests/llm/test_reporter.py`: Report writing tests
+      - `tests/llm/test_reporter.py`: Report writing tests
 
-    Test cases:
+      Test cases:
 
-    - Prompt resolved from checks/ directory
+      - Prompt resolved from checks/ directory
 
-    - Missing prompt raises PromptNotFoundError (exit 2)
+      - Missing prompt raises PromptNotFoundError (exit 2)
 
-    - All input types gather correctly
+      - All input types gather correctly
 
-    - git_diff runs in correct directory with correct range
+      - git_diff runs in correct directory with correct range
 
-    - cli_output captures stdout and stderr
+      - cli_output captures stdout and stderr
 
-    - Unknown input type raises InputGatherError
+      - Unknown input type raises InputGatherError
 
-    - Report written with correct YAML frontmatter
+      - Report written with correct YAML frontmatter
 
-    - Verdict parsed correctly from response (PASS, WARN, FAIL)
+      - Verdict parsed correctly from response (PASS, WARN, FAIL)
 
-    - Default to WARN when verdict not found
+      - Default to ERROR when verdict not found
 
-    - Stub executor produces NOT_RUN verdict
+      - Stub executor produces NOT_RUN verdict
 
-    - History event appended on run_and_save
+      - History event appended on run_and_save
 
-    Use pytest fixtures and mocks for git/subprocess calls.'
-  role: coding_agent
-  step_id: step-005
+      Use pytest fixtures and mocks for git/subprocess calls."
+    role: coding_agent
+    step_id: step-005
 project_slug: specwright
 repo:
   default_branch: main
@@ -175,6 +178,5 @@ repo:
 spec_version: 1.0.0
 tier: B
 title: Epic Checks - Input Gathering and Reports
-updated: '2025-12-26T00:00:00+00:00'
-version: '0.1'
-
+updated: "2025-12-26T00:00:00+00:00"
+version: "0.1"

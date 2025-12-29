@@ -1,6 +1,7 @@
 ---
 title: Epic LLM Integration
-id: e001-03-epic-llm-integration
+id: e001-04-epic-llm-integration
+aip_id: AIP-specwright-2025-12-28-001
 version: "0.1"
 status: draft
 tier: B
@@ -13,7 +14,7 @@ created: 2025-12-26T00:00:00+00:00
 updated: 2025-12-26T00:00:00+00:00
 orchestrator_contract: "standard"
 depends_on:
-  - e001-02-epic-checks
+  - e001-03-step-execution-plan
 ---
 
 # Epic LLM Integration
@@ -301,8 +302,8 @@ Create end-to-end integration tests for the epic system.
 Create `tests/integration/test_epic_e2e.py`:
 
 Test full workflows:
-1. Create epic → add target → add spec → set-current → status
-2. mark-done → status shows done with checkmark
+1. Create epic ??? add target ??? add spec ??? set-current ??? status
+2. mark-done ??? status shows done with checkmark
 3. validate detects cycles, missing refs
 4. check with LLM disabled returns exit 4 with message
 5. check with mock LLM returns report

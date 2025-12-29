@@ -416,7 +416,7 @@ def check(
     """Run LLM checks for an epic (requires LLM integration).
 
     This command is a placeholder for the LLM integration module.
-    Full implementation will be in e001-03-epic-llm-integration.
+    Full implementation will be in e001-04-epic-llm-integration.
 
     Exit code 4 indicates LLM integration is not yet available.
 
@@ -430,7 +430,7 @@ def check(
         err=True,
     )
     typer.echo(
-        "This feature will be available after completing spec e001-03-epic-llm-integration.",
+        "This feature will be available after completing spec e001-04-epic-llm-integration.",
         err=True,
     )
     raise typer.Exit(4)
