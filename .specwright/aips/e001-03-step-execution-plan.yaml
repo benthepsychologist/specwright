@@ -1,0 +1,261 @@
+aip_id: AIP-specwright-2025-12-29-001
+context:
+  background: |
+    The current executor runs Claude directly from prompts without a deterministic
+    execution plan. This makes it hard to review what will happen before execution
+    and to verify that execution matched intent.
+  constraints:
+    - Must not break existing spec run workflow
+    - SEP generation must work without LLM (deterministic)
+    - Human gate is advisory (can be skipped with flag)
+created: '2025-12-29T00:00:00+00:00'
+meta:
+  created_at: '2025-12-29T00:00:00+00:00'
+  created_by: benthepsychologist
+objective:
+  acceptance_criteria:
+    - SEP schema defined with files_to_touch, changes, verification_steps
+    - SEP materializer parses AIP step and generates deterministic plan
+    - --plan-only flag generates SEP without execution
+    - --from-sep flag executes from approved SEP
+    - SEP saved to runs directory alongside contract
+    - Post-execution diff captured from git diff --cached
+    - Unit tests pass with >80% coverage
+  goal: Add Step Execution Plan (SEP) generation and human gate before Claude execution
+orchestrator_contract:
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-29-001
+  logging: jsonl
+  state_machine:
+    events:
+      - run_step
+      - await_gate
+      - approve
+      - reject
+      - retry
+      - escalate
+      - complete
+    states:
+      - pending
+      - running
+      - awaiting_human
+      - failed
+      - succeeded
+      - rolled_back
+plan:
+  - description: SEP Schema
+    kind: code
+    prompt: |
+      Create `src/spec/executor/sep.py` with the Step Execution Plan schema.
+
+      Define dataclasses:
+      ```python
+      @dataclass
+      class FileChange:
+          path: str                    # relative path in repo
+          action: str                  # create, modify, delete
+          description: str             # what will change
+          estimated_lines: int | None  # rough estimate
+
+      @dataclass
+      class VerificationStep:
+          command: str                 # command to run
+          expected_outcome: str        # what success looks like
+          required: bool = True        # fail step if this fails
+
+      @dataclass
+      class StepExecutionPlan:
+          aip_id: str
+          step_id: str
+          step_index: int
+          created_at: str              # ISO timestamp
+
+          # What the step will do
+          objective: str               # from AIP step prompt, summarized
+          files_to_touch: list[FileChange]
+          verification_steps: list[VerificationStep]
+
+          # Constraints (copied from contract for reference)
+          allowed_paths: list[str]
+          forbidden_paths: list[str]
+
+          # Metadata
+          estimated_complexity: str    # low, medium, high
+          requires_human_review: bool  # true if touching sensitive paths
+      ```
+
+      Implement:
+      - `save_sep(sep: StepExecutionPlan, path: Path) -> None`: Write SEP to YAML
+      - `load_sep(path: Path) -> StepExecutionPlan`: Load SEP from YAML
+    role: coding_agent
+    step_id: step-001
+
+  - description: SEP Materializer
+    kind: code
+    prompt: |
+      Create `src/spec/executor/sep_builder.py` for materializing SEPs from AIP steps.
+
+      Implement `SEPBuilder` class:
+      ```python
+      class SEPBuilder:
+          def build(
+              self,
+              aip: dict[str, Any],
+              step_idx: int,
+              contract: StepContract,
+          ) -> StepExecutionPlan:
+              """
+              Build a Step Execution Plan from AIP step and contract.
+
+              This is deterministic - no LLM calls. It parses the step prompt
+              to extract:
+              - Files mentioned (Create `path`, Update `path`, etc.)
+              - Actions per file (create, modify, delete)
+              - Verification commands from contract
+
+              Returns a SEP that can be reviewed before execution.
+              """
+              ...
+
+          def _extract_files_from_prompt(self, prompt: str) -> list[FileChange]:
+              """
+              Parse prompt to find file references.
+
+              Patterns to match:
+              - "Create `path/to/file.py`" -> create
+              - "Update `path/to/file.py`" -> modify
+              - "Modify `path/to/file.py`" -> modify
+              - "Delete `path/to/file.py`" -> delete
+              - "Add to `path/to/file.py`" -> modify
+
+              Also extract descriptions from surrounding context.
+              """
+              ...
+
+          def _estimate_complexity(self, files: list[FileChange]) -> str:
+              """
+              Estimate complexity based on number of files and actions.
+              - 1-2 files, no deletes -> low
+              - 3-5 files or any delete -> medium
+              - 6+ files or multiple deletes -> high
+              """
+              ...
+
+          def _check_sensitive_paths(
+              self,
+              files: list[FileChange],
+              forbidden: list[str],
+          ) -> bool:
+              """
+              Check if any files are near forbidden paths.
+              Returns True if human review recommended.
+              """
+              ...
+      ```
+    role: coding_agent
+    step_id: step-002
+
+  - description: CLI Integration
+    kind: code
+    prompt: |
+      Update `src/spec/cli/spec.py` to add SEP workflow flags.
+
+      Add to the `run` command:
+      ```python
+      plan_only: bool = typer.Option(
+          False,
+          "--plan-only",
+          help="Generate SEP and stop. Do not execute.",
+      ),
+      from_sep: str | None = typer.Option(
+          None,
+          "--from-sep",
+          help="Execute from approved SEP file instead of generating new one.",
+      ),
+      skip_sep_review: bool = typer.Option(
+          False,
+          "--skip-sep-review",
+          help="Skip SEP review gate (use with caution).",
+      ),
+      ```
+
+      Workflow:
+      1. If --from-sep provided:
+         - Load SEP from file
+         - Validate SEP matches current AIP/step
+         - Execute directly (skip generation)
+      2. Else:
+         - Build contract (existing)
+         - Build SEP from contract + AIP
+         - Save SEP to runs/<aip>/<ts>/step-N/sep.yaml
+         - If --plan-only: print SEP path and exit
+         - Else if not --skip-sep-review: print SEP path, prompt for continue
+         - Execute step
+
+      Update output to show SEP path in results.
+    role: coding_agent
+    step_id: step-003
+
+  - description: Runner Integration
+    kind: code
+    prompt: |
+      Update `src/spec/executor/runner.py` to integrate SEP workflow.
+
+      Add to `StepRunner.run_step()`:
+      - Accept `sep: StepExecutionPlan | None` parameter
+      - If sep provided, use it; else build from contract
+      - Save SEP to input/ directory alongside contract
+      - Pass SEP to adapter for context (optional use)
+
+      Update artifact writing:
+      - Write `sep.yaml` to input/ directory
+      - Include SEP summary in gate.md
+
+      Add method:
+      ```python
+      def build_sep(
+          self,
+          aip: dict[str, Any],
+          step_idx: int,
+          contract: StepContract,
+      ) -> StepExecutionPlan:
+          """Build SEP for the step."""
+          builder = SEPBuilder()
+          return builder.build(aip, step_idx, contract)
+      ```
+    role: coding_agent
+    step_id: step-004
+
+  - description: Test Suite
+    kind: code
+    prompt: |
+      Create comprehensive tests for SEP functionality.
+
+      Create `tests/executor/test_sep.py`:
+      - Test SEP dataclass serialization/deserialization
+      - Test file extraction from various prompt patterns
+      - Test complexity estimation
+      - Test sensitive path detection
+
+      Create `tests/executor/test_sep_builder.py`:
+      - Test building SEP from sample AIPs
+      - Test edge cases (no files mentioned, all deletes, etc.)
+
+      Update `tests/cli/test_spec_run.py`:
+      - Test --plan-only flag generates SEP and exits
+      - Test --from-sep loads and validates SEP
+      - Test --skip-sep-review bypasses gate
+
+      Use fixtures with sample AIPs matching real-world patterns.
+    role: coding_agent
+    step_id: step-005
+
+project_slug: specwright
+repo:
+  default_branch: main
+  url: git@github.com:benthepsychologist/specwright.git
+  working_branch: feat/epic-system
+spec_version: 1.0.0
+tier: B
+title: Step Execution Plan - Deterministic Planning and Human Gates
+updated: '2025-12-29T00:00:00+00:00'
+version: '0.1'
