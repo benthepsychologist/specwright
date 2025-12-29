@@ -58,7 +58,7 @@ class StepContract:
 
     # Adapter configuration
     adapter: dict[str, Any] = field(
-        default_factory=lambda: {"name": "claude", "mode": "interactive"}
+        default_factory=lambda: {"name": "claude", "mode": "oneshot"}
     )
 
     # Retry configuration
@@ -108,6 +108,7 @@ def build_contract(
     aip: dict[str, Any],
     step_idx: int,
     autogov_policy: dict[str, Any] | None = None,
+    mode_override: str | None = None,
 ) -> StepContract:
     """
     Build a StepContract from an AIP definition and step index.
@@ -116,6 +117,7 @@ def build_contract(
         aip: Parsed AIP dictionary
         step_idx: Zero-based index of the step in the plan
         autogov_policy: Optional autogov policy for forbidden paths
+        mode_override: Optional mode override ('oneshot' or 'interactive')
 
     Returns:
         StepContract with all constraints resolved
@@ -187,7 +189,9 @@ def build_contract(
 
     # === Build adapter config ===
 
-    adapter = {"name": "claude", "mode": "interactive"}
+    # Default to oneshot, allow override from CLI
+    mode = mode_override if mode_override else "oneshot"
+    adapter = {"name": "claude", "mode": mode}
 
     return StepContract(
         aip_id=aip_id,

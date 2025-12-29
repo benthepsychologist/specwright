@@ -31,7 +31,7 @@ class TestStepContract:
         assert contract.verification_commands == []
         assert contract.verification_timeout == 300
         assert contract.max_iterations == 3
-        assert contract.adapter == {"name": "claude", "mode": "interactive"}
+        assert contract.adapter == {"name": "claude", "mode": "oneshot"}
         assert contract.created_at  # Should be auto-set
 
     def test_adapter_defaults(self) -> None:
@@ -45,7 +45,7 @@ class TestStepContract:
         )
 
         assert contract.adapter["name"] == "claude"
-        assert contract.adapter["mode"] == "interactive"
+        assert contract.adapter["mode"] == "oneshot"
 
 
 class TestBuildContractExplicitPaths:

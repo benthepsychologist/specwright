@@ -137,6 +137,7 @@ class StepRunner:
         allow_dirty: bool = False,
         autogov_policy: dict[str, Any] | None = None,
         governance_context: dict[str, Any] | None = None,
+        mode_override: str | None = None,
     ) -> StepResult:
         """
         Execute a step through its full lifecycle.
@@ -149,6 +150,7 @@ class StepRunner:
             allow_dirty: Allow execution with dirty working tree
             autogov_policy: Optional autogov policy for scope constraints
             governance_context: Optional autogov governance context for prompt/contract
+            mode_override: Optional adapter mode override ('oneshot' or 'interactive')
 
         Returns:
             StepResult with termination reason and artifacts
@@ -216,7 +218,7 @@ class StepRunner:
 
         # Build contract
         try:
-            contract = build_contract(aip, step_idx, autogov_policy)
+            contract = build_contract(aip, step_idx, autogov_policy, mode_override)
         except Exception as e:
             result = make_result(
                 TerminationReason.ESCALATE_AMBIGUOUS,

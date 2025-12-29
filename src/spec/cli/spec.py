@@ -999,6 +999,7 @@ def _run_autonomous_step(
     governance_bundle: Any = None,
     autogov_project: str | None = None,
     autogov_source: str | None = None,
+    mode_override: str | None = None,
 ) -> None:
     """
     Run a step autonomously with scope enforcement.
@@ -1111,6 +1112,7 @@ def _run_autonomous_step(
         max_iterations=max_iterations,
         allow_dirty=allow_dirty,
         governance_context=governance_context,
+        mode_override=mode_override,
     )
 
     # Display result
@@ -1258,6 +1260,7 @@ def run(
     allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Allow execution with dirty working tree (autonomous mode only)"),
     max_iterations: int = typer.Option(3, "--max-iterations", "-m", help="Maximum retry iterations (autonomous mode only)"),
     adapter: str = typer.Option("claude", "--adapter", help="Agent adapter to use (autonomous mode only)"),
+    mode: str | None = typer.Option(None, "--mode", "-M", help="Adapter mode: 'oneshot' (headless, constrained) or 'interactive' (TUI). Default: oneshot."),
     autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
 ):
     """Run an AIP - either in interactive HITL mode or autonomous step execution.
@@ -1339,6 +1342,11 @@ def run(
         typer.echo(f"Error: AIP file not found: {aip_path}", err=True)
         raise typer.Exit(1)
 
+    # Validate mode if provided
+    if mode is not None and mode not in ("oneshot", "interactive"):
+        typer.echo(f"Error: Invalid mode '{mode}'. Must be 'oneshot' or 'interactive'.", err=True)
+        raise typer.Exit(1)
+
     # AUTONOMOUS MODE: --step N provided
     if step is not None:
         _run_autonomous_step(
@@ -1351,6 +1359,7 @@ def run(
             governance_bundle=governance_bundle,
             autogov_project=autogov_project,
             autogov_source=autogov_cfg.get("source") if autogov_enabled else None,
+            mode_override=mode,
         )
         return  # Never reached due to typer.Exit in _run_autonomous_step
 

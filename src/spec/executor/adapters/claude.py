@@ -39,6 +39,54 @@ REQUIRED_AGENT_JSON_FIELDS = [
     "commands_executed",
 ]
 
+# Allowlist version for debugging/auditing
+ALLOWED_TOOLS_ONESHOT_VERSION = "v1"
+
+# Allowlist for oneshot mode - only these tools/commands permitted
+# Includes read-only git, safe recovery commands, and dev tools
+# NOTE: File write access is unrestricted within repo - path constraints
+# are enforced post-execution by scope checker, not here.
+#
+# SECURITY NOTE: Pattern matching depends on Claude Code's --allowedTools behavior.
+# We use conservative patterns - no bare commands that could accept flags.
+# git reset and git branch are intentionally restrictive.
+ALLOWED_TOOLS_ONESHOT = ",".join([
+    # File operations (repo-wide, scope checked after)
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    # Git read-only
+    # NOTE: Using explicit patterns to prevent flag injection
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(git branch --list:*)",  # Only --list, not bare git branch
+    # Git recovery (safe subset)
+    # NOTE: git restore is safe - only affects working tree
+    "Bash(git restore:*)",
+    # NOTE: We intentionally OMIT git reset entirely.
+    # Even "git reset -- <path>" is risky because Claude's pattern matcher
+    # might allow "git reset --hard" to match "git reset --:*".
+    # Users can unstage via "git restore --staged <path>" instead.
+    # Dev tools
+    "Bash(python:*)",
+    "Bash(pytest:*)",
+    "Bash(ruff:*)",
+    "Bash(mypy:*)",
+    "Bash(make:*)",
+    "Bash(npm:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(head:*)",
+    "Bash(tail:*)",
+    "Bash(wc:*)",
+    "Bash(find:*)",
+    "Bash(echo:*)",
+])
+
 # Interactive mode prompt template
 INTERACTIVE_PROMPT_TEMPLATE = """{task_prompt}
 
@@ -136,20 +184,20 @@ class ClaudeAdapter(AgentAdapter):
         """
         Extract adapter mode from contract.yaml.
 
-        Returns 'interactive' (default) or 'oneshot'.
+        Returns 'oneshot' (default) or 'interactive'.
         """
         contract_path = input_dir / "contract.yaml"
         if not contract_path.exists():
-            return "interactive"
+            return "oneshot"
 
         try:
             with open(contract_path) as f:
                 contract = yaml.safe_load(f)
 
             adapter_config = contract.get("adapter", {})
-            return adapter_config.get("mode", "interactive")
+            return adapter_config.get("mode", "oneshot")
         except (yaml.YAMLError, OSError):
-            return "interactive"
+            return "oneshot"
 
     def _execute_interactive(
         self,
@@ -234,9 +282,9 @@ class ClaudeAdapter(AgentAdapter):
 
         try:
             # script -q -c "claude ..." transcript.txt
-            # NOTE: -p means --print (non-interactive mode), NOT a prompt flag!
-            # The prompt is passed as a positional argument via $(cat ...)
-            claude_cmd = f'claude --dangerously-skip-permissions "$(cat {prompt_file})"'
+            # NOTE: Interactive mode uses normal Claude permissions (no --dangerously-skip-permissions)
+            # User approves/rejects actions via TUI
+            claude_cmd = f'claude "$(cat {prompt_file})"'
             cmd = ["script", "-q", "-c", claude_cmd, str(transcript_path)]
 
             logger.info(f"Launching claude (interactive mode) in {repo_root}")
@@ -273,9 +321,9 @@ class ClaudeAdapter(AgentAdapter):
             return data
 
         try:
-            # NOTE: -p means --print (non-interactive mode), NOT a prompt flag!
-            # The prompt is passed as a positional argument
-            cmd = ["claude", "--dangerously-skip-permissions", prompt]
+            # NOTE: Interactive mode uses normal Claude permissions (no --dangerously-skip-permissions)
+            # User approves/rejects actions via TUI
+            cmd = ["claude", prompt]
             logger.info(f"Launching claude (interactive mode, PTY fallback) in {repo_root}")
 
             # Use pty.spawn for interactive session
@@ -307,8 +355,11 @@ class ClaudeAdapter(AgentAdapter):
         Execute Claude in oneshot (non-interactive) mode.
 
         Uses --print --output-format json for structured output.
-        Timeout is enforced (hard kill).
+        Timeout is enforced with process group kill.
+        Tool access is restricted via --allowedTools allowlist.
         """
+        import signal
+
         # Read prompt
         prompt_path = input_dir / "prompt.md"
         if not prompt_path.exists():
@@ -319,15 +370,15 @@ class ClaudeAdapter(AgentAdapter):
 
         prompt = prompt_path.read_text()
 
-        # Build command
+        # Build command with allowlist constraints
         # NOTE: --print is the non-interactive flag (aliased as -p)
         # The prompt is passed as a positional argument, NOT via -p
         cmd = [
             "claude",
             "--print",
-            "--output-format",
-            "json",
+            "--output-format", "json",
             "--dangerously-skip-permissions",
+            "--allowedTools", ALLOWED_TOOLS_ONESHOT,
             prompt,
         ]
 
@@ -336,31 +387,44 @@ class ClaudeAdapter(AgentAdapter):
         if schema_path.exists():
             cmd.extend(["--json-schema", str(schema_path)])
 
-        # Execute with hard timeout
-        try:
-            logger.info(f"Launching claude (oneshot mode) in {repo_root}")
-            result = subprocess.run(
-                cmd,
-                cwd=repo_root,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as err:
-            raise ProtocolError(
-                f"Claude timed out after {timeout}s",
-                failure_category="timeout",
-            ) from err
+        # Execute with hard timeout and process group kill
+        # Use Popen to reliably capture PID for clean termination
+        logger.info(
+            f"Launching claude (oneshot mode, allowlist {ALLOWED_TOOLS_ONESHOT_VERSION}) "
+            f"in {repo_root}, timeout={timeout}s"
+        )
+        proc = subprocess.Popen(
+            cmd,
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,  # Create new process group
+        )
 
-        if result.returncode != 0:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Kill the entire process group
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            proc.wait()  # Reap zombie
             raise ProtocolError(
-                f"Claude exited with code {result.returncode}: {result.stderr[:500]}",
+                f"Claude timed out after {timeout}s (process group killed)",
+                failure_category="timeout",
+            )
+
+        if proc.returncode != 0:
+            raise ProtocolError(
+                f"Claude exited with code {proc.returncode}: {stderr[:500]}",
                 failure_category="claude_error",
             )
 
         # Parse JSON output
         try:
-            output = json.loads(result.stdout)
+            output = json.loads(stdout)
         except json.JSONDecodeError as err:
             raise ProtocolError(
                 f"Claude output is not valid JSON: {err}",
