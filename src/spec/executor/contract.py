@@ -132,7 +132,7 @@ def build_contract(
 
     step = plan[step_idx]
     aip_id = aip.get("aip_id", "unknown")
-    step_id = step.get("step_id", f"step-{step_idx:03d}")
+    step_id = step.get("step_id") or step.get("id") or f"step-{step_idx + 1:03d}"
 
     # === Derive allowed_paths using priority rules ===
 

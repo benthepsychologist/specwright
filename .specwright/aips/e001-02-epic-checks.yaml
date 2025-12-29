@@ -1,4 +1,4 @@
-aip_id: AIP-specwright-2025-12-28-001
+aip_id: AIP-specwright-2025-12-29-001
 context:
   background: ''
   constraints: []
@@ -17,7 +17,7 @@ objective:
   - Unit tests pass with >80% coverage
   goal: 'Implement check subsystem: prompt resolution, input gathering, report writing, and stub executor'
 orchestrator_contract:
-  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-28-001
+  artifacts_dir: .aip_artifacts/AIP-specwright-2025-12-29-001
   logging: jsonl
   state_machine:
     events:
@@ -111,9 +111,62 @@ plan:
     \ -> str:\n        \"\"\"Generate stub response when no LLM client.\"\"\"\n        # Return formatted\
     \ response with VERDICT: NOT_RUN\n        ...\n```\nWhen no LLM client is provided, `_stub_response`\
     \ should return:\n```\nVERDICT: NOT_RUN\nSUMMARY: LLM integration not configured\n# Check Report:\
-    \ {check.name}"
+    \ {check.name}\n## Status\nThis check was not executed because LLM integration is not configured.\n\
+    To enable LLM checks:\n1. Install llm package: `pip install llm`\n2. Configure a model: `llm keys\
+    \ set openai`\n3. Enable in config: `~/.local/local-governor/config.yaml` → `llm.enabled: true`\n\
+    4. Re-run this check\n## Inputs\n{number} inputs were gathered successfully.\n```\nNote: If input\
+    \ gathering fails, that's a different code path - exit 1 with VERDICT: ERROR, not NOT_RUN. NOT_RUN\
+    \ is only for \"LLM disabled but everything else worked.\"\nFor `run_and_save`, after writing report,\
+    \ append history event:\n- Generate event ID with `generate_event_id(epic)`\n- event type: `check.completed`\n\
+    - actor: `specwright` (always - CLI execution means specwright is the actor)\n- Include check_id,\
+    \ verdict, report path relative to epic_path"
   role: coding_agent
   step_id: step-004
+- description: Test Suite
+  kind: code
+  prompt: 'Create comprehensive tests for the check subsystem.
+
+    Create test files:
+
+    - `tests/checks/__init__.py`
+
+    - `tests/checks/test_resolver.py`: Prompt resolution tests
+
+    - `tests/checks/test_inputs.py`: Input gathering tests
+
+    - `tests/checks/test_executor.py`: Executor tests with stub
+
+    - `tests/llm/__init__.py`
+
+    - `tests/llm/test_reporter.py`: Report writing tests
+
+    Test cases:
+
+    - Prompt resolved from checks/ directory
+
+    - Missing prompt raises PromptNotFoundError (exit 2)
+
+    - All input types gather correctly
+
+    - git_diff runs in correct directory with correct range
+
+    - cli_output captures stdout and stderr
+
+    - Unknown input type raises InputGatherError
+
+    - Report written with correct YAML frontmatter
+
+    - Verdict parsed correctly from response (PASS, WARN, FAIL)
+
+    - Default to WARN when verdict not found
+
+    - Stub executor produces NOT_RUN verdict
+
+    - History event appended on run_and_save
+
+    Use pytest fixtures and mocks for git/subprocess calls.'
+  role: coding_agent
+  step_id: step-005
 project_slug: specwright
 repo:
   default_branch: main

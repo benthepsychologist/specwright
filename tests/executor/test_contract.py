@@ -306,7 +306,7 @@ class TestBuildContractEdgeCases:
 
         contract = build_contract(aip, 0)
 
-        assert contract.step_id == "step-000"
+        assert contract.step_id == "step-001"
 
 
 class TestSaveLoadContract:

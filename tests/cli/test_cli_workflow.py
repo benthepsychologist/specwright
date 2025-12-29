@@ -469,6 +469,71 @@ def test_compile_creates_output_directory(temp_project):
         os.chdir(old_cwd)
 
 
+def test_compile_plan_not_broken_by_h2_in_code_fence(temp_project):
+    """Code fences may contain '##' headings; they must not terminate the Plan section."""
+    import os
+
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(temp_project)
+        runner.invoke(app, ["init", "--legacy-mode"])
+
+        spec_path = temp_project / ".specwright" / "specs" / "fenced-h2.md"
+        spec_path.write_text(
+            """---
+title: Fenced H2
+tier: C
+owner: tester
+goal: Ensure plan parsing ignores fenced headings
+---
+
+# Fenced H2
+
+## Plan
+
+### Step 1: First
+
+**Prompt:**
+
+Include an example that contains headings.
+
+```markdown
+## Status
+This is inside a fenced block and must not start a new spec section.
+```
+
+**Allowed Paths:** `src/**`
+
+**Verification:** `python -c "print('ok')"`
+
+---
+
+### Step 2: Second
+
+**Prompt:**
+
+Second step must still be detected.
+
+**Allowed Paths:** `src/**`
+
+**Verification:** `python -c "print('ok')"`
+""",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["compile", str(spec_path)])
+        assert result.exit_code == 0
+
+        aip_path = temp_project / ".specwright" / "aips" / "fenced-h2.yaml"
+        assert aip_path.exists()
+
+        aip = yaml.safe_load(aip_path.read_text(encoding="utf-8"))
+        assert len(aip.get("plan", [])) == 2
+        assert [s.get("step_id") for s in aip["plan"]] == ["step-001", "step-002"]
+    finally:
+        os.chdir(old_cwd)
+
+
 def test_validate_md_spec(temp_project):
     """Test spec validate works on .md files."""
     import os

@@ -161,8 +161,10 @@ class StepRunner:
 
         # Validate step index - this is the only failure that can't produce artifacts
         if step_idx < 0 or step_idx >= len(steps):
+            # Prefer a 1-based step ID for human readability.
+            display_step_id = f"step-{step_idx + 1:03d}" if step_idx >= 0 else f"step-{step_idx:03d}"
             return StepResult(
-                step_id=f"step-{step_idx:03d}",
+                step_id=display_step_id,
                 aip_id=aip_id,
                 step_idx=step_idx,
                 adapter_name=self.adapter_name,
@@ -171,7 +173,7 @@ class StepRunner:
             )
 
         step = steps[step_idx]
-        step_id = step.get("step_id") or step.get("id", f"step-{step_idx:03d}")
+        step_id = step.get("step_id") or step.get("id") or f"step-{step_idx + 1:03d}"
 
         # Create run directory early so we can write artifacts on ANY failure
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")

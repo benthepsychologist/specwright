@@ -1083,7 +1083,8 @@ def _run_autonomous_step(
 
     typer.echo(f"\n{'='*60}")
     typer.secho(f"Executing Step {step_num}/{len(plan)} (autonomous mode)", bold=True)
-    typer.echo(f"  ID: {step_def.get('id', f'step-{step_idx:03d}')}")
+    step_id = step_def.get("step_id") or step_def.get("id") or f"step-{step_num:03d}"
+    typer.echo(f"  ID: {step_id}")
     typer.echo(f"  Adapter: {adapter}")
     if dry_run:
         typer.secho("  Mode: DRY RUN (preview only)", fg=typer.colors.YELLOW)

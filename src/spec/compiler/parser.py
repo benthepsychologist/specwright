@@ -71,8 +71,14 @@ class SpecParser:
         current_section = None
         current_content = []
 
+        in_code_fence = False
+
         for line in self.content_body.split('\n'):
-            if line.startswith('## '):
+            # Track fenced code blocks so we don't treat headings inside examples as sections.
+            if line.startswith('```'):
+                in_code_fence = not in_code_fence
+
+            if (not in_code_fence) and line.startswith('## '):
                 if current_section:
                     sections[current_section] = '\n'.join(current_content).strip()
                 # Normalize section key: lowercase, strip

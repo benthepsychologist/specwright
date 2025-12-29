@@ -261,7 +261,7 @@ For `run_and_save`, after writing report, append history event:
 
 ---
 
-### Step 5: Tests
+### Step 5: Test Suite
 
 **Prompt:**
 

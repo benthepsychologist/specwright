@@ -12,4 +12,4 @@ user:
   default_tier: C
 current:
   spec: .specwright/specs/local-governance-major-revision.md
-  aip: /home/developer/.local/local-governor/projects/specwright/aips/e001-01-epic-core.yaml
+  aip: .specwright/aips/e001-02-epic-checks.yaml
