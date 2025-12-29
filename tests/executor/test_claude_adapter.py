@@ -232,7 +232,7 @@ class TestClaudeAdapterBackfill:
                 warnings = adapter._backfill_artifacts(output_dir, repo_root)
 
             assert (output_dir / "patch.diff").exists()
-            assert "patch.diff backfilled from git diff" in warnings
+            assert any("patch.diff backfilled from git diff" in w for w in warnings)
 
     def test_backfill_cmdlog(self) -> None:
         """Test cmdlog.txt backfill with stub."""

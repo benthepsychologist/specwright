@@ -497,20 +497,43 @@ class ClaudeAdapter(AgentAdapter):
         warnings: list[str] = []
 
         # Backfill patch.diff
+        # Check both staged (--cached) and unstaged changes
         patch_path = output_dir / "patch.diff"
-        if not patch_path.exists():
+        if not patch_path.exists() or patch_path.stat().st_size == 0:
+            diff_content = ""
+            diff_source = ""
             try:
+                # First try staged changes (files added via git add)
                 result = subprocess.run(
-                    ["git", "diff"],
+                    ["git", "diff", "--cached"],
                     cwd=repo_root,
                     capture_output=True,
                     text=True,
                     check=True,
                 )
-                patch_path.write_text(result.stdout)
-                warnings.append("patch.diff backfilled from git diff")
+                if result.stdout.strip():
+                    diff_content = result.stdout
+                    diff_source = "git diff --cached"
+                else:
+                    # Fall back to unstaged changes
+                    result = subprocess.run(
+                        ["git", "diff"],
+                        cwd=repo_root,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    if result.stdout.strip():
+                        diff_content = result.stdout
+                        diff_source = "git diff"
             except subprocess.CalledProcessError:
-                patch_path.write_text("# No diff available\n")
+                pass
+
+            if diff_content:
+                patch_path.write_text(diff_content)
+                warnings.append(f"patch.diff backfilled from {diff_source}")
+            else:
+                patch_path.write_text("# No changes detected\n")
                 warnings.append("patch.diff backfilled with empty stub")
 
         # Backfill cmdlog.txt
@@ -528,9 +551,20 @@ class ClaudeAdapter(AgentAdapter):
         # Backfill agent.json
         agent_json_path = output_dir / "agent.json"
         if not agent_json_path.exists():
-            # Get files modified from git
+            # Get files modified from git (staged + unstaged)
             files_modified: list[str] = []
             try:
+                # Check staged files first
+                result = subprocess.run(
+                    ["git", "diff", "--cached", "--name-only"],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                staged = [f for f in result.stdout.strip().split("\n") if f]
+
+                # Also check unstaged
                 result = subprocess.run(
                     ["git", "diff", "--name-only"],
                     cwd=repo_root,
@@ -538,7 +572,10 @@ class ClaudeAdapter(AgentAdapter):
                     text=True,
                     check=True,
                 )
-                files_modified = [f for f in result.stdout.strip().split("\n") if f]
+                unstaged = [f for f in result.stdout.strip().split("\n") if f]
+
+                # Combine and dedupe
+                files_modified = list(dict.fromkeys(staged + unstaged))
             except subprocess.CalledProcessError:
                 pass
 
