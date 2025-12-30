@@ -357,7 +357,7 @@ class TestContractGovernanceField:
         contract = StepContract(
             aip_id="test",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )
@@ -367,7 +367,7 @@ class TestContractGovernanceField:
         contract_with_gov = StepContract(
             aip_id="test",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
             governance={
@@ -420,7 +420,7 @@ baseline_commit: abc123
         contract = StepContract(
             aip_id="test-gov",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
             governance={
@@ -455,7 +455,7 @@ class TestPromptGovernanceHeader:
         contract = StepContract(
             aip_id="test",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )
@@ -503,7 +503,7 @@ class TestPromptGovernanceHeader:
         contract = StepContract(
             aip_id="test",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )

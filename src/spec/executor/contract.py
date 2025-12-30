@@ -46,6 +46,7 @@ class StepContract:
     # Identity
     aip_id: str
     step_id: str
+    # 1-based step number (human-facing and serialized)
     step_index: int
 
     # Scope constraints
@@ -196,7 +197,7 @@ def build_contract(
     return StepContract(
         aip_id=aip_id,
         step_id=step_id,
-        step_index=step_idx,
+        step_index=step_idx + 1,
         allowed_paths=allowed_paths,
         forbidden_paths=forbidden_paths,
         verification_commands=verification_commands,
@@ -244,10 +245,15 @@ def load_contract(path: Path) -> StepContract:
 
     adapter = data.get("adapter", {"name": "claude", "mode": "interactive"})
 
+    step_index = data["step_index"]
+    # Backward-compat: older contracts used 0-based indexing.
+    if isinstance(step_index, int) and step_index == 0:
+        step_index = 1
+
     return StepContract(
         aip_id=data["aip_id"],
         step_id=data["step_id"],
-        step_index=data["step_index"],
+        step_index=step_index,
         allowed_paths=data["allowed_paths"],
         forbidden_paths=data["forbidden_paths"],
         verification_commands=data.get("verification_commands", []),

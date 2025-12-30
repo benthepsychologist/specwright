@@ -23,7 +23,7 @@ class TestStepContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )
@@ -39,7 +39,7 @@ class TestStepContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )
@@ -317,7 +317,7 @@ class TestSaveLoadContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**", "tests/**"],
             forbidden_paths=[".git/**", "secrets/**"],
             verification_commands=["pytest", "ruff check ."],
@@ -344,7 +344,7 @@ class TestSaveLoadContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
         )
@@ -360,7 +360,7 @@ class TestSaveLoadContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["tests/**", "src/**"],  # Unsorted
             forbidden_paths=["secrets/**", ".git/**"],  # Unsorted
         )
@@ -383,7 +383,7 @@ class TestSaveLoadContract:
         contract = StepContract(
             aip_id="AIP-test-2024-12-13-001",
             step_id="step-001",
-            step_index=0,
+            step_index=1,
             allowed_paths=["src/**"],
             forbidden_paths=[".git/**"],
             adapter=adapter,

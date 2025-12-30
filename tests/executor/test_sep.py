@@ -18,7 +18,7 @@ def test_save_sep_is_deterministic_and_no_aliases(tmp_path: Path) -> None:
     sep = StepExecutionPlan(
         aip_id="AIP-test-2024-12-13-001",
         step_id="step-001",
-        step_index=0,
+        step_index=1,
         created_at="2025-01-01T00:00:00+00:00",
         objective="Do the thing",
         files_to_touch=[
@@ -69,7 +69,7 @@ def test_roundtrip_load_sep(tmp_path: Path) -> None:
     sep = StepExecutionPlan(
         aip_id="AIP-test-2024-12-13-001",
         step_id="step-001",
-        step_index=0,
+        step_index=1,
         created_at="2025-01-01T00:00:00+00:00",
         objective="",
         files_to_touch=[],
@@ -111,7 +111,7 @@ def test_load_sep_missing_required_key_raises_validation_error(tmp_path: Path) -
     path = tmp_path / "sep.yaml"
     path.write_text(
         """step_id: step-001
-step_index: 0
+step_index: 1
 """,
         encoding="utf-8",
     )

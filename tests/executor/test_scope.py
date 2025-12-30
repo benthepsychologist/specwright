@@ -23,7 +23,7 @@ def make_contract(
     return StepContract(
         aip_id="AIP-test-2024-12-13-001",
         step_id="step-001",
-        step_index=0,
+        step_index=1,
         allowed_paths=allowed_paths or ["src/**", "tests/**"],
         forbidden_paths=forbidden_paths or [".git/**", "secrets/**"],
     )

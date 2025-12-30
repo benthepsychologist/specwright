@@ -250,6 +250,9 @@ def _validate_sep_mapping(data: dict[str, Any]) -> None:
     _require_str(data, "step_id")
     _require_int(data, "step_index")
 
+    if data.get("step_index") < 1:
+        raise SepValidationError("Invalid step_index: expected 1-based step number (>= 1)")
+
     _optional_str_or_datetime(data, "created_at")
     _optional_str_or_none(data, "objective")
     _optional_str_or_none(data, "estimated_complexity")

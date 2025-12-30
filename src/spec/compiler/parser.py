@@ -222,7 +222,24 @@ class SpecParser:
 
     def _extract_path_list(self, text: str, section_name: str) -> list[str]:
         """Extract a list of paths from a section like **Allowed Paths:** or **Forbidden Paths:**."""
-        paths = []
+        paths: list[str] = []
+
+        # Support inline form: **Allowed Paths:** `src/**` (legacy templates)
+        inline_prefix = f"**{section_name}:**"
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith(inline_prefix):
+                inline = re.findall(r"`([^`]+)`", stripped)
+                if inline:
+                    paths.extend([p.strip() for p in inline if p.strip()])
+                else:
+                    remainder = stripped[len(inline_prefix) :].strip()
+                    if remainder:
+                        # Allow comma-separated or whitespace-separated single-line values.
+                        for part in re.split(r"\s*,\s*", remainder):
+                            part = part.strip()
+                            if part:
+                                paths.append(part)
         pattern = rf'\*\*{section_name}:\*\*(.*?)(?=\n\*\*|\n###|$)'
         match = re.search(pattern, text, re.DOTALL)
         if match:
@@ -240,11 +257,28 @@ class SpecParser:
                         plain_match = re.match(r'^[-*]\s+(.+)$', line)
                         if plain_match:
                             paths.append(plain_match.group(1).strip())
-        return paths
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        result: list[str] = []
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                result.append(p)
+        return result
 
     def _extract_verification_commands(self, text: str) -> list[str]:
         """Extract verification commands from **Verification Commands:** section."""
-        commands = []
+        commands: list[str] = []
+
+        # Support inline legacy form: **Verification:** `python -c "..."`
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("**Verification:**"):
+                inline = re.findall(r"`([^`]+)`", stripped)
+                for cmd in inline:
+                    cmd = cmd.strip()
+                    if cmd:
+                        commands.append(cmd)
         pattern = r'\*\*Verification Commands:\*\*(.*?)(?=\n\*\*[A-Z]|\n###|$)'
         match = re.search(pattern, text, re.DOTALL)
         if match:
@@ -258,7 +292,14 @@ class SpecParser:
                     line = line.strip()
                     if line and not line.startswith('#'):
                         commands.append(line)
-        return commands
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        result: list[str] = []
+        for c in commands:
+            if c not in seen:
+                seen.add(c)
+                result.append(c)
+        return result
 
     def _extract_gate_review(self, text: str) -> dict[str, Any] | None:
         """Extract gate review block from step body.
@@ -414,11 +455,27 @@ class SpecParser:
             # Use parsed role if available, otherwise default to coding_agent
             role = step.get("role") or "coding_agent"
 
+            # Schema often enforces a minimum length; legacy specs may have very short titles.
+            title = (step.get("title") or "").strip()
+            prompts = step.get("prompts") or []
+            prompt_text = "\n".join(prompts).strip() if isinstance(prompts, list) else ""
+            prompt_summary = ""
+            if prompt_text:
+                m = re.match(r"^(.+?[.!?])(\s+|$)", " ".join(prompt_text.split()))
+                prompt_summary = (m.group(1) if m else " ".join(prompt_text.split())).strip()
+
+            description = title
+            if len(description) < 10:
+                if prompt_summary:
+                    description = f"{title}: {prompt_summary}" if title else prompt_summary
+                else:
+                    description = f"Step {step['index']}: {title}" if title else f"Step {step['index']}"
+
             schema_step = {
                 "step_id": f"step-{step['index']:03d}",
                 "role": role,
                 "kind": "code",  # Default kind
-                "description": step.get("title", ""),
+                "description": description,
             }
 
             # Add optional fields if present
@@ -475,6 +532,9 @@ class SpecParser:
 
         # Parse acceptance criteria
         acceptance_criteria = [c["text"] for c in self._parse_acceptance_criteria()]
+        if not acceptance_criteria:
+            goal = (self.frontmatter.get("goal") or "").strip()
+            acceptance_criteria = [goal] if goal else ["Meets the spec goal"]
 
         # Get repo info from frontmatter or defaults
         import subprocess

@@ -1350,18 +1350,23 @@ def run(
 
     # AUTONOMOUS MODE: --step N provided
     if step is not None:
-        _run_autonomous_step(
-            aip_path=aip_path,
-            step_num=step,
-            dry_run=dry_run,
-            allow_dirty=allow_dirty,
-            max_iterations=max_iterations,
-            adapter=adapter,
-            governance_bundle=governance_bundle,
-            autogov_project=autogov_project,
-            autogov_source=autogov_cfg.get("source") if autogov_enabled else None,
-            mode_override=mode,
-        )
+        kwargs: dict[str, Any] = {
+            "aip_path": aip_path,
+            "step_num": step,
+            "dry_run": dry_run,
+            "allow_dirty": allow_dirty,
+            "max_iterations": max_iterations,
+            "adapter": adapter,
+            "governance_bundle": governance_bundle,
+            "autogov_project": autogov_project,
+            "autogov_source": autogov_cfg.get("source") if autogov_enabled else None,
+        }
+
+        # Backward-compatible: only pass mode_override when explicitly set.
+        if mode is not None:
+            kwargs["mode_override"] = mode
+
+        _run_autonomous_step(**kwargs)
         return  # Never reached due to typer.Exit in _run_autonomous_step
 
     # INTERACTIVE HITL MODE: no --step flag
