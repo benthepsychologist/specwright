@@ -1,7 +1,7 @@
 """CLI for Specwright: create, validate, and run Agentic Implementation Plans."""
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -1000,9 +1000,26 @@ def _run_autonomous_step(
     autogov_project: str | None = None,
     autogov_source: str | None = None,
     mode_override: str | None = None,
+    plan_only: bool = False,
+    from_sep: str | None = None,
+    skip_sep_review: bool = False,
 ) -> None:
     """
     Run a step autonomously with scope enforcement.
+
+    SEP Workflow:
+    1. If --from-sep provided:
+       - Load SEP from file (exit 6 if file missing, malformed, or schema-invalid)
+       - Validate SEP matches current AIP/step (exit 7 if mismatch)
+       - Enforce contract safety (exit 7 if widening detected)
+       - Execute directly (skip generation)
+    2. Else:
+       - Build contract (existing)
+       - Build SEP from contract + AIP
+       - Save SEP to runs/<aip_id>/<timestamp>/step-N/sep.yaml
+       - If --plan-only: print SEP path and exit
+       - Else if not --skip-sep-review: print SEP path, prompt for continue
+       - Execute step
 
     For v0.6 governor config:
     - Auto-materializes AIP from governor if needed
@@ -1012,15 +1029,24 @@ def _run_autonomous_step(
 
     Args:
         governance_bundle: Optional GovernanceBundle from autogov loader
+        plan_only: Generate SEP and stop without execution
+        from_sep: Path to approved SEP file to execute from
+        skip_sep_review: Skip SEP review gate
 
     Exit codes:
         0 = PASS (step completed successfully)
         1 = FAIL_* (scope violation, patch apply failure, verification failure, protocol error, dirty worktree)
         2 = ESCALATE_* (needs human review, ambiguous)
+        6 = SEP file error (missing, malformed, or schema-invalid)
+        7 = SEP mismatch (AIP/step mismatch or contract safety violation)
     """
     from datetime import datetime
 
+    from spec.autogov.exceptions import SepFileError, SepMismatchError
     from spec.executor import StepRunner, TerminationReason
+    from spec.executor.contract import build_contract
+    from spec.executor.sep import SepError, StepExecutionPlan, load_sep, save_sep
+    from spec.executor.sep_builder import SEPBuilder
 
     # Get config
     config_path, cfg = find_config()
@@ -1081,18 +1107,23 @@ def _run_autonomous_step(
     if adapter == "claude" and max_iterations > 1:
         max_iterations = 1
 
+    aip_id = aip.get("aip_id", "unknown")
+    step_id = step_def.get("step_id") or step_def.get("id") or f"step-{step_num:03d}"
+
     typer.echo(f"\n{'='*60}")
     typer.secho(f"Executing Step {step_num}/{len(plan)} (autonomous mode)", bold=True)
-    step_id = step_def.get("step_id") or step_def.get("id") or f"step-{step_num:03d}"
     typer.echo(f"  ID: {step_id}")
     typer.echo(f"  Adapter: {adapter}")
     if dry_run:
         typer.secho("  Mode: DRY RUN (preview only)", fg=typer.colors.YELLOW)
+    if plan_only:
+        typer.secho("  Mode: PLAN ONLY (generate SEP and stop)", fg=typer.colors.YELLOW)
+    if from_sep:
+        typer.secho(f"  Mode: FROM SEP ({from_sep})", fg=typer.colors.CYAN)
     typer.echo(f"{'='*60}\n")
 
     # Initialize runner - runs live under .specwright/
     runs_dir = project_root / ".specwright" / "runs"
-    runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
 
     # Build governance context if bundle is available
     governance_context = None
@@ -1105,6 +1136,150 @@ def _run_autonomous_step(
             source=autogov_source,
         )
 
+    # ==== SEP WORKFLOW ====
+    sep: StepExecutionPlan | None = None
+    sep_path: Path | None = None
+    run_step_dir: Path | None = None
+
+    # Build contract (needed for both paths)
+    autogov_policy = None
+    if governance_context:
+        autogov_policy = governance_context.get("autogov", {})
+
+    contract = build_contract(aip, step_idx, autogov_policy, mode_override)
+
+    if from_sep:
+        # --from-sep workflow: Load and validate SEP from file
+        sep_file = Path(from_sep)
+
+        # Exit 6: File missing
+        if not sep_file.exists():
+            raise SepFileError(f"SEP file not found: {sep_file}")
+
+        # Exit 6: Malformed or schema-invalid
+        try:
+            sep = load_sep(sep_file)
+        except SepError as e:
+            raise SepFileError(f"SEP file error: {e}")
+
+        # Exit 7: Validate SEP matches current AIP/step
+        if sep.aip_id != aip_id:
+            raise SepMismatchError(
+                f"SEP aip_id mismatch: SEP has '{sep.aip_id}', expected '{aip_id}'"
+            )
+        if sep.step_id != step_id:
+            raise SepMismatchError(
+                f"SEP step_id mismatch: SEP has '{sep.step_id}', expected '{step_id}'"
+            )
+        if sep.step_index != step_num:
+            raise SepMismatchError(
+                f"SEP step_index mismatch: SEP has {sep.step_index}, expected {step_num}"
+            )
+
+        # Exit 7: Enforce canonical SEP location so we can colocate execution artifacts.
+        if sep_file.name != "sep.yaml":
+            raise SepMismatchError(
+                f"SEP path must end with 'sep.yaml' (got: {sep_file.name})"
+            )
+        run_step_dir = sep_file.parent
+        if run_step_dir.name != step_id:
+            raise SepMismatchError(
+                f"SEP directory mismatch: SEP is in '{run_step_dir.name}', expected '{step_id}'"
+            )
+        try:
+            run_step_dir.resolve().relative_to(runs_dir.resolve())
+        except ValueError:
+            raise SepMismatchError(
+                f"SEP must be under {runs_dir} to run with colocated artifacts (got: {sep_file})"
+            )
+
+        # Exit 7: Enforce contract safety - SEP cannot widen contract scope
+        # SEP allowed_paths must be equal to or a subset of contract allowed_paths
+        sep_allowed_set = set(sep.allowed_paths)
+        contract_allowed_set = set(contract.allowed_paths)
+        extra_allowed = sep_allowed_set - contract_allowed_set
+        if extra_allowed:
+            raise SepMismatchError(
+                f"SEP allowed_paths widening detected: {sorted(extra_allowed)} "
+                f"not in contract allowed_paths"
+            )
+
+        # SEP forbidden_paths must be equal to or a superset of contract forbidden_paths
+        sep_forbidden_set = set(sep.forbidden_paths)
+        contract_forbidden_set = set(contract.forbidden_paths)
+        missing_forbidden = contract_forbidden_set - sep_forbidden_set
+        if missing_forbidden:
+            raise SepMismatchError(
+                f"SEP forbidden_paths weakening detected: {sorted(missing_forbidden)} "
+                f"missing from SEP forbidden_paths"
+            )
+
+        sep_path = sep_file
+        typer.secho(f"✓ Loaded SEP from: {sep_path}", fg=typer.colors.GREEN)
+        typer.echo(f"  Objective: {sep.objective[:80]}..." if len(sep.objective) > 80 else f"  Objective: {sep.objective}")
+        typer.echo(f"  Files to touch: {len(sep.files_to_touch)}")
+        typer.echo(f"  Verification steps: {len(sep.verification_steps)}")
+
+    else:
+        # Normal workflow: Build SEP from contract + AIP
+        sep_builder = SEPBuilder()
+        sep = sep_builder.build(aip, step_idx, contract)
+
+        # Create run directory and save SEP
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+        run_step_dir = runs_dir / aip_id / timestamp / step_id
+        run_step_dir.mkdir(parents=True, exist_ok=True)
+        sep_path = run_step_dir / "sep.yaml"
+        save_sep(sep, sep_path)
+
+        typer.secho(f"✓ Generated SEP: {sep_path}", fg=typer.colors.GREEN)
+        typer.echo(f"  Objective: {sep.objective[:80]}..." if len(sep.objective) > 80 else f"  Objective: {sep.objective}")
+        typer.echo(f"  Files to touch: {len(sep.files_to_touch)}")
+        typer.echo(f"  Verification steps: {len(sep.verification_steps)}")
+        typer.echo(f"  Estimated complexity: {sep.estimated_complexity}")
+        if sep.requires_human_review:
+            typer.secho("  ⚠ Human review recommended (sensitive paths)", fg=typer.colors.YELLOW)
+
+        # --plan-only: Print SEP path and exit
+        if plan_only:
+            typer.echo(f"\n{'='*60}")
+            typer.secho("Plan only mode - SEP generated, execution skipped.", fg=typer.colors.YELLOW)
+            typer.echo(f"  SEP path: {sep_path}")
+            typer.echo("\nTo execute from this SEP:")
+            typer.echo(f"  spec run --step {step_num} --from-sep {sep_path}")
+            typer.echo(f"{'='*60}")
+            raise typer.Exit(EXIT_PASS)
+
+        # SEP review gate (unless --skip-sep-review)
+        if not skip_sep_review:
+            typer.echo(f"\n{'='*60}")
+            typer.secho("SEP Review Gate", bold=True)
+            typer.echo(f"{'='*60}")
+            typer.echo(f"\nReview the SEP at: {sep_path}")
+            typer.echo("\nPlanned file changes:")
+            for fc in sep.files_to_touch:
+                typer.echo(f"  [{fc.action}] {fc.path}")
+            typer.echo()
+
+            import sys
+
+            # In non-interactive contexts (tests/CI), prompting causes click.Abort.
+            # Honor the default choice and continue.
+            if sys.stdin is None or not sys.stdin.isatty():
+                proceed = True
+            else:
+                proceed = typer.confirm("Continue with execution?", default=True)
+
+            if not proceed:
+                typer.secho("\nExecution cancelled by user.", fg=typer.colors.YELLOW)
+                typer.echo(f"SEP saved at: {sep_path}")
+                typer.echo("\nTo resume later:")
+                typer.echo(f"  spec run --step {step_num} --from-sep {sep_path}")
+                raise typer.Exit(EXIT_PASS)
+
+    # ==== EXECUTE STEP ====
+    runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
+
     # Execute step
     result = runner.run_step(
         aip=aip,
@@ -1114,6 +1289,7 @@ def _run_autonomous_step(
         allow_dirty=allow_dirty,
         governance_context=governance_context,
         mode_override=mode_override,
+        run_dir=run_step_dir,
     )
 
     # Display result
@@ -1158,6 +1334,9 @@ def _run_autonomous_step(
 
     if result.artifacts_dir:
         typer.echo(f"  Artifacts: .specwright/runs/{result.artifacts_dir}/")
+
+    if sep_path:
+        typer.echo(f"  SEP: {sep_path}")
 
     typer.echo(f"{'='*60}")
 
@@ -1263,6 +1442,21 @@ def run(
     adapter: str = typer.Option("claude", "--adapter", help="Agent adapter to use (autonomous mode only)"),
     mode: str | None = typer.Option(None, "--mode", "-M", help="Adapter mode: 'oneshot' (headless, constrained) or 'interactive' (TUI). Default: oneshot."),
     autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
+    plan_only: bool = typer.Option(
+        False,
+        "--plan-only",
+        help="Generate SEP and stop. Do not execute.",
+    ),
+    from_sep: str | None = typer.Option(
+        None,
+        "--from-sep",
+        help="Execute from approved SEP file instead of generating new one.",
+    ),
+    skip_sep_review: bool = typer.Option(
+        False,
+        "--skip-sep-review",
+        help="Skip SEP review gate (use with caution).",
+    ),
 ):
     """Run an AIP - either in interactive HITL mode or autonomous step execution.
 
@@ -1361,6 +1555,15 @@ def run(
             "autogov_project": autogov_project,
             "autogov_source": autogov_cfg.get("source") if autogov_enabled else None,
         }
+
+        # Backward-compatible: only pass SEP-related flags when explicitly used.
+        # This keeps external callers/tests that monkeypatch _run_autonomous_step working.
+        if plan_only:
+            kwargs["plan_only"] = plan_only
+        if from_sep is not None:
+            kwargs["from_sep"] = from_sep
+        if skip_sep_review:
+            kwargs["skip_sep_review"] = skip_sep_review
 
         # Backward-compatible: only pass mode_override when explicitly set.
         if mode is not None:

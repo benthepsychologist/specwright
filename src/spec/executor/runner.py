@@ -138,6 +138,7 @@ class StepRunner:
         autogov_policy: dict[str, Any] | None = None,
         governance_context: dict[str, Any] | None = None,
         mode_override: str | None = None,
+        run_dir: Path | None = None,
     ) -> StepResult:
         """
         Execute a step through its full lifecycle.
@@ -175,10 +176,34 @@ class StepRunner:
         step = steps[step_idx]
         step_id = step.get("step_id") or step.get("id") or f"step-{step_idx + 1:03d}"
 
-        # Create run directory early so we can write artifacts on ANY failure
-        timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
-        run_dir = self.runs_dir / aip_id / timestamp / step_id
-        run_dir.mkdir(parents=True, exist_ok=True)
+        # Create run directory early so we can write artifacts on ANY failure.
+        # If provided, reuse caller-created run_dir to colocate artifacts (e.g., SEP) with execution.
+        runs_root = self.runs_dir.resolve()
+        if run_dir is not None:
+            resolved_run_dir = run_dir
+            if not resolved_run_dir.is_absolute():
+                resolved_run_dir = (self.repo_root / resolved_run_dir)
+            resolved_run_dir = resolved_run_dir.resolve()
+
+            try:
+                resolved_run_dir.relative_to(runs_root)
+            except ValueError as e:
+                raise ValueError(
+                    f"run_dir must be under runs_dir ({runs_root}); got: {resolved_run_dir}"
+                ) from e
+
+            if resolved_run_dir.name != step_id:
+                raise ValueError(
+                    f"run_dir must end with step_id '{step_id}'; got: '{resolved_run_dir.name}'"
+                )
+
+            resolved_run_dir.mkdir(parents=True, exist_ok=True)
+            run_dir = resolved_run_dir
+        else:
+            timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
+            run_dir = self.runs_dir / aip_id / timestamp / step_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+
         artifacts_dir = str(run_dir.relative_to(self.runs_dir))
 
         # Helper to build result with common fields

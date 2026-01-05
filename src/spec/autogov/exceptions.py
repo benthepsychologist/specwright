@@ -40,3 +40,15 @@ class CLIUsageError(SpecwrightError):
     """CLI argument/option usage error."""
 
     exit_code = 5
+
+
+class SepFileError(SpecwrightError):
+    """SEP file is missing, malformed, or schema-invalid."""
+
+    exit_code = 6
+
+
+class SepMismatchError(SpecwrightError):
+    """SEP does not match current AIP/step, or violates contract safety."""
+
+    exit_code = 7
