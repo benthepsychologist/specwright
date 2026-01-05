@@ -1139,6 +1139,95 @@ class TestSEPWorkflow:
         content = patch_path.read_text()
         assert isinstance(content, str)  # Even if empty
 
+    def test_patch_diff_snapshot_includes_unstaged_changes_without_mutating_index(
+        self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """patch.diff should include hunks even if nothing is staged.
+
+        The runner must not mutate the user's real git index; it should stage into
+        a temporary index and produce a cached diff snapshot.
+        """
+
+        # Ensure run artifacts won't get staged into the snapshot.
+        # In real repos, .specwright/ (or runs/) is typically gitignored.
+        (mock_repo / ".gitignore").write_text("runs/\n")
+        subprocess.run(["git", "add", ".gitignore"], cwd=mock_repo, capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "Ignore runs"],
+            cwd=mock_repo,
+            capture_output=True,
+            check=True,
+        )
+
+        def mock_execute(input_dir: Path, output_dir: Path, repo_root: Path) -> None:
+            target = repo_root / "src" / "main.py"
+            original = target.read_text()
+
+            # Create a diff against the current working tree, then restore.
+            target.write_text(original + "\nprint('world')\n")
+            diff = subprocess.run(
+                ["git", "diff"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            target.write_text(original)
+
+            assert diff.strip(), "Test setup failed: expected non-empty diff"
+
+            (output_dir / "patch.diff").write_text(diff)
+            (output_dir / "agent.json").write_text(
+                json.dumps({"status": "success", "needs_human": False, "notes": "ok"})
+            )
+            (output_dir / "cmdlog.txt").write_text("")
+
+        mock_adapter.execute = mock_execute
+
+        monkeypatch.setattr(
+            "spec.executor.runner.get_adapter",
+            lambda name: mock_adapter,
+        )
+
+        runs_dir = mock_repo / "runs"
+        runner = StepRunner(mock_repo, runs_dir=runs_dir)
+
+        aip = {
+            "aip_id": "AIP-test",
+            "plan": [
+                {
+                    "id": "step-001",
+                    "prompt": "Do something",
+                    "verification_commands": ["true"],
+                }
+            ],
+        }
+
+        result = runner.run_step(aip, step_idx=0)
+        assert result.termination_reason == TerminationReason.PASS
+
+        # Real index should still be clean.
+        cached = subprocess.run(
+            ["git", "diff", "--cached"],
+            cwd=mock_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert cached.strip() == ""
+
+        # patch.diff should include hunks for the unstaged change.
+        run_dir = next(
+            step_dir
+            for aip_dir in runs_dir.iterdir()
+            for timestamp_dir in aip_dir.iterdir()
+            for step_dir in timestamp_dir.iterdir()
+        )
+
+        patch_text = (run_dir / "patch.diff").read_text()
+        assert "diff --git a/src/main.py b/src/main.py" in patch_text
+        assert "print('world')" in patch_text
+
     def test_sep_copied_to_iteration_input(
         self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:

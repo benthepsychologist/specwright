@@ -7,7 +7,10 @@ Implements the full step lifecycle: extract → loop → gate.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -734,18 +737,9 @@ class StepRunner:
         Returns:
             The same result (for chaining)
         """
-        # Materialize staged diff to patch.diff (always write, even if empty)
-        # Absence of patch.diff means step didn't run to completion
-        try:
-            staged_diff_result = subprocess.run(
-                ["git", "diff", "--cached"],
-                cwd=self.repo_root,
-                capture_output=True,
-                text=True,
-            )
-            patch_content = staged_diff_result.stdout if staged_diff_result.returncode == 0 else ""
-        except Exception:
-            patch_content = ""
+        # Materialize a staged diff snapshot to patch.diff (always write, even if empty).
+        # We must not mutate the user's real index, so we use a temporary GIT_INDEX_FILE.
+        patch_content = self._materialize_cached_diff_snapshot() or ""
         (run_dir / "patch.diff").write_text(patch_content)
 
         # Write result.json
@@ -777,6 +771,53 @@ class StepRunner:
         (run_dir / "step.summary.json").write_text(json.dumps(summary, indent=2))
 
         return result
+
+    def _materialize_cached_diff_snapshot(self) -> str | None:
+        """Return `git diff --cached` for the current working tree without touching the real index.
+
+        Implementation detail:
+        - Copies .git/index to a temp location
+        - Runs `git add -A` against the temp index
+        - Runs `git diff --cached` against the temp index
+
+        Returns None on failure (caller should treat as empty diff).
+        """
+
+        git_index = self.repo_root / ".git" / "index"
+        if not git_index.exists():
+            return None
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="specwright-index-") as tmpdir:
+                tmp_index = Path(tmpdir) / "index"
+                shutil.copy2(git_index, tmp_index)
+
+                env = os.environ.copy()
+                env["GIT_INDEX_FILE"] = str(tmp_index)
+
+                # Stage everything into the temp index (including untracked files).
+                add_result = subprocess.run(
+                    ["git", "add", "-A"],
+                    cwd=self.repo_root,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                if add_result.returncode != 0:
+                    return None
+
+                diff_result = subprocess.run(
+                    ["git", "diff", "--cached"],
+                    cwd=self.repo_root,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                if diff_result.returncode != 0:
+                    return None
+                return diff_result.stdout
+        except Exception:
+            return None
 
     def _build_prompt(
         self,
