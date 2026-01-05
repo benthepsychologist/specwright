@@ -24,6 +24,8 @@ from spec.executor.adapters import (
 from spec.executor.artifacts import ArtifactWriter
 from spec.executor.contract import StepContract, build_contract, save_contract
 from spec.executor.scope import ScopeResult, check_scope, generate_policy_report
+from spec.executor.sep import StepExecutionPlan, save_sep
+from spec.executor.sep_builder import SEPBuilder
 from spec.executor.verify import (
     VerificationResult,
     generate_verification_report,
@@ -88,6 +90,8 @@ class StepResult:
     # Reports
     policy_report: dict[str, Any] | None = None
     verification_report: dict[str, Any] | None = None
+    # SEP
+    sep: StepExecutionPlan | None = None
     # Error info
     error: str | None = None
     # Dry run
@@ -139,6 +143,7 @@ class StepRunner:
         governance_context: dict[str, Any] | None = None,
         mode_override: str | None = None,
         run_dir: Path | None = None,
+        sep: StepExecutionPlan | None = None,
     ) -> StepResult:
         """
         Execute a step through its full lifecycle.
@@ -152,6 +157,8 @@ class StepRunner:
             autogov_policy: Optional autogov policy for scope constraints
             governance_context: Optional autogov governance context for prompt/contract
             mode_override: Optional adapter mode override ('oneshot' or 'interactive')
+            run_dir: Optional explicit run directory (must be under runs_dir)
+            sep: Optional pre-built Step Execution Plan; if None, builds from contract
 
         Returns:
             StepResult with termination reason and artifacts
@@ -277,6 +284,25 @@ class StepRunner:
         # Save contract
         save_contract(contract, input_dir / "contract.yaml")
 
+        # Build or use provided SEP
+        step_sep: StepExecutionPlan | None = sep
+        if step_sep is None:
+            try:
+                step_sep = self.build_sep(aip, step_idx, contract)
+            except Exception as e:
+                result = make_result(
+                    TerminationReason.ESCALATE_AMBIGUOUS,
+                    error=f"Failed to build SEP: {e}",
+                    baseline=repo_state.baseline,
+                )
+                return self._finalize_artifacts(result, run_dir)
+
+        # Write SEP to canonical location: runs/<aip_id>/<timestamp>/step-N/sep.yaml
+        save_sep(step_sep, run_dir / "sep.yaml")
+
+        # Also write SEP to input bundle so adapter has access (optional use)
+        save_sep(step_sep, input_dir / "sep.yaml")
+
         # Write prompt.md
         prompt_content = self._build_prompt(step, contract, governance_context)
         (input_dir / "prompt.md").write_text(prompt_content)
@@ -300,6 +326,7 @@ class StepRunner:
                 baseline=repo_state.baseline,
                 dry_run=True,
                 dry_run_command=dry_run_cmd,
+                sep=step_sep,
             )
             return self._finalize_artifacts(result, run_dir)
 
@@ -358,6 +385,7 @@ class StepRunner:
                     touched_files=touched_files,
                     policy_report=policy_report,
                     verification_report=verification_report,
+                    sep=step_sep,
                 )
                 return self._finalize_artifacts(result, run_dir)
 
@@ -379,6 +407,7 @@ class StepRunner:
                     iterations=iterations,
                     touched_files=touched_files,
                     policy_report=policy_report,
+                    sep=step_sep,
                 )
                 return self._finalize_artifacts(result, run_dir)
 
@@ -399,6 +428,7 @@ class StepRunner:
             iterations=iterations,
             touched_files=touched_files,
             verification_report=verification_report,
+            sep=step_sep,
         )
         return self._finalize_artifacts(result, run_dir)
 
@@ -692,7 +722,7 @@ class StepRunner:
 
     def _finalize_artifacts(self, result: StepResult, run_dir: Path) -> StepResult:
         """
-        Write final artifacts (result.json, gate.md, final reports, step.summary.json).
+        Write final artifacts (result.json, gate.md, final reports, step.summary.json, patch.diff).
 
         This method is called for ALL termination paths (success, failure, escalation,
         protocol error) to ensure artifacts are always written for debugging/audit.
@@ -704,6 +734,20 @@ class StepRunner:
         Returns:
             The same result (for chaining)
         """
+        # Materialize staged diff to patch.diff (always write, even if empty)
+        # Absence of patch.diff means step didn't run to completion
+        try:
+            staged_diff_result = subprocess.run(
+                ["git", "diff", "--cached"],
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+            )
+            patch_content = staged_diff_result.stdout if staged_diff_result.returncode == 0 else ""
+        except Exception:
+            patch_content = ""
+        (run_dir / "patch.diff").write_text(patch_content)
+
         # Write result.json
         self._artifact_writer.write_result(run_dir, result)
 
@@ -842,6 +886,28 @@ class StepRunner:
 
         return "\n".join(prompt_parts)
 
+    def build_sep(
+        self,
+        aip: dict[str, Any],
+        step_idx: int,
+        contract: StepContract,
+    ) -> StepExecutionPlan:
+        """Build SEP for the step.
+
+        This is a convenience method that wraps SEPBuilder.build().
+        Use this when you need to build a SEP outside the run_step flow.
+
+        Args:
+            aip: The parsed AIP dictionary
+            step_idx: Zero-based index of the step
+            contract: The StepContract for this step
+
+        Returns:
+            StepExecutionPlan ready for review
+        """
+        builder = SEPBuilder()
+        return builder.build(aip, step_idx, contract)
+
     def _build_failure_context(
         self,
         iteration: int,
@@ -899,6 +965,28 @@ def render_gate_package(result: StepResult, run_dir: Path) -> str:
         f"**Iterations:** {len(result.iterations)}",
         "",
     ]
+
+    # Include SEP summary if available
+    if result.sep:
+        lines.extend(
+            [
+                "## Step Execution Plan (SEP)",
+                "",
+                f"**Objective:** {result.sep.objective}",
+                f"**Complexity:** {result.sep.estimated_complexity}",
+                f"**Files to Touch:** {len(result.sep.files_to_touch)}",
+                "",
+            ]
+        )
+        if result.sep.files_to_touch:
+            lines.append("### Planned Files")
+            lines.append("")
+            for fc in result.sep.files_to_touch:
+                lines.append(f"- `{fc.path}` ({fc.action}): {fc.description}")
+            lines.append("")
+        if result.sep.requires_human_review:
+            lines.append("**⚠️ Human Review Recommended**")
+            lines.append("")
 
     if result.error:
         lines.extend(

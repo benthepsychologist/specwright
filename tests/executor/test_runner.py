@@ -18,6 +18,7 @@ from spec.executor.runner import (
     TerminationReason,
     render_gate_package,
 )
+from spec.executor.sep import FileChange, StepExecutionPlan, load_sep
 
 
 @pytest.fixture
@@ -915,3 +916,270 @@ class TestArtifactTreeCompleteness:
         run_dir = self._find_run_dir(runs_dir)
         # Even early failures should produce result.json and gate.md
         self._assert_step_root_artifacts(run_dir)
+
+
+class TestSEPWorkflow:
+    """Tests for Step Execution Plan (SEP) workflow integration."""
+
+    def _find_run_dir(self, runs_dir: Path) -> Path:
+        """Find the first run directory."""
+        for aip_dir in runs_dir.iterdir():
+            for timestamp_dir in aip_dir.iterdir():
+                for step_dir in timestamp_dir.iterdir():
+                    return step_dir
+        raise ValueError("No run directory found")
+
+    def test_sep_written_to_canonical_location(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test SEP is written to runs/<aip_id>/<timestamp>/step-N/sep.yaml."""
+        runner = StepRunner(repo_root=mock_repo)
+
+        runner.run_step(sample_aip, step_idx=0, dry_run=True)
+
+        runs_dir = mock_repo / "runs"
+        run_dir = self._find_run_dir(runs_dir)
+
+        # SEP should exist at step root
+        sep_path = run_dir / "sep.yaml"
+        assert sep_path.exists(), "sep.yaml not written to canonical location"
+
+        # Load and verify SEP content
+        sep = load_sep(sep_path)
+        assert sep.aip_id == sample_aip["aip_id"]
+        assert sep.step_id == "step-001"
+        assert sep.step_index == 1  # 1-based
+
+    def test_sep_copied_to_input_bundle(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test SEP is also copied to input bundle for adapter access."""
+        runner = StepRunner(repo_root=mock_repo)
+
+        runner.run_step(sample_aip, step_idx=0, dry_run=True)
+
+        runs_dir = mock_repo / "runs"
+        run_dir = self._find_run_dir(runs_dir)
+
+        # SEP should also exist in input directory
+        input_sep_path = run_dir / "input" / "sep.yaml"
+        assert input_sep_path.exists(), "sep.yaml not copied to input bundle"
+
+    def test_sep_included_in_result(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test SEP is included in StepResult."""
+        runner = StepRunner(repo_root=mock_repo)
+
+        result = runner.run_step(sample_aip, step_idx=0, dry_run=True)
+
+        assert result.sep is not None
+        assert result.sep.aip_id == sample_aip["aip_id"]
+        assert result.sep.step_id == "step-001"
+
+    def test_provided_sep_is_used(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test that a provided SEP is used instead of building one."""
+        runner = StepRunner(repo_root=mock_repo)
+
+        # Create a custom SEP
+        custom_sep = StepExecutionPlan(
+            aip_id=sample_aip["aip_id"],
+            step_id="step-001",
+            step_index=1,
+            objective="Custom objective from provided SEP",
+            files_to_touch=[
+                FileChange(
+                    path="src/custom.py",
+                    action="create",
+                    description="Custom file",
+                )
+            ],
+            estimated_complexity="high",
+        )
+
+        result = runner.run_step(
+            sample_aip, step_idx=0, dry_run=True, sep=custom_sep
+        )
+
+        # Verify the provided SEP was used
+        assert result.sep is not None
+        assert result.sep.objective == "Custom objective from provided SEP"
+        assert result.sep.estimated_complexity == "high"
+        assert len(result.sep.files_to_touch) == 1
+        assert result.sep.files_to_touch[0].path == "src/custom.py"
+
+    def test_sep_summary_in_gate_md(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test SEP summary is included in gate.md."""
+        runner = StepRunner(repo_root=mock_repo)
+
+        runner.run_step(sample_aip, step_idx=0, dry_run=True)
+
+        runs_dir = mock_repo / "runs"
+        run_dir = self._find_run_dir(runs_dir)
+
+        gate_content = (run_dir / "gate.md").read_text()
+
+        # Gate should include SEP section
+        assert "## Step Execution Plan (SEP)" in gate_content
+        assert "Objective:" in gate_content
+        assert "Complexity:" in gate_content
+
+    def test_build_sep_method(
+        self, mock_repo: Path, sample_aip: dict[str, Any]
+    ) -> None:
+        """Test the build_sep method works correctly."""
+        from spec.executor.contract import build_contract
+
+        runner = StepRunner(repo_root=mock_repo)
+        contract = build_contract(sample_aip, step_idx=0)
+
+        sep = runner.build_sep(sample_aip, step_idx=0, contract=contract)
+
+        assert sep.aip_id == sample_aip["aip_id"]
+        assert sep.step_id == "step-001"
+        assert sep.step_index == 1
+
+    def test_patch_diff_written_on_finalize(
+        self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test patch.diff is written using git diff --cached."""
+        def mock_execute(
+            input_dir: Path, output_dir: Path, repo_root: Path
+        ) -> None:
+            (output_dir / "patch.diff").write_text("")
+            (output_dir / "agent.json").write_text(
+                json.dumps({"status": "success", "needs_human": False, "notes": "ok"})
+            )
+            (output_dir / "cmdlog.txt").write_text("")
+
+        mock_adapter.execute = mock_execute
+
+        monkeypatch.setattr(
+            "spec.executor.runner.get_adapter",
+            lambda name: mock_adapter,
+        )
+
+        runs_dir = mock_repo / "runs"
+        runner = StepRunner(mock_repo, runs_dir=runs_dir)
+
+        aip = {
+            "aip_id": "AIP-test",
+            "plan": [
+                {
+                    "id": "step-001",
+                    "prompt": "Do something",
+                    "verification_commands": ["true"],
+                }
+            ],
+        }
+
+        result = runner.run_step(aip, step_idx=0)
+
+        assert result.termination_reason == TerminationReason.PASS
+
+        run_dir = next(
+            step_dir
+            for aip_dir in runs_dir.iterdir()
+            for timestamp_dir in aip_dir.iterdir()
+            for step_dir in timestamp_dir.iterdir()
+        )
+
+        # patch.diff should exist at step root (from _finalize_artifacts)
+        assert (run_dir / "patch.diff").exists()
+
+    def test_patch_diff_empty_when_no_staged_changes(
+        self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test patch.diff is written even when empty (no staged changes)."""
+        def mock_execute(
+            input_dir: Path, output_dir: Path, repo_root: Path
+        ) -> None:
+            (output_dir / "patch.diff").write_text("")
+            (output_dir / "agent.json").write_text(
+                json.dumps({"status": "success", "needs_human": False, "notes": "ok"})
+            )
+
+        mock_adapter.execute = mock_execute
+
+        monkeypatch.setattr(
+            "spec.executor.runner.get_adapter",
+            lambda name: mock_adapter,
+        )
+
+        runs_dir = mock_repo / "runs"
+        runner = StepRunner(mock_repo, runs_dir=runs_dir)
+
+        aip = {
+            "aip_id": "AIP-test",
+            "plan": [
+                {
+                    "id": "step-001",
+                    "prompt": "Do something",
+                    "verification_commands": ["true"],
+                }
+            ],
+        }
+
+        runner.run_step(aip, step_idx=0)
+
+        run_dir = next(
+            step_dir
+            for aip_dir in runs_dir.iterdir()
+            for timestamp_dir in aip_dir.iterdir()
+            for step_dir in timestamp_dir.iterdir()
+        )
+
+        patch_path = run_dir / "patch.diff"
+        assert patch_path.exists(), "patch.diff should always be written"
+        # Empty is fine - we just need it to exist
+        content = patch_path.read_text()
+        assert isinstance(content, str)  # Even if empty
+
+    def test_sep_copied_to_iteration_input(
+        self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test SEP is copied to iteration input directory."""
+        seen_sep_in_input = []
+
+        def mock_execute(
+            input_dir: Path, output_dir: Path, repo_root: Path
+        ) -> None:
+            # Check if sep.yaml exists in iteration input
+            sep_path = input_dir / "sep.yaml"
+            seen_sep_in_input.append(sep_path.exists())
+
+            (output_dir / "patch.diff").write_text("")
+            (output_dir / "agent.json").write_text(
+                json.dumps({"status": "success", "needs_human": False, "notes": "ok"})
+            )
+
+        mock_adapter.execute = mock_execute
+
+        monkeypatch.setattr(
+            "spec.executor.runner.get_adapter",
+            lambda name: mock_adapter,
+        )
+
+        runs_dir = mock_repo / "runs"
+        runner = StepRunner(mock_repo, runs_dir=runs_dir)
+
+        aip = {
+            "aip_id": "AIP-test",
+            "plan": [
+                {
+                    "id": "step-001",
+                    "prompt": "Do something",
+                    "verification_commands": ["true"],
+                }
+            ],
+        }
+
+        runner.run_step(aip, step_idx=0)
+
+        # Adapter should have seen sep.yaml in its input directory
+        assert len(seen_sep_in_input) == 1
+        assert seen_sep_in_input[0] is True, "SEP should be copied to iteration input"
