@@ -631,7 +631,7 @@ class StepRunner:
         )
         branch = branch_result.stdout.strip()
 
-        # Check if dirty
+        # Check if dirty (ignore executor artifacts under runs_dir)
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=self.repo_root,
@@ -639,7 +639,29 @@ class StepRunner:
             text=True,
             check=True,
         )
-        dirty = len(status_result.stdout.strip()) > 0
+
+        status_lines = [ln for ln in status_result.stdout.splitlines() if ln.strip()]
+
+        # Filter out changes under runs_dir (these are executor artifacts).
+        try:
+            runs_rel = self.runs_dir.relative_to(self.repo_root)
+            runs_prefix = str(runs_rel).rstrip("/") + "/"
+
+            def _porcelain_path(line: str) -> str:
+                # Porcelain format: XY <path> (or for renames: XY <old> -> <new>)
+                payload = line[3:] if len(line) >= 3 else line
+                if "->" in payload:
+                    payload = payload.split("->", 1)[1]
+                return payload.strip()
+
+            status_lines = [
+                ln for ln in status_lines if not _porcelain_path(ln).startswith(runs_prefix)
+            ]
+        except ValueError:
+            # runs_dir outside repo_root
+            pass
+
+        dirty = len(status_lines) > 0
 
         return RepoState(
             commit=commit,
