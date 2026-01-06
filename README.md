@@ -18,6 +18,7 @@ Specwright is a **CLI tool** that governs AI-assisted development through struct
 2. **`spec compile`** - Parse Markdown to validated YAML AIP
 3. **`spec validate`** - Schema-validate the compiled AIP
 4. **`spec run`** - Execute steps with agent adapters (Claude, Codex)
+5. **`spec epic`** - Manage multi-spec epics with dependencies and LLM checks (see [docs/epics.md](docs/epics.md))
 
 ### Key Architecture (v0.6+)
 
@@ -33,6 +34,7 @@ L0: Local Governor → Centralized storage (~/.local/local-governor/)
 ```
 src/spec/
 ├── cli/spec.py              # Typer CLI - all commands defined here
+├── cli/epic.py              # Epic management commands
 ├── compiler/                # Markdown → YAML compilation
 │   ├── parser.py            # Token-based MD parser (markdown-it-py)
 │   └── compiler.py          # Deterministic YAML generator
@@ -54,6 +56,14 @@ src/spec/
 │   ├── loader.py            # Loads project.build.yaml
 │   ├── context_builder.py   # Builds template context
 │   └── exceptions.py        # AutogovNotInstalledError, etc.
+├── epic/                    # Epic management
+│   ├── schema.py            # Epic dataclasses (Epic, SpecRef, Check, etc.)
+│   ├── loader.py            # Load/validate epics from governor
+│   ├── writer.py            # Create/update epics
+│   └── dag.py               # Dependency graph utilities
+├── llm/                     # LLM integration for checks
+│   ├── config.py            # LLM configuration
+│   └── client.py            # LLM client wrapper
 ├── templates/               # Jinja2 spec templates (tier-a/b/c-template.md)
 └── core/                    # Shared utilities
     └── loader.py            # YAML loading + defaults merging
@@ -304,6 +314,22 @@ Set current spec/AIP:
 ```bash
 spec set spec .specwright/specs/my-feature.md
 spec set aip .specwright/aips/my-feature.yaml
+```
+
+### `spec epic`
+
+Manage multi-spec epics with dependency tracking. See [docs/epics.md](docs/epics.md) for full documentation.
+
+```bash
+spec epic create "Feature" --goal "One-line goal"     # Create epic
+spec epic add-target <epic-id> --id repo --repo-path /path  # Add target repo
+spec epic add-spec <epic-id> --id spec-01 --repo repo ...   # Add spec
+spec epic status <epic-id>                            # Show status with DAG
+spec epic set-current <epic-id> --spec spec-01        # Set active spec
+spec epic mark-done <epic-id> --spec spec-01          # Mark spec done
+spec epic check <epic-id>                             # Run LLM checks
+spec epic validate <epic-id>                          # Validate structure
+spec epic list                                        # List all epics
 ```
 
 ---
