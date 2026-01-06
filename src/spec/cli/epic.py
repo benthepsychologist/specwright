@@ -407,30 +407,81 @@ def validate(
         raise typer.Exit(3)
 
 
+class CheckNotFoundError(SpecwrightError):
+    """Check not found in epic."""
+
+    exit_code = 2
+
+
 @epic_app.command()
 @_epic_exception_handler
 def check(
     epic_id: str = typer.Argument(..., help="Epic ID"),
     check_id: str | None = typer.Option(None, "--check", "-c", help="Specific check to run"),
 ) -> None:
-    """Run LLM checks for an epic (requires LLM integration).
+    """Run LLM checks for an epic.
 
-    This command is a placeholder for the LLM integration module.
-    Full implementation will be in e001-04-epic-llm-integration.
+    Executes LLM-based checks defined in the epic. Requires LLM to be enabled
+    in the local-governor config.
 
-    Exit code 4 indicates LLM integration is not yet available.
+    Exit codes:
+        0 = Success (all checks passed or no checks defined)
+        2 = Epic or check not found
+        4 = LLM config error (not enabled or invalid config)
+        5 = LLM execution error
 
     Examples:
         spec epic check e001-auth
         spec epic check e001-auth --check CHECK-e001-core
     """
-    typer.secho(
-        "LLM integration not yet implemented.",
-        fg=typer.colors.YELLOW,
-        err=True,
-    )
-    typer.echo(
-        "This feature will be available after completing spec e001-04-epic-llm-integration.",
-        err=True,
-    )
-    raise typer.Exit(4)
+    from spec.epic.loader import EpicNotFoundError, get_epic_path, load_epic
+    from spec.llm.client import LLMClient, LLMExecutionError
+    from spec.llm.config import LLMConfigError, require_llm_enabled
+
+    # Load the epic (raises EpicNotFoundError with exit_code=2 if not found)
+    epic = load_epic(epic_id)
+
+    # Validate LLM is enabled (raises LLMConfigError with exit_code=4 if not)
+    llm_config = require_llm_enabled()
+
+    # Handle case where no checks are defined
+    if not epic.checks:
+        typer.secho("No checks defined for this epic.", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+
+    # If specific check requested, validate it exists
+    if check_id is not None:
+        target_check = epic.get_check(check_id)
+        if target_check is None:
+            raise CheckNotFoundError(f"Check not found: {check_id}")
+        checks_to_run = [target_check]
+    else:
+        checks_to_run = epic.checks
+
+    # Get default model from epic defaults or use a fallback
+    default_model = epic.defaults.model if epic.defaults and epic.defaults.model else "gpt-4"
+
+    epic_path = get_epic_path(epic_id)
+
+    # Run each check
+    for check_def in checks_to_run:
+        typer.echo(f"Running check: {check_def.name} ({check_def.id})")
+
+        # Load prompt from prompt_ref
+        prompt_path = epic_path / check_def.prompt_ref
+        if not prompt_path.exists():
+            raise CheckNotFoundError(f"Check prompt file not found: {check_def.prompt_ref}")
+
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+
+        # Determine which model to use (check-specific or default)
+        model_name = check_def.model if check_def.model else default_model
+
+        # Create client and execute
+        client = LLMClient(llm_config, model_name)
+        response = client.prompt(prompt_text)
+
+        typer.secho(f"  ✓ Check completed: {check_def.id}", fg=typer.colors.GREEN)
+        typer.echo(f"  Response preview: {response[:200]}..." if len(response) > 200 else f"  Response: {response}")
+
+    typer.secho(f"\n✓ All checks completed ({len(checks_to_run)} total)", fg=typer.colors.GREEN)

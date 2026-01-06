@@ -222,13 +222,13 @@ class TestEpicList:
 
 
 class TestEpicCheck:
-    """Tests for epic check command (placeholder)."""
+    """Tests for epic check command."""
 
-    def test_check_returns_4(self, runner: CliRunner, temp_governor: Path):
-        """Check returns exit 4 for unimplemented LLM."""
+    def test_check_returns_4_when_llm_not_enabled(self, runner: CliRunner, temp_governor: Path):
+        """Check returns exit 4 when LLM is not enabled."""
         result = runner.invoke(app, ["epic", "check", "test-epic"])
         assert result.exit_code == 4
-        assert "not yet implemented" in result.output.lower()
+        assert "not enabled" in result.output.lower() or "llm" in result.output.lower()
 
 
 class TestEpicCreate:
