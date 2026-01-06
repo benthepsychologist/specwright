@@ -340,45 +340,47 @@ def _gather_cli_output(input_def: CheckInput, epic: Epic) -> GatheredInput:
 
 
 def _gather_governance_pack(input_def: CheckInput, epic: Epic) -> GatheredInput:
-    """Gather governance context.
-
-    Uses precedence:
-    1. input_def.include if set
-    2. epic.governance.include if set
-    3. All available (policy, arch, patterns)
-
-    Args:
-        input_def: Input definition with optional include list.
-        epic: The epic with governance config.
-
-    Returns:
-        GatheredInput with governance context as formatted text.
-
-    Raises:
-        InputGatherError: If governance cannot be loaded.
     """
-    if not epic.governance:
-        raise InputGatherError(
-            "Epic requires governance config for governance_pack input"
+    Gather governance context from autogov.
+    Loads governance bundle and exports to markdown.
+    """
+    if not epic.governance or not epic.governance.enabled:
+        return GatheredInput(
+            type="governance_pack",
+            source="autogov (disabled)",
+            content="[Governance not enabled for this epic]"
         )
-
-    # Determine include list by precedence
-    if input_def.include:
-        include = input_def.include
-    elif epic.governance.include:
-        include = epic.governance.include
-    else:
-        # Default: include all available
-        include = ["policy", "arch", "patterns"]
-
-    content = (
-        "Governance pack is a placeholder in e001-02-epic-checks. "
-        "It is implemented in e001-04-epic-llm-integration.\n\n"
-        f"Requested include sections: {include}"
-    )
-
-    return GatheredInput(
-        type="governance_pack",
-        source=f"governance:{epic.governance.project}",
-        content=content,
-    )
+    try:
+        from spec.autogov.loader import GovernanceLoader
+        from spec.autogov.context_builder import SpecContextBuilder
+        loader = GovernanceLoader()
+        bundle = loader.load_all(
+            epic.governance.project,
+            epic.governance.source,
+        )
+        builder = SpecContextBuilder()
+        # Determine include list by precedence:
+        # 1. input_def.include if set
+        # 2. epic.governance.include if set
+        # 3. All available (policy, arch, patterns)
+        if input_def.include:
+            include = input_def.include
+        elif epic.governance.include:
+            include = epic.governance.include
+        else:
+            include = None  # Will default to all in export_to_markdown
+        markdown = builder.export_to_markdown(
+            bundle,
+            include=include,
+        )
+        return GatheredInput(
+            type="governance_pack",
+            source=f"autogov:{epic.governance.project}",
+            content=markdown,
+        )
+    except Exception as e:
+        return GatheredInput(
+            type="governance_pack",
+            source="autogov (error)",
+            content=f"[Failed to load governance: {e}]"
+        )

@@ -769,8 +769,17 @@ def compile(
 
     if output is None:
         # Default: specs/foo.md → aips/foo.yaml
-        aips_path = get_aips_path(cfg, project_root)
-        output = aips_path / (spec_path.stem + ".yaml")
+        # Special-case repo-local specs under .specwright/specs to avoid writing to
+        # the governor AIPs path (v0.6) when the user is clearly working repo-local.
+        repo_local_specs = (project_root / ".specwright" / "specs").resolve()
+        resolved_spec = spec_path.resolve()
+
+        try:
+            resolved_spec.relative_to(repo_local_specs)
+            output = project_root / ".specwright" / "aips" / (spec_path.stem + ".yaml")
+        except ValueError:
+            aips_path = get_aips_path(cfg, project_root)
+            output = aips_path / (spec_path.stem + ".yaml")
 
     # Create parent directory if it doesn't exist
     output.parent.mkdir(parents=True, exist_ok=True)

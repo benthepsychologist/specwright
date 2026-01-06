@@ -146,6 +146,101 @@ class SpecContextBuilder:
 
         return sorted(patterns, key=lambda p: p.get("name", ""))
 
+    def export_to_markdown(
+        self,
+        bundle: GovernanceBundle,
+        include: list[str] | None = None,
+    ) -> str:
+        """Export governance bundle to markdown format.
+
+        Args:
+            bundle: GovernanceBundle loaded from project.build.yaml
+            include: Optional list of sections to include.
+                     Valid values: "policy", "arch", "patterns".
+                     If None, includes all sections.
+
+        Returns:
+            Markdown-formatted string with governance information
+        """
+        if include is None:
+            include = ["policy", "arch", "patterns"]
+
+        lines: list[str] = []
+
+        # Header
+        lines.append(f"# Governance: {bundle.project}")
+        lines.append("")
+        lines.append(f"**Version:** {bundle.version}")
+        if bundle.description:
+            lines.append(f"**Description:** {bundle.description}")
+        lines.append("")
+
+        # Policy section (rules, frozen paths)
+        if "policy" in include:
+            lines.append("## Policy")
+            lines.append("")
+
+            if bundle.rules:
+                lines.append("### Rules")
+                lines.append("")
+                for rule in sorted(bundle.rules, key=lambda r: r.id):
+                    severity_marker = "🔴" if rule.severity == "error" else "🟡"
+                    lines.append(f"- **{rule.id}** [{rule.kind}] {severity_marker}")
+                    lines.append(f"  {rule.message}")
+                lines.append("")
+
+            if bundle.policies:
+                lines.append("### Applied Policies")
+                lines.append("")
+                for policy in sorted(bundle.policies, key=lambda p: p.name):
+                    lines.append(f"- `{policy.ref}`")
+                lines.append("")
+
+            if bundle.frozen_paths:
+                lines.append("### Frozen Paths")
+                lines.append("")
+                for path in sorted(bundle.frozen_paths):
+                    lines.append(f"- `{path}`")
+                lines.append("")
+
+        # Architecture section (decisions, invariants)
+        if "arch" in include:
+            lines.append("## Architecture")
+            lines.append("")
+
+            if bundle.decisions:
+                lines.append("### Decisions")
+                lines.append("")
+                for decision in sorted(bundle.decisions, key=lambda d: d.id):
+                    status_marker = "✅" if decision.status == "accepted" else "⏳"
+                    lines.append(f"#### {decision.id}: {decision.title} {status_marker}")
+                    lines.append("")
+                    if decision.decision:
+                        lines.append(f"**Decision:** {decision.decision}")
+                        lines.append("")
+                    if decision.rationale:
+                        lines.append(f"**Rationale:** {decision.rationale}")
+                        lines.append("")
+
+            if bundle.invariants:
+                lines.append("### Invariants")
+                lines.append("")
+                for invariant in bundle.invariants:
+                    lines.append(f"- {invariant}")
+                lines.append("")
+
+        # Patterns section
+        if "patterns" in include:
+            if bundle.patterns:
+                lines.append("## Patterns")
+                lines.append("")
+                for pattern in sorted(bundle.patterns, key=lambda p: p.name):
+                    lines.append(f"- **{pattern.name}** v{pattern.version}")
+                    lines.append(f"  `{pattern.ref}`")
+                lines.append("")
+
+        return "\n".join(lines).strip()
+
     def merge_with_template_context(
         self,
         bundle: GovernanceBundle,

@@ -453,8 +453,64 @@ class TestGatherInputsCliOutput:
 class TestGatherInputsGovernancePack:
     """Tests for gathering governance_pack type inputs."""
 
-    def test_gather_governance_pack(self) -> None:
-        """Test gathering governance pack content."""
+    def test_gather_governance_pack_disabled(self) -> None:
+        """Test gathering governance pack when disabled."""
+        epic = _make_epic(
+            governance=GovernanceConfig(
+                enabled=False,
+                source="local",
+                project="test-project",
+            )
+        )
+        check = _make_check([CheckInput(type="governance_pack")])
+
+        result = gather_inputs(check, epic, Path("/tmp/epic"))
+
+        assert len(result) == 1
+        assert result[0].type == "governance_pack"
+        assert result[0].source == "autogov (disabled)"
+        assert "not enabled" in result[0].content.lower()
+
+    def test_gather_governance_pack_no_governance_config(self) -> None:
+        """Test gathering governance pack with no governance config returns disabled."""
+        epic = _make_epic()  # No governance
+        check = _make_check([CheckInput(type="governance_pack")])
+
+        result = gather_inputs(check, epic, Path("/tmp/epic"))
+
+        assert len(result) == 1
+        assert result[0].type == "governance_pack"
+        assert result[0].source == "autogov (disabled)"
+        assert "not enabled" in result[0].content.lower()
+
+    def test_gather_governance_pack_loader_error(self) -> None:
+        """Test gathering governance pack handles loader errors gracefully."""
+        epic = _make_epic(
+            governance=GovernanceConfig(
+                enabled=True,
+                source="local",
+                project="nonexistent-project",
+            )
+        )
+        check = _make_check([CheckInput(type="governance_pack")])
+
+        result = gather_inputs(check, epic, Path("/tmp/epic"))
+
+        assert len(result) == 1
+        assert result[0].type == "governance_pack"
+        assert result[0].source == "autogov (error)"
+        assert "failed to load governance" in result[0].content.lower()
+
+    def test_gather_governance_pack_success(self) -> None:
+        """Test gathering governance pack produces real markdown."""
+        from spec.autogov.loader import (
+            AppliedPattern,
+            AppliedPolicy,
+            Decision,
+            GovernanceBundle,
+            Rule,
+        )
+
         epic = _make_epic(
             governance=GovernanceConfig(
                 enabled=True,
@@ -465,22 +521,119 @@ class TestGatherInputsGovernancePack:
         )
         check = _make_check([CheckInput(type="governance_pack")])
 
-        result = gather_inputs(check, epic, Path("/tmp/epic"))
+        # Create a bundle with enough content to validate markdown shape.
+        mock_bundle = GovernanceBundle(
+            project="test-project",
+            source="local",
+            version="1.0.0",
+            description="Test project governance",
+            decisions=[
+                Decision(
+                    id="ADR-001",
+                    title="Use thing",
+                    status="accepted",
+                    decision="We will use thing.",
+                    rationale="Because.",
+                )
+            ],
+            rules=[
+                Rule(
+                    id="R-001",
+                    message="Do not commit secrets",
+                    severity="error",
+                    kind="semantic",
+                )
+            ],
+            policies=[
+                AppliedPolicy(
+                    ref="org::policy/credential-hygiene@0.1.0",
+                    name="credential-hygiene",
+                    version="0.1.0",
+                )
+            ],
+            patterns=[
+                AppliedPattern(
+                    ref="patterns::pattern/registry-kernel@0.1.0",
+                    name="registry-kernel",
+                    version="0.1.0",
+                )
+            ],
+            invariants=["Always do X"],
+            frozen_paths=["src/spec/compiler/**"],
+        )
 
-        assert len(result) == 1
-        assert result[0].type == "governance_pack"
-        assert "test-project" in result[0].source
-        assert "placeholder" in result[0].content.lower()
+        with patch("spec.autogov.loader.GovernanceLoader") as MockLoader:
+            mock_loader_instance = MagicMock()
+            mock_loader_instance.load_all.return_value = mock_bundle
+            MockLoader.return_value = mock_loader_instance
 
-    def test_governance_pack_requires_governance_config(self) -> None:
-        """Test that governance_pack requires governance config."""
-        epic = _make_epic()  # No governance
-        check = _make_check([CheckInput(type="governance_pack")])
+            result = gather_inputs(check, epic, Path("/tmp/epic"))
 
-        with pytest.raises(InputGatherError) as exc_info:
-            gather_inputs(check, epic, Path("/tmp/epic"))
+            assert len(result) == 1
+            assert result[0].type == "governance_pack"
+            assert result[0].source == "autogov:test-project"
 
-        assert "governance" in str(exc_info.value).lower()
+            # Light markdown validation (real export_to_markdown output)
+            content = result[0].content
+            assert content.startswith("# Governance: test-project")
+            assert "**Version:** 1.0.0" in content
+            assert "## Policy" in content
+            assert "## Architecture" in content
+            assert "## Patterns" not in content  # include=["policy", "arch"]
+            assert "### Rules" in content
+            assert "R-001" in content
+            assert "Do not commit secrets" in content
+            assert "#### ADR-001:" in content
+            assert "### Applied Policies" in content
+            assert "credential-hygiene" in content
+            assert "### Frozen Paths" in content
+            assert "src/spec/compiler/**" in content
+
+            # Verify loader was called correctly
+            mock_loader_instance.load_all.assert_called_once_with(
+                "test-project", "local"
+            )
+
+    def test_gather_governance_pack_input_include_precedence(self) -> None:
+        """Test that input_def.include takes precedence over epic.governance.include."""
+        from spec.autogov.loader import GovernanceBundle
+
+        epic = _make_epic(
+            governance=GovernanceConfig(
+                enabled=True,
+                source="local",
+                project="test-project",
+                include=["policy"],  # Epic level include
+            )
+        )
+        # Input level include should take precedence
+        check = _make_check([CheckInput(type="governance_pack", include=["arch"])])
+
+        mock_bundle = GovernanceBundle(
+            project="test-project",
+            source="local",
+            version="1.0.0",
+            description="Test",
+            decisions=[],
+            rules=[],
+            policies=[],
+            patterns=[],
+            invariants=[],
+            frozen_paths=[],
+        )
+
+        with patch("spec.autogov.loader.GovernanceLoader") as MockLoader:
+            mock_loader_instance = MagicMock()
+            mock_loader_instance.load_all.return_value = mock_bundle
+            MockLoader.return_value = mock_loader_instance
+
+            result = gather_inputs(check, epic, Path("/tmp/epic"))
+
+            assert len(result) == 1
+            content = result[0].content
+            # include=["arch"] should include Architecture and omit Policy
+            assert "## Architecture" in content
+            assert "## Policy" not in content
 
 
 class TestUnknownInputType:
