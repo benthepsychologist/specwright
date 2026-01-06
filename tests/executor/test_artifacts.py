@@ -8,6 +8,8 @@ from pathlib import Path
 from spec.executor.artifacts import (
     ArtifactWriter,
     create_artifact_writer,
+    parse_diff_stats,
+    write_step_summary,
     write_failure_context,
     write_input_bundle,
 )
@@ -394,3 +396,106 @@ class TestResultJsonSchema:
         content = json.loads(result_path.read_text())
 
         assert content["details"]["failure_category"] == "scope_violation"
+
+
+class TestParseDiffStats:
+        def test_empty_diff(self) -> None:
+                stats = parse_diff_stats("")
+                assert stats["files_changed"] == 0
+                assert stats["insertions"] == 0
+                assert stats["deletions"] == 0
+                assert stats["files"] == []
+
+        def test_counts_files_and_hunks(self) -> None:
+                diff = """diff --git a/src/a.py b/src/a.py
+index 0000000..1111111 100644
+--- a/src/a.py
++++ b/src/a.py
+@@ -0,0 +1,2 @@
++print('hello')
++print('world')
+diff --git a/tests/test_a.py b/tests/test_a.py
+index 0000000..2222222 100644
+--- a/tests/test_a.py
++++ b/tests/test_a.py
+@@ -0,0 +1,1 @@
++assert True
+"""
+                stats = parse_diff_stats(diff)
+                assert stats["files_changed"] == 2
+                assert stats["insertions"] == 3
+                assert stats["deletions"] == 0
+                assert stats["files"] == ["src/a.py", "tests/test_a.py"]
+
+
+class TestWriteStepSummary:
+        def test_writes_summary_with_outlines_and_no_patch_body(self, tmp_path: Path) -> None:
+                run_dir = tmp_path / "step-001"
+                (run_dir / "input").mkdir(parents=True)
+
+                (run_dir / "input" / "contract.yaml").write_text(
+                        """step_id: step-001
+allowed_paths:
+    - src/**
+forbidden_paths:
+    - secrets/**
+verification_commands:
+    - pytest -q
+"""
+                )
+                (run_dir / "input" / "prompt.md").write_text(
+                        "# Prompt\n\nDo the thing.\n\nThis is a longer body."
+                )
+                (run_dir / "sep.yaml").write_text(
+                        """aip_id: AIP-test-001
+step_id: step-001
+objective: |
+    Do the thing.
+files_to_touch:
+    - path: src/a.py
+        action: modify
+verification_steps:
+    - command: pytest -q
+allowed_paths:
+    - src/**
+forbidden_paths:
+    - secrets/**
+"""
+                )
+
+                unique_line = "+SOME_UNIQUE_INSERTION_LINE_SHOULD_NOT_APPEAR"
+                (run_dir / "patch.diff").write_text(
+                        """diff --git a/src/a.py b/src/a.py
+index 0000000..1111111 100644
+--- a/src/a.py
++++ b/src/a.py
+@@ -0,0 +1,1 @@
+"""
+                        + unique_line
+                        + "\n"
+                )
+
+                result = StepResult(
+                        step_id="step-001",
+                        aip_id="AIP-test-001",
+                        termination_reason=TerminationReason.PASS,
+                        iterations=[],
+                        touched_files=["src/a.py"],
+                        verification_report={
+                                "passed": True,
+                                "commands": [
+                                        {"command": "pytest -q", "exit_code": 0, "passed": True},
+                                ],
+                        },
+                        policy_report={"passed": True, "violations": []},
+                )
+
+                summary_path = write_step_summary(run_dir=run_dir, result=result)
+                assert summary_path.exists()
+
+                text = summary_path.read_text()
+                assert unique_line not in text
+                assert "patch_evaluation" in text
+                assert "inputs" in text
+                assert "preview" in text
+                assert "outline" in text

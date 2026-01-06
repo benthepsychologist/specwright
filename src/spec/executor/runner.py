@@ -24,7 +24,7 @@ from spec.executor.adapters import (
     ToolNotFoundError,
     get_adapter,
 )
-from spec.executor.artifacts import ArtifactWriter
+from spec.executor.artifacts import ArtifactWriter, write_step_summary
 from spec.executor.contract import StepContract, build_contract, save_contract
 from spec.executor.scope import ScopeResult, check_scope, generate_policy_report
 from spec.executor.sep import StepExecutionPlan, save_sep
@@ -776,21 +776,16 @@ class StepRunner:
             run_dir, result.policy_report, result.verification_report
         )
 
-        # Write step.summary.json (always, even on failure/escalation)
-        # This provides a quick-reference summary for downstream tooling
-        summary = {
-            "step_id": result.step_id,
-            "aip_id": result.aip_id,
-            "termination_reason": result.termination_reason.value,
-            "iterations_attempted": len(result.iterations),
-            "passed": result.termination_reason == TerminationReason.PASS,
-            "error": result.error,
-            "touched_files_count": len(result.touched_files),
-            "adapter_name": result.adapter_name,
-            "artifacts_dir": result.artifacts_dir,
-            "timestamp": datetime.now(UTC).isoformat(),
-        }
-        (run_dir / "step.summary.json").write_text(json.dumps(summary, indent=2))
+        # Write step_summary.yaml (comprehensive artifact with prompt/SEP hashes, patch eval)
+        # This provides a detailed execution record including patch metadata (no diff body)
+        write_step_summary(
+            run_dir=run_dir,
+            result=result,
+            contract_path=run_dir / "input" / "contract.yaml",
+            prompt_path=run_dir / "input" / "prompt.md",
+            sep_path=run_dir / "sep.yaml",
+            patch_path=run_dir / "patch.diff",
+        )
 
         return result
 

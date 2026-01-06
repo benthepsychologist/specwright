@@ -32,7 +32,7 @@ Epics are stored in the local-governor under:
     ├── notes.md            # Epic notes and narrative
     ├── checks/             # LLM check prompt files
     │   └── *.md
-    ├── reports/            # Check execution reports
+    ├── reports/            # Optional: check reports (not written by specwright today)
     │   └── *.md
     └── artifacts/
         └── snapshots/      # Artifact snapshots
@@ -64,7 +64,7 @@ The `epic.yaml` file defines the complete epic structure.
 
 ```yaml
 # Required metadata
-version: "1.0"                    # Schema version
+version: "0.1"                    # Schema version
 kind: epic                        # Always "epic"
 id: e001-add-oauth                # Unique identifier (e###-slug format)
 title: "Add OAuth Authentication" # Human-readable title
@@ -121,7 +121,7 @@ checks:
     prompt_ref: checks/CHECK-e001-core.md  # Path to prompt file
     model: gpt-4                       # Optional: override default model
     default_spec: spec-01              # Optional: default spec for check
-    response_contract:                 # Expected response structure
+    response_contract:                 # Optional: expected response structure (not enforced today)
       verdicts:
         - PASS
         - FAIL
@@ -435,19 +435,60 @@ spec epic check e001-auth --check CHECK-e001-core
 
 Epics support LLM-based validation checks that run against the codebase.
 
-### Configuring Checks
+### Configuring LLM
 
-1. **Enable LLM in local-governor config:**
+Specwright uses the [llm](https://llm.datasette.io/) Python package for model access. Provider authentication and model configuration are managed entirely by `llm`, not by Specwright.
+
+**Step 1: Install the llm package and provider plugins**
+
+```bash
+# Install the llm package (included in specwright dependencies)
+pip install llm
+
+# Install provider plugins as needed
+llm install llm-anthropic   # For Claude models
+llm install llm-gpt4all     # For local models
+# etc.
+```
+
+**Step 2: Configure API keys via the llm package**
+
+```bash
+# Set API keys using llm's key management
+llm keys set openai          # Prompts for OPENAI_API_KEY
+llm keys set anthropic       # Prompts for ANTHROPIC_API_KEY
+
+# Or use environment variables directly
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-...
+```
+
+**Step 3: Verify your setup**
+
+```bash
+# List available models
+llm models
+
+# Test a model
+llm -m gpt-4o "Hello, world"
+```
+
+**Step 4: Enable LLM in local-governor config**
+
+Specwright reads only two settings from `~/.local/local-governor/config.yaml`:
 
 ```yaml
 # ~/.local/local-governor/config.yaml
 llm:
-  enabled: true
-  provider: openai
-  api_key_env: OPENAI_API_KEY
+  enabled: true      # Required: set to true to enable LLM checks
+  timeout_s: 120     # Optional: timeout for LLM calls (default: 120)
 ```
 
-2. **Define checks in epic.yaml:**
+> **Note:** Specwright does NOT read `provider`, `api_key_env`, or model configuration from this file. Those are handled by the `llm` package. The `model` for each check is specified in the epic's check definition.
+
+> **Response contracts:** `response_contract` is currently stored and validated at schema-load time only. Specwright does not yet enforce verdicts/sections in `spec epic check` output.
+
+### Defining Checks in epic.yaml
 
 ```yaml
 checks:
