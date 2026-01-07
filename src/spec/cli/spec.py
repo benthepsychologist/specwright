@@ -1299,6 +1299,7 @@ def _run_autonomous_step(
         governance_context=governance_context,
         mode_override=mode_override,
         run_dir=run_step_dir,
+        sep=sep,
     )
 
     # Display result

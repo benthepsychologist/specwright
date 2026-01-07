@@ -708,6 +708,9 @@ class TestFromSepOption:
             sep_files = list(runs_dir.glob("**/sep.yaml"))
             sep_path = sep_files[0]
 
+            # Snapshot SEP contents to ensure we do not overwrite it during execution.
+            sep_text_before = sep_path.read_text(encoding="utf-8")
+
             # Now run with --from-sep (use dry-run to avoid actual execution)
             result = runner.invoke(
                 app,
@@ -717,6 +720,18 @@ class TestFromSepOption:
 
             # Should complete successfully (dry-run avoids adapter execution)
             assert result.exit_code == 0
+
+            # Regression: --from-sep must not overwrite the approved SEP on disk.
+            sep_text_after = sep_path.read_text(encoding="utf-8")
+            assert sep_text_after == sep_text_before
+
+            # Regression: runner must use the provided SEP (it is copied into input bundle).
+            input_sep_path = sep_path.parent / "input" / "sep.yaml"
+            assert input_sep_path.exists()
+            input_sep = load_sep(input_sep_path)
+            original_sep = load_sep(sep_path)
+            assert input_sep.files_to_touch == original_sep.files_to_touch
+            assert input_sep.verification_steps == original_sep.verification_steps
 
         finally:
             os.chdir(original_dir)

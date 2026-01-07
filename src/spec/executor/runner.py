@@ -300,10 +300,15 @@ class StepRunner:
                 )
                 return self._finalize_artifacts(result, run_dir)
 
-        # Write SEP to canonical location: runs/<aip_id>/<timestamp>/step-N/sep.yaml
-        save_sep(step_sep, run_dir / "sep.yaml")
+        # Write SEP to canonical location: runs/<...>/step-N/sep.yaml
+        # IMPORTANT: If a SEP already exists, do not overwrite it.
+        # This preserves manually-authored/approved SEPs in --from-sep workflows.
+        sep_on_disk = run_dir / "sep.yaml"
+        if not sep_on_disk.exists():
+            save_sep(step_sep, sep_on_disk)
 
-        # Also write SEP to input bundle so adapter has access (optional use)
+        # Always write a copy into the input bundle so adapters have access.
+        # This is an internal artifact; it's OK if it differs in formatting.
         save_sep(step_sep, input_dir / "sep.yaml")
 
         # Write prompt.md
