@@ -628,10 +628,11 @@ class TestArtifactTreeCompleteness:
         raise ValueError("No run directory found")
 
     def _assert_step_root_artifacts(self, run_dir: Path) -> None:
-        """Assert required artifacts exist at step root."""
-        # Required at step root (always)
+        """Assert required artifacts exist at step root (audit-essential set)."""
+        # Required at step root (always) - audit-essential artifacts only
         assert (run_dir / "result.json").exists(), "result.json missing"
-        assert (run_dir / "gate.md").exists(), "gate.md missing"
+        assert (run_dir / "step_summary.yaml").exists(), "step_summary.yaml missing"
+        assert (run_dir / "patch.diff").exists(), "patch.diff missing"
 
     def _assert_input_bundle(self, run_dir: Path) -> None:
         """Assert input bundle was written."""
@@ -648,10 +649,8 @@ class TestArtifactTreeCompleteness:
         assert output_dir.exists(), f"{iter_dir.name}/output/ missing"
         assert (output_dir / "patch.diff").exists(), f"{iter_dir.name}/output/patch.diff missing"
         assert (output_dir / "agent.json").exists(), f"{iter_dir.name}/output/agent.json missing"
-
-        # Only if ran to scope check
-        if ran_to_completion:
-            assert (iter_dir / "policy_report.json").exists(), f"{iter_dir.name}/policy_report.json missing"
+        # Note: policy_report.json per-iteration is no longer written;
+        # policy info is consolidated into step_summary.yaml
 
     def test_pass_path_artifacts(
         self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
@@ -803,8 +802,11 @@ class TestArtifactTreeCompleteness:
         self._assert_step_root_artifacts(run_dir)
         self._assert_input_bundle(run_dir)
 
-        # Policy report should exist
-        assert (run_dir / "policy_report.json").exists()
+        # Policy info should be in step_summary.yaml
+        import yaml
+        summary = yaml.safe_load((run_dir / "step_summary.yaml").read_text())
+        assert "scope" in summary
+        assert summary["scope"].get("passed") is False
 
     def test_escalate_needs_human_artifacts(
         self, mock_repo: Path, mock_adapter: Any, monkeypatch: pytest.MonkeyPatch
@@ -1010,10 +1012,12 @@ class TestSEPWorkflow:
         assert len(result.sep.files_to_touch) == 1
         assert result.sep.files_to_touch[0].path == "src/custom.py"
 
-    def test_sep_summary_in_gate_md(
+    def test_sep_info_in_step_summary(
         self, mock_repo: Path, sample_aip: dict[str, Any]
     ) -> None:
-        """Test SEP summary is included in gate.md."""
+        """Test SEP info is captured in step_summary.yaml."""
+        import yaml
+
         runner = StepRunner(repo_root=mock_repo)
 
         runner.run_step(sample_aip, step_idx=0, dry_run=True)
@@ -1021,12 +1025,13 @@ class TestSEPWorkflow:
         runs_dir = mock_repo / "runs"
         run_dir = self._find_run_dir(runs_dir)
 
-        gate_content = (run_dir / "gate.md").read_text()
+        summary_content = (run_dir / "step_summary.yaml").read_text()
+        summary = yaml.safe_load(summary_content)
 
-        # Gate should include SEP section
-        assert "## Step Execution Plan (SEP)" in gate_content
-        assert "Objective:" in gate_content
-        assert "Complexity:" in gate_content
+        # Step summary should include SEP info in inputs section
+        assert "inputs" in summary
+        assert "sep" in summary["inputs"]
+        assert summary["inputs"]["sep"]["outline"] is not None
 
     def test_build_sep_method(
         self, mock_repo: Path, sample_aip: dict[str, Any]

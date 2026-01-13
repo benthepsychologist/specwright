@@ -752,7 +752,14 @@ class StepRunner:
 
     def _finalize_artifacts(self, result: StepResult, run_dir: Path) -> StepResult:
         """
-        Write final artifacts (result.json, gate.md, final reports, step.summary.json, patch.diff).
+        Write final artifacts (audit-essential set only).
+
+        Essential artifacts:
+        - sep.yaml (already written during SEP workflow)
+        - input/sep.yaml (adapter consumption bundle, already written)
+        - patch.diff (changes made)
+        - step_summary.yaml (comprehensive execution record)
+        - result.json (execution result)
 
         This method is called for ALL termination paths (success, failure, escalation,
         protocol error) to ensure artifacts are always written for debugging/audit.
@@ -769,20 +776,13 @@ class StepRunner:
         patch_content = self._materialize_cached_diff_snapshot() or ""
         (run_dir / "patch.diff").write_text(patch_content)
 
-        # Write result.json
+        # Write result.json (audit-essential)
         self._artifact_writer.write_result(run_dir, result)
-
-        # Write gate.md
-        gate_content = render_gate_package(result, run_dir)
-        self._artifact_writer.write_gate_package(run_dir, gate_content)
-
-        # Write final reports to step root
-        self._artifact_writer.write_final_reports(
-            run_dir, result.policy_report, result.verification_report
-        )
 
         # Write step_summary.yaml (comprehensive artifact with prompt/SEP hashes, patch eval)
         # This provides a detailed execution record including patch metadata (no diff body)
+        # Note: gate.md, policy_report.json, verification_report.json are now consolidated
+        # into step_summary.yaml to reduce artifact volume per the e003-02 spec.
         write_step_summary(
             run_dir=run_dir,
             result=result,

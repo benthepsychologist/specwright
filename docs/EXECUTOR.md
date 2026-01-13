@@ -109,31 +109,43 @@ This prevents:
 - Agents bypassing scope by "adding" files (untracked detection)
 - False positives from executor artifacts (exact prefix exclusion)
 
-## Artifact Directory Structure
+## Artifact Storage Location
+
+Starting with v0.6, run artifacts are stored under local-governor by default:
 
 ```
-runs/
+~/.local/local-governor/projects/<project_slug>/runs/
+```
+
+The `project_slug` is read from `.specwright.yaml`. This prevents polluting target repos with `.specwright/` directories.
+
+For tests and CI, the artifact root can be overridden programmatically via `get_artifact_root(override_path=...)`.
+
+## Artifact Directory Structure (Audit-Essential Set)
+
+```
+<artifact_root>/
 └── <aip_id>/
     └── <timestamp>/
         └── step-<N>/
+            ├── sep.yaml             # Step Execution Plan (canonical)
+            ├── patch.diff           # Changes made (may be empty)
+            ├── step_summary.yaml    # Comprehensive execution record
             ├── result.json          # Machine-readable outcome
-            ├── gate.md              # Human-readable summary
-            ├── input/
-            │   ├── contract.yaml    # Step contract
-            │   ├── prompt.md        # Agent prompt
-            │   └── repo_state.json  # Baseline SHA, sandbox mode
-            └── iter-<N>/
-                ├── input/           # (retry iterations only)
-                │   ├── prompt.md
-                │   ├── repo_state.json
-                │   └── failure_context.json
-                ├── output/
-                │   ├── patch.diff
-                │   ├── agent.json
-                │   └── cmdlog.txt
-                ├── policy_report.json
-                └── verification_report.json
+            └── input/
+                ├── sep.yaml         # SEP bundle for adapter
+                ├── contract.yaml    # Step contract
+                ├── prompt.md        # Agent prompt
+                └── repo_state.json  # Baseline SHA, sandbox mode
 ```
+
+The artifact set is intentionally minimal for auditability:
+- `sep.yaml` — The Step Execution Plan used for execution
+- `patch.diff` — The diff of changes made (empty if no changes)
+- `step_summary.yaml` — Comprehensive summary including inputs, verification, scope, and LLM verification
+- `result.json` — Machine-readable execution outcome
+
+Note: `gate.md`, `policy_report.json`, and `verification_report.json` are no longer written as separate files. Their information is consolidated into `step_summary.yaml`.
 
 ## Exit Codes
 
@@ -160,27 +172,27 @@ runs/
 
 ## Troubleshooting by Termination Reason
 
-**FAIL_SCOPE** — Check `iter-N/policy_report.json`:
-- Look at `violations[].file_path` to see what was touched
+**FAIL_SCOPE** — Check `step_summary.yaml` scope section:
+- Look at `scope.violations[].file_path` to see what was touched
 - Compare against `input/contract.yaml` `allowed_paths`
 - Agent likely created/modified a file outside scope
 
-**FAIL_PATCH_APPLY** — Check `iter-N/output/patch.diff`:
+**FAIL_PATCH_APPLY** — Check `patch.diff`:
 - Malformed diff syntax (missing headers, bad line counts)
 - Patch conflicts with current file state
 - Try `git apply --check patch.diff` manually
 
-**FAIL_VERIFY_RETRYABLE** — Check `iter-N/verification_report.json`:
-- See which command failed (`commands[].exit_code`)
-- Check `stdout_tail`/`stderr_tail` for error output
+**FAIL_VERIFY_RETRYABLE** — Check `step_summary.yaml` verification section:
+- See which command failed
+- Check error output in the summary
 - Ran `max_iterations` times without passing
 
-**FAIL_ADAPTER_PROTOCOL** — Check `iter-N/output/cmdlog.txt`:
+**FAIL_ADAPTER_PROTOCOL** — Check adapter output in the run directory:
 - Agent ran forbidden command (rm -rf, git commit, pip install)
 - Missing required output files (patch.diff, agent.json)
-- Check adapter error message in `result.json`
+- Check error message in `result.json`
 
-**ESCALATE_NEEDS_HUMAN** — Check `iter-N/output/agent.json`:
+**ESCALATE_NEEDS_HUMAN** — Check agent output:
 - Agent set `needs_human: true`
 - Read `notes` field for what's blocking
 - Human decision required before retry
@@ -189,31 +201,48 @@ runs/
 - Uncommitted changes present at step start
 - Either commit/stash changes or use `--allow-dirty`
 
-## Policy Report Fields
+## Step Summary Format
 
-The `policy_report.json` includes touched file breakdown:
+The `step_summary.yaml` consolidates execution metadata:
 
-```json
-{
-  "passed": false,
-  "timestamp": "2024-12-15T10:30:00Z",
-  "summary": {
-    "total_files": 3,
-    "violations_count": 1,
-    "touched_tracked": 2,
-    "touched_untracked": 1,
-    "touched_excluded_artifacts": 5
-  },
-  "checked_files": ["src/main.py", "src/utils.py", "config/new.yaml"],
-  "violations": [
-    {
-      "file_path": "config/new.yaml",
-      "violation_type": "not_allowed",
-      "matched_pattern": null,
-      "message": "File 'config/new.yaml' is not in any allowed path pattern"
-    }
-  ]
-}
+```yaml
+aip_id: AIP-test-2024-12-15-001
+step_id: step-001
+step_index: 1
+termination_reason: PASS
+iterations: 1
+dry_run: false
+
+inputs:
+  sep:
+    sha256: abc123...
+    outline: "Step objective summary"
+  contract:
+    sha256: def456...
+  prompt:
+    sha256: ghi789...
+
+scope:
+  passed: true
+  files_checked: ["src/main.py", "src/utils.py"]
+  violations: []
+
+verification:
+  passed: true
+  commands_run: 2
+  commands_passed: 2
+
+patch:
+  sha256: jkl012...
+  stats:
+    files_changed: 2
+    insertions: 15
+    deletions: 3
+
+llm_verification:  # Only present if --model was used
+  status: pass
+  rationale: "Changes align with SEP constraints"
+  model: gpt-4o
 ```
 
 ## Forbidden Command Policy
@@ -233,3 +262,93 @@ The adapter enforces a tripwire policy on commands in `cmdlog.txt`:
 **Allowed**:
 - Read-only commands (`ls`, `cat`, `git status`, `git diff`)
 - Standard shell wrappers (`bash -c`, `sh -c` with safe inner command)
+
+## LLM-Powered Features
+
+The executor supports optional LLM integration for enhanced SEP generation and patch verification.
+
+### Model Flag
+
+Use `--model <alias>` to enable LLM features:
+
+```bash
+# Generate SEP via LLM instead of deterministic builder
+spec run --step 1 --plan-only --model gpt-4o
+
+# Execute with LLM verification after completion
+spec run --step 1 --model claude-sonnet
+```
+
+Without `--model`, the executor uses the deterministic `SEPBuilder` - no LLM calls are made.
+
+### SEP Generation
+
+When `--model` is provided with `--plan-only`:
+- Uses LLM to generate a richer SEP based on AIP context
+- Falls back to deterministic builder if LLM fails
+- SEP includes `provenance` field recording generator and model
+
+```yaml
+# SEP provenance (LLM-generated)
+provenance:
+  generator: llm
+  model: gpt-4o
+
+# SEP provenance (deterministic)
+provenance:
+  generator: deterministic
+```
+
+### Patch Verification
+
+When `--model` is provided (without `--plan-only`):
+- After step execution, LLM verifies patch against SEP constraints
+- Results recorded in `step_summary.yaml`:
+
+```yaml
+llm_verification:
+  status: pass  # pass | fail | skipped
+  rationale: "Patch correctly implements the objective..."
+  model: gpt-4o
+```
+
+Verification status:
+- `pass`: Patch aligns with SEP constraints
+- `fail`: Patch violates SEP constraints (does not fail the step)
+- `skipped`: No patch to verify (empty or missing patch.diff)
+
+### Verify-Only Mode
+
+Re-run verification on existing artifacts without execution:
+
+```bash
+# Using local-governor path (default for v0.6)
+spec run --verify-only ~/.local/local-governor/projects/myproject/runs/AIP-test/2024-01-01T00-00-00/step-001 --model gpt-4o
+```
+
+Requirements:
+- `--model` is required
+- Run directory must contain `sep.yaml`
+- `patch.diff` is optional (verification skipped if missing/empty)
+
+### Configuration
+
+LLM features require configuration in `~/.local/local-governor/config.yaml`:
+
+```yaml
+llm:
+  enabled: true
+  timeout_s: 120  # optional, defaults to 120
+```
+
+Prompts are configurable via `~/.local/local-governor/prompts.yaml`:
+
+```yaml
+sep_generation: |
+  Your custom SEP generation prompt...
+  Variables: {aip_context}, {step_index}, {contract_text}
+
+patch_verification: |
+  Your custom verification prompt...
+  Variables: {sep_yaml}, {patch_content}
+```

@@ -998,6 +998,140 @@ def _show_commit_suggestions(project_root: Path, step_def: dict, step_num: int) 
     typer.echo(f"{'='*60}")
 
 
+def _update_step_summary_with_llm_verification(
+    step_summary_path: Path,
+    llm_verification: dict,
+) -> None:
+    """Update an existing step_summary.yaml with LLM verification results.
+
+    Args:
+        step_summary_path: Path to step_summary.yaml
+        llm_verification: Dict with status, rationale, model
+    """
+    try:
+        from ruamel.yaml import YAML
+
+        yaml = YAML()
+        yaml.preserve_quotes = True
+
+        # Load existing summary
+        with open(step_summary_path) as f:
+            summary = yaml.load(f)
+
+        if summary is None:
+            summary = {}
+
+        # Add llm_verification
+        summary["llm_verification"] = llm_verification
+
+        # Write back
+        with open(step_summary_path, "w") as f:
+            yaml.dump(summary, f)
+
+    except Exception:
+        # If ruamel.yaml fails, try stdlib yaml
+        import yaml as pyyaml
+
+        with open(step_summary_path) as f:
+            summary = pyyaml.safe_load(f) or {}
+
+        summary["llm_verification"] = llm_verification
+
+        with open(step_summary_path, "w") as f:
+            pyyaml.dump(summary, f, default_flow_style=False, sort_keys=False)
+
+
+def _run_verify_only(run_dir_path: str, model: str | None) -> None:
+    """Run LLM verification on existing artifacts without execution.
+
+    Args:
+        run_dir_path: Path to existing run directory
+        model: LLM model alias (required)
+    """
+    from spec.llm.client import verify_patch_with_llm
+
+    run_dir = Path(run_dir_path)
+
+    # Validate inputs
+    if model is None:
+        typer.secho("Error: --verify-only requires --model", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    if not run_dir.exists():
+        typer.secho(f"Error: Run directory not found: {run_dir}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    # Find SEP file
+    sep_path = run_dir / "sep.yaml"
+    if not sep_path.exists():
+        typer.secho(f"Error: SEP file not found: {sep_path}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    # Find patch file (optional)
+    patch_path = run_dir / "patch.diff"
+    patch_content = None
+    if patch_path.exists():
+        patch_content = patch_path.read_text()
+
+    typer.echo(f"{'='*60}")
+    typer.secho("Verify-Only Mode", bold=True)
+    typer.echo(f"{'='*60}")
+    typer.echo(f"  Run directory: {run_dir}")
+    typer.echo(f"  SEP: {sep_path}")
+    typer.echo(f"  Patch: {'exists' if patch_content else 'not found'}")
+    typer.echo(f"  Model: {model}")
+    typer.echo()
+
+    # Load SEP content
+    sep_yaml_content = sep_path.read_text()
+
+    # Run verification
+    typer.echo("Running LLM patch verification...")
+    llm_result = verify_patch_with_llm(sep_yaml_content, patch_content, model)
+
+    # Display result
+    typer.echo()
+    if llm_result.status == "pass":
+        typer.secho(f"  LLM Verification: ✓ PASS", fg=typer.colors.GREEN)
+    elif llm_result.status == "skipped":
+        typer.secho(f"  LLM Verification: ⊘ SKIPPED", fg=typer.colors.YELLOW)
+    else:
+        typer.secho(f"  LLM Verification: ✗ FAIL", fg=typer.colors.RED)
+
+    # Show rationale (truncate if very long)
+    rationale = llm_result.rationale
+    if len(rationale) > 300:
+        typer.echo(f"  Rationale: {rationale[:300]}...")
+    else:
+        typer.echo(f"  Rationale: {rationale}")
+    typer.echo(f"  Model: {llm_result.model}")
+
+    # Update step_summary.yaml
+    step_summary_path = run_dir / "step_summary.yaml"
+    if step_summary_path.exists():
+        _update_step_summary_with_llm_verification(
+            step_summary_path,
+            {
+                "status": llm_result.status,
+                "rationale": llm_result.rationale,
+                "model": llm_result.model,
+            },
+        )
+        typer.echo(f"\n✓ Updated {step_summary_path}")
+    else:
+        typer.secho(f"\n⚠ step_summary.yaml not found, could not update", fg=typer.colors.YELLOW)
+
+    typer.echo(f"{'='*60}")
+
+    # Exit with appropriate code
+    if llm_result.status == "pass":
+        raise typer.Exit(EXIT_PASS)
+    elif llm_result.status == "skipped":
+        raise typer.Exit(EXIT_PASS)  # Skipped is not a failure
+    else:
+        raise typer.Exit(EXIT_FAIL)
+
+
 def _run_autonomous_step(
     aip_path: Path,
     step_num: int,
@@ -1012,6 +1146,7 @@ def _run_autonomous_step(
     plan_only: bool = False,
     from_sep: str | None = None,
     skip_sep_review: bool = False,
+    model: str | None = None,
 ) -> None:
     """
     Run a step autonomously with scope enforcement.
@@ -1053,6 +1188,7 @@ def _run_autonomous_step(
 
     from spec.autogov.exceptions import SepFileError, SepMismatchError
     from spec.executor import StepRunner, TerminationReason
+    from spec.executor.artifacts import get_artifact_root
     from spec.executor.contract import build_contract
     from spec.executor.sep import SepError, StepExecutionPlan, load_sep, save_sep
     from spec.executor.sep_builder import SEPBuilder
@@ -1131,8 +1267,16 @@ def _run_autonomous_step(
         typer.secho(f"  Mode: FROM SEP ({from_sep})", fg=typer.colors.CYAN)
     typer.echo(f"{'='*60}\n")
 
-    # Initialize runner - runs live under .specwright/
-    runs_dir = project_root / ".specwright" / "runs"
+    # Resolve artifact root (defaults to local-governor for v0.6 config)
+    project_slug = cfg.get("project_slug") if cfg else None
+    governor_path = None
+    if governor_paths:
+        governor_path = governor_paths.root
+    runs_dir = get_artifact_root(
+        project_slug=project_slug,
+        governor_path=governor_path,
+        project_root=project_root,
+    )
 
     # Build governance context if bundle is available
     governance_context = None
@@ -1232,7 +1376,19 @@ def _run_autonomous_step(
     else:
         # Normal workflow: Build SEP from contract + AIP
         sep_builder = SEPBuilder()
-        sep = sep_builder.build(aip, step_idx, contract)
+
+        # Use LLM for SEP generation if --model is provided
+        if model is not None:
+            typer.echo(f"Using LLM ({model}) for SEP generation...")
+            sep = sep_builder.build_with_llm(aip, step_idx, contract, model)
+            # Print SEP source based on provenance
+            if sep.provenance and sep.provenance.generator == "llm":
+                typer.echo(f"  Source: LLM ({sep.provenance.model})")
+            else:
+                typer.echo("  Source: deterministic (LLM fallback)")
+        else:
+            sep = sep_builder.build(aip, step_idx, contract)
+            typer.echo("  Source: deterministic")
 
         # Create run directory and save SEP
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
@@ -1343,12 +1499,54 @@ def _run_autonomous_step(
         typer.echo(f"  Files touched: {len(result.touched_files)}")
 
     if result.artifacts_dir:
-        typer.echo(f"  Artifacts: .specwright/runs/{result.artifacts_dir}/")
+        typer.echo(f"  Artifacts: {runs_dir / result.artifacts_dir}/")
 
     if sep_path:
         typer.echo(f"  SEP: {sep_path}")
 
     typer.echo(f"{'='*60}")
+
+    # ==== LLM VERIFICATION ====
+    # If --model was provided and not dry_run, run LLM verification on patch
+    if model is not None and not dry_run:
+        from spec.llm.client import verify_patch_with_llm
+
+        typer.echo("\nRunning LLM patch verification...")
+
+        # Load SEP and patch content
+        sep_yaml_content = ""
+        patch_content = None
+        patch_path = run_step_dir / "patch.diff"
+
+        if sep_path and sep_path.exists():
+            sep_yaml_content = sep_path.read_text()
+        if patch_path.exists():
+            patch_content = patch_path.read_text()
+
+        # Run verification
+        llm_result = verify_patch_with_llm(sep_yaml_content, patch_content, model)
+
+        # Display result
+        if llm_result.status == "pass":
+            typer.secho(f"  LLM Verification: ✓ PASS", fg=typer.colors.GREEN)
+        elif llm_result.status == "skipped":
+            typer.secho(f"  LLM Verification: ⊘ SKIPPED", fg=typer.colors.YELLOW)
+        else:
+            typer.secho(f"  LLM Verification: ✗ FAIL", fg=typer.colors.RED)
+        typer.echo(f"  Rationale: {llm_result.rationale[:200]}..." if len(llm_result.rationale) > 200 else f"  Rationale: {llm_result.rationale}")
+        typer.echo(f"  Model: {llm_result.model}")
+
+        # Update step_summary.yaml with llm_verification
+        step_summary_path = run_step_dir / "step_summary.yaml"
+        if step_summary_path.exists():
+            _update_step_summary_with_llm_verification(
+                step_summary_path,
+                {
+                    "status": llm_result.status,
+                    "rationale": llm_result.rationale,
+                    "model": llm_result.model,
+                },
+            )
 
     # Show dry run command
     if dry_run and result.dry_run_command:
@@ -1467,6 +1665,16 @@ def run(
         "--skip-sep-review",
         help="Skip SEP review gate (use with caution).",
     ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="LLM model alias for SEP generation and verification (e.g., gpt-4o, claude-sonnet). When provided with --plan-only, generates SEP via LLM instead of deterministic builder.",
+    ),
+    verify_only: str | None = typer.Option(
+        None,
+        "--verify-only",
+        help="Path to existing run directory. Re-runs LLM verification on existing artifacts without execution. Requires --model.",
+    ),
 ):
     """Run an AIP - either in interactive HITL mode or autonomous step execution.
 
@@ -1505,6 +1713,12 @@ def run(
         prompt_checklist_completion,
         show_gate_checklist,
     )
+
+    # ==== VERIFY-ONLY MODE ====
+    # Handle --verify-only before any other processing
+    if verify_only is not None:
+        _run_verify_only(verify_only, model)
+        return  # _run_verify_only exits via typer.Exit
 
     # Get config
     config_path, cfg = find_config()
@@ -1574,6 +1788,8 @@ def run(
             kwargs["from_sep"] = from_sep
         if skip_sep_review:
             kwargs["skip_sep_review"] = skip_sep_review
+        if model is not None:
+            kwargs["model"] = model
 
         # Backward-compatible: only pass mode_override when explicitly set.
         if mode is not None:

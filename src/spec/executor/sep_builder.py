@@ -12,8 +12,16 @@ import re
 from fnmatch import fnmatch
 from typing import Any
 
+import yaml
+
 from spec.executor.contract import StepContract
-from spec.executor.sep import FileChange, StepExecutionPlan, VerificationStep
+from spec.executor.sep import (
+    FileChange,
+    SEPProvenance,
+    SepValidationError,
+    StepExecutionPlan,
+    VerificationStep,
+)
 
 
 class SEPBuilder:
@@ -115,6 +123,238 @@ class SEPBuilder:
             forbidden_paths=contract.forbidden_paths,
             estimated_complexity=complexity,
             requires_human_review=requires_review,
+            provenance=SEPProvenance(generator="deterministic"),
+        )
+
+    def build_with_llm(
+        self,
+        aip: dict[str, Any],
+        step_idx: int,
+        contract: StepContract,
+        model: str,
+    ) -> StepExecutionPlan:
+        """
+        Build a Step Execution Plan using LLM.
+
+        Uses LLM to generate a richer SEP based on the AIP context and contract.
+        Falls back to deterministic build if LLM fails.
+
+        Args:
+            aip: The parsed AIP dictionary
+            step_idx: Zero-based index of the step
+            contract: The StepContract for this step
+            model: LLM model alias (e.g., "gpt-4o", "claude-sonnet")
+
+        Returns:
+            StepExecutionPlan with provenance indicating LLM generation
+
+        Raises:
+            SepValidationError: If LLM response is invalid and fallback also fails
+        """
+        import typer
+
+        from spec.llm.client import LLMClient, LLMExecutionError
+        from spec.llm.config import LLMConfigError, require_llm_enabled
+        from spec.llm.prompts import render_sep_generation_prompt
+
+        # Build AIP context for the prompt
+        aip_context = self._build_aip_context(aip, step_idx)
+        contract_text = self._build_contract_text(contract)
+
+        # Render the prompt
+        prompt = render_sep_generation_prompt(
+            aip_context=aip_context,
+            step_index=step_idx,
+            contract_text=contract_text,
+        )
+
+        try:
+            # Load config and check LLM is enabled
+            config = require_llm_enabled()
+
+            # Create client and send prompt
+            client = LLMClient(config, model)
+            response = client.prompt(prompt)
+
+            # Parse LLM response as YAML
+            sep = self._parse_llm_sep_response(response, aip, step_idx, contract, model)
+            typer.echo(f"✓ SEP generated via LLM ({model})")
+            return sep
+
+        except (LLMConfigError, LLMExecutionError) as e:
+            # LLM failed - fall back to deterministic build with warning
+            typer.secho(f"⚠ LLM SEP generation failed: {e}", fg=typer.colors.YELLOW, err=True)
+            typer.echo("  Falling back to deterministic SEP builder...")
+            return self.build(aip, step_idx, contract)
+
+        except SepValidationError as e:
+            # LLM returned invalid SEP - fall back with warning
+            typer.secho(f"⚠ LLM returned invalid SEP: {e}", fg=typer.colors.YELLOW, err=True)
+            typer.echo("  Falling back to deterministic SEP builder...")
+            return self.build(aip, step_idx, contract)
+
+    def _build_aip_context(self, aip: dict[str, Any], step_idx: int) -> str:
+        """Build context string from AIP for LLM prompt."""
+        lines = []
+
+        title = aip.get("title", "Untitled")
+        lines.append(f"Title: {title}")
+
+        objective = aip.get("objective", {})
+        if isinstance(objective, dict):
+            goal = objective.get("goal", "")
+            if goal:
+                lines.append(f"Goal: {goal}")
+        elif isinstance(objective, str):
+            lines.append(f"Goal: {objective}")
+
+        plan = aip.get("plan", [])
+        if step_idx < len(plan):
+            step = plan[step_idx]
+            step_title = step.get("title", f"Step {step_idx + 1}")
+            step_prompt = step.get("prompt", "")
+            lines.append(f"\nStep Title: {step_title}")
+            if step_prompt:
+                lines.append(f"Step Prompt:\n{step_prompt}")
+
+        return "\n".join(lines)
+
+    def _build_contract_text(self, contract: StepContract) -> str:
+        """Build contract text for LLM prompt."""
+        lines = [
+            f"AIP ID: {contract.aip_id}",
+            f"Step ID: {contract.step_id}",
+            f"Step Index: {contract.step_index}",
+            "",
+            "Allowed Paths:",
+        ]
+        for path in contract.allowed_paths:
+            lines.append(f"  - {path}")
+
+        lines.append("")
+        lines.append("Forbidden Paths:")
+        for path in contract.forbidden_paths:
+            lines.append(f"  - {path}")
+
+        lines.append("")
+        lines.append("Verification Commands:")
+        for cmd in contract.verification_commands:
+            lines.append(f"  - {cmd}")
+
+        return "\n".join(lines)
+
+    def _parse_llm_sep_response(
+        self,
+        response: str,
+        aip: dict[str, Any],
+        step_idx: int,
+        contract: StepContract,
+        model: str,
+    ) -> StepExecutionPlan:
+        """Parse LLM response and build SEP.
+
+        Args:
+            response: Raw LLM response text (should be YAML)
+            aip: The parsed AIP dictionary
+            step_idx: Zero-based step index
+            contract: The StepContract
+            model: Model name for provenance
+
+        Returns:
+            StepExecutionPlan from LLM response
+
+        Raises:
+            SepValidationError: If response is not valid YAML or missing required fields
+        """
+        # Strip markdown code fences if present
+        response = response.strip()
+        if response.startswith("```yaml"):
+            response = response[7:]
+        elif response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+        response = response.strip()
+
+        try:
+            data = yaml.safe_load(response)
+        except yaml.YAMLError as e:
+            raise SepValidationError(f"Invalid YAML in LLM response: {e}") from e
+
+        if not isinstance(data, dict):
+            raise SepValidationError(
+                f"LLM response must be a YAML mapping, got {type(data).__name__}"
+            )
+
+        # Extract fields from LLM response
+        objective = data.get("objective", "")
+        if objective is None:
+            objective = ""
+
+        # Parse files_to_touch
+        files_to_touch: list[FileChange] = []
+        for fc_data in data.get("files_to_touch", []) or []:
+            if not isinstance(fc_data, dict):
+                continue
+            path = fc_data.get("path", "")
+            action = fc_data.get("action", "modify")
+            description = fc_data.get("description", f"{action} {path}")
+            if path:
+                files_to_touch.append(
+                    FileChange(
+                        path=path,
+                        action=action,
+                        description=description,
+                        estimated_lines=fc_data.get("estimated_lines"),
+                    )
+                )
+
+        # Parse verification_steps or use contract's
+        verification_steps: list[VerificationStep] = []
+        llm_verification = data.get("verification_steps", [])
+        if llm_verification:
+            for vs_data in llm_verification:
+                if not isinstance(vs_data, dict):
+                    continue
+                command = vs_data.get("command", "")
+                expected = vs_data.get("expected_outcome", "Command exits successfully")
+                if command:
+                    verification_steps.append(
+                        VerificationStep(
+                            command=command,
+                            expected_outcome=expected,
+                            required=vs_data.get("required", True),
+                        )
+                    )
+        else:
+            # Fall back to contract verification commands
+            verification_steps = [
+                VerificationStep(
+                    command=cmd,
+                    expected_outcome="Command exits successfully with code 0",
+                    required=True,
+                )
+                for cmd in contract.verification_commands
+            ]
+
+        # Use LLM's allowed/forbidden paths if provided, otherwise use contract's
+        allowed_paths = data.get("allowed_paths") or contract.allowed_paths
+        forbidden_paths = data.get("forbidden_paths") or contract.forbidden_paths
+
+        step_number = step_idx + 1
+
+        return StepExecutionPlan(
+            aip_id=contract.aip_id,
+            step_id=contract.step_id,
+            step_index=step_number,
+            objective=str(objective),
+            files_to_touch=files_to_touch,
+            verification_steps=verification_steps,
+            allowed_paths=allowed_paths,
+            forbidden_paths=forbidden_paths,
+            estimated_complexity=data.get("estimated_complexity", "medium"),
+            requires_human_review=data.get("requires_human_review", False),
+            provenance=SEPProvenance(generator="llm", model=model),
         )
 
     def _summarize_objective(self, prompt: str) -> str:

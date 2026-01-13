@@ -161,7 +161,7 @@ class TestE2ESuccessPath:
             # Verify artifacts were written
             assert result.artifacts_dir is not None
             artifacts_path = runs_dir / result.artifacts_dir
-            assert (artifacts_path / "gate.md").exists()
+            assert (artifacts_path / "step_summary.yaml").exists()
             assert (artifacts_path / "result.json").exists()
 
     def test_success_with_verification(
@@ -643,9 +643,10 @@ class TestE2EArtifactCompleteness:
             assert result.artifacts_dir is not None
             artifacts_path = runs_dir / result.artifacts_dir
 
-            # Required top-level artifacts
+            # Required top-level artifacts (audit-essential set)
             assert (artifacts_path / "result.json").exists()
-            assert (artifacts_path / "gate.md").exists()
+            assert (artifacts_path / "step_summary.yaml").exists()
+            assert (artifacts_path / "patch.diff").exists()
 
             # Input bundle
             assert (artifacts_path / "input" / "prompt.md").exists()
@@ -662,7 +663,7 @@ class TestE2EArtifactCompleteness:
         self, git_repo: Path, runs_dir: Path, sample_aip: dict
     ) -> None:
         """Test that failed execution still writes required artifacts."""
-        # Dirty worktree failure - should still write result.json and gate.md
+        # Dirty worktree failure - should still write audit-essential artifacts
         (git_repo / "src" / "main.py").write_text("# Dirty\n")
 
         runner = StepRunner(repo_root=git_repo, runs_dir=runs_dir, adapter_name="claude")
@@ -673,7 +674,7 @@ class TestE2EArtifactCompleteness:
 
         artifacts_path = runs_dir / result.artifacts_dir
         assert (artifacts_path / "result.json").exists()
-        assert (artifacts_path / "gate.md").exists()
+        assert (artifacts_path / "step_summary.yaml").exists()
 
         # Verify result.json has required fields
         result_data = json.loads((artifacts_path / "result.json").read_text())

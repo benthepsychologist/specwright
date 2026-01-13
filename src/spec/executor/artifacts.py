@@ -17,6 +17,59 @@ if TYPE_CHECKING:
     from spec.executor.runner import StepResult
 
 
+def get_artifact_root(
+    project_slug: str | None = None,
+    governor_path: Path | None = None,
+    override_path: Path | None = None,
+    project_root: Path | None = None,
+) -> Path:
+    """
+    Resolve the artifact root directory for step execution runs.
+
+    Resolution order:
+    1. If override_path is provided, use it directly (for tests/CI)
+    2. If project_slug is provided, use local-governor:
+       ~/.local/local-governor/projects/<project_slug>/runs/
+    3. Otherwise, fall back to repo-local: <project_root>/.specwright/runs/
+
+    Args:
+        project_slug: Project identifier from .specwright.yaml
+        governor_path: Path to local-governor root (default: ~/.local/local-governor)
+        override_path: Explicit override for tests/CI (takes precedence over all else)
+        project_root: Project root directory (for fallback to repo-local path)
+
+    Returns:
+        Resolved artifact root path (created if needed)
+
+    Raises:
+        ValueError: If neither project_slug nor project_root is provided (and no override)
+    """
+    if override_path is not None:
+        artifact_root = override_path.expanduser().resolve()
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        return artifact_root
+
+    # Use local-governor if project_slug is available
+    if project_slug is not None:
+        if governor_path is None:
+            governor_path = Path("~/.local/local-governor").expanduser()
+
+        artifact_root = governor_path / "projects" / project_slug / "runs"
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        return artifact_root
+
+    # Fall back to repo-local path (legacy behavior)
+    if project_root is None:
+        raise ValueError(
+            "Either project_slug or project_root is required when artifact root "
+            "is not explicitly overridden"
+        )
+
+    artifact_root = project_root / ".specwright" / "runs"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    return artifact_root
+
+
 def compute_file_hash(path: Path) -> str:
     """Compute SHA-256 hash of a file's contents."""
     if not path.exists():
@@ -98,6 +151,7 @@ def write_step_summary(
     prompt_path: Path | None = None,
     sep_path: Path | None = None,
     patch_path: Path | None = None,
+    llm_verification: dict | None = None,
 ) -> Path:
     """
     Write step_summary.yaml with execution metadata and patch evaluation.
@@ -109,6 +163,8 @@ def write_step_summary(
         prompt_path: Path to prompt.md (auto-discovered if None)
         sep_path: Path to sep.yaml (auto-discovered if None)
         patch_path: Path to patch.diff (auto-discovered if None)
+        llm_verification: Optional dict with LLM verification result:
+            {status: "pass"|"fail"|"skipped", rationale: str, model: str}
 
     Returns:
         Path to written step_summary.yaml
@@ -296,6 +352,8 @@ def write_step_summary(
         "passed": result.termination_reason.value == "PASS",
         "iterations_attempted": len(result.iterations),
         "touched_files": sorted(result.touched_files),
+        # LLM verification (if performed)
+        "llm_verification": llm_verification,
         # Inputs (hashes + safe previews/outlines)
         "inputs": inputs,
         # Patch evaluation (metadata only; never includes diff body)

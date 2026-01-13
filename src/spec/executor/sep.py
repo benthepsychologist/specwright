@@ -47,6 +47,17 @@ class VerificationStep:
 
 
 @dataclass
+class SEPProvenance:
+    """Provenance information for SEP generation.
+
+    Records how the SEP was generated (deterministic vs LLM).
+    """
+
+    generator: str  # "deterministic" or "llm"
+    model: str | None = None  # LLM model alias, only set when generator="llm"
+
+
+@dataclass
 class StepExecutionPlan:
     """
     Complete execution plan for a single step.
@@ -73,6 +84,9 @@ class StepExecutionPlan:
     # Metadata
     estimated_complexity: str = "medium"  # low, medium, high
     requires_human_review: bool = False  # true if touching sensitive paths
+
+    # Provenance
+    provenance: SEPProvenance | None = None  # how the SEP was generated
 
     def __post_init__(self) -> None:
         if not self.created_at:
@@ -121,6 +135,13 @@ def save_sep(sep: StepExecutionPlan, path: Path) -> None:
         "estimated_complexity": sep.estimated_complexity,
         "requires_human_review": sep.requires_human_review,
     }
+
+    # Add provenance if present
+    if sep.provenance is not None:
+        provenance_dict: dict[str, Any] = {"generator": sep.provenance.generator}
+        if sep.provenance.model is not None:
+            provenance_dict["model"] = sep.provenance.model
+        data["provenance"] = provenance_dict
 
     yaml_content = _serialize_canonical_sep(data)
 
@@ -194,6 +215,15 @@ def load_sep(path: Path) -> StepExecutionPlan:
     if objective is None:
         objective = ""
 
+    # Load provenance if present
+    provenance: SEPProvenance | None = None
+    provenance_data = data.get("provenance")
+    if provenance_data is not None and isinstance(provenance_data, dict):
+        provenance = SEPProvenance(
+            generator=provenance_data.get("generator", "deterministic"),
+            model=provenance_data.get("model"),
+        )
+
     return StepExecutionPlan(
         aip_id=data["aip_id"],
         step_id=data["step_id"],
@@ -206,6 +236,7 @@ def load_sep(path: Path) -> StepExecutionPlan:
         forbidden_paths=data.get("forbidden_paths", []),
         estimated_complexity=data.get("estimated_complexity", "medium"),
         requires_human_review=data.get("requires_human_review", False),
+        provenance=provenance,
     )
 
 

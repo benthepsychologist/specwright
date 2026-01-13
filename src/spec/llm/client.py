@@ -6,13 +6,30 @@ to provide a consistent interface for prompt execution with timeout handling.
 
 from __future__ import annotations
 
+import json
 import signal
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from spec.autogov.exceptions import SpecwrightError
 
 if TYPE_CHECKING:
     from spec.llm.config import LLMConfig
+
+
+@dataclass
+class LLMVerificationResult:
+    """Result of LLM patch verification.
+
+    Attributes:
+        status: "pass", "fail", or "skipped"
+        rationale: Explanation for the status
+        model: Model used for verification
+    """
+
+    status: str  # "pass" | "fail" | "skipped"
+    rationale: str
+    model: str
 
 
 class LLMExecutionError(SpecwrightError):
@@ -147,3 +164,101 @@ class LLMClient:
         finally:
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
+
+
+def verify_patch_with_llm(
+    sep_yaml: str,
+    patch_content: str | None,
+    model: str,
+) -> LLMVerificationResult:
+    """Verify a patch against SEP constraints using LLM.
+
+    Args:
+        sep_yaml: The SEP as YAML string
+        patch_content: The patch.diff content (or None/empty if no changes)
+        model: LLM model alias
+
+    Returns:
+        LLMVerificationResult with status, rationale, and model
+    """
+    from spec.llm.config import require_llm_enabled
+    from spec.llm.prompts import render_patch_verification_prompt
+
+    # Handle missing or empty patch
+    if not patch_content or not patch_content.strip():
+        return LLMVerificationResult(
+            status="skipped",
+            rationale="No changes to verify (patch.diff missing or empty)",
+            model=model,
+        )
+
+    try:
+        config = require_llm_enabled()
+        client = LLMClient(config, model)
+
+        # Render and send prompt
+        prompt = render_patch_verification_prompt(
+            sep_yaml=sep_yaml,
+            patch_content=patch_content,
+        )
+        response = client.prompt(prompt)
+
+        # Parse JSON response
+        result = _parse_verification_response(response)
+        return LLMVerificationResult(
+            status=result.get("status", "fail"),
+            rationale=result.get("rationale", "No rationale provided"),
+            model=model,
+        )
+
+    except LLMExecutionError as e:
+        # LLM execution failed - return fail with error info
+        return LLMVerificationResult(
+            status="fail",
+            rationale=f"LLM verification error: {e}",
+            model=model,
+        )
+    except Exception as e:
+        return LLMVerificationResult(
+            status="fail",
+            rationale=f"Unexpected verification error: {e}",
+            model=model,
+        )
+
+
+def _parse_verification_response(response: str) -> dict:
+    """Parse LLM verification response as JSON.
+
+    Args:
+        response: Raw LLM response (should be JSON)
+
+    Returns:
+        Parsed dict with status and rationale
+    """
+    response = response.strip()
+
+    # Strip markdown code fences if present
+    if response.startswith("```json"):
+        response = response[7:]
+    elif response.startswith("```"):
+        response = response[3:]
+    if response.endswith("```"):
+        response = response[:-3]
+    response = response.strip()
+
+    try:
+        data = json.loads(response)
+        if isinstance(data, dict):
+            # Normalize status
+            status = data.get("status", "fail")
+            if status not in ("pass", "fail", "skipped"):
+                status = "fail"
+            return {"status": status, "rationale": data.get("rationale", "")}
+    except json.JSONDecodeError:
+        pass
+
+    # If JSON parsing fails, try to extract status from text
+    response_lower = response.lower()
+    if "pass" in response_lower and "fail" not in response_lower:
+        return {"status": "pass", "rationale": response}
+    return {"status": "fail", "rationale": f"Could not parse LLM response: {response[:500]}"}
