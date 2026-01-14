@@ -737,13 +737,94 @@ def create(
             typer.echo("    3. Run: spec validate <compiled-yaml>")
 
 
+DEFAULT_MODEL = "gemini-3-pro-preview"
+
+
+def _enrich_aip_with_seps(
+    aip: dict[str, Any],
+    aip_path: Path,
+    model: str,
+    no_llm: bool,
+) -> dict[str, Any]:
+    """
+    Enrich all steps in AIP with Step Execution Plan (SEP) data.
+
+    For each step, generates SEP using LLM (or deterministic if --no-llm)
+    and embeds it directly in the AIP step.
+
+    Args:
+        aip: The parsed AIP dictionary
+        aip_path: Path to write the updated AIP
+        model: LLM model to use for generation
+        no_llm: If True, use deterministic builder instead of LLM
+
+    Returns:
+        Updated AIP dictionary with enriched steps
+    """
+    from spec.executor.contract import build_contract
+    from spec.executor.sep_builder import SEPBuilder
+
+    plan = aip.get("plan", [])
+    sep_builder = SEPBuilder()
+
+    for step_idx, step in enumerate(plan):
+        step_id = step.get("step_id", f"step-{step_idx + 1:03d}")
+        typer.echo(f"  [{step_idx + 1}/{len(plan)}] {step_id}...", nl=False)
+
+        # Build contract for this step (needed for SEP generation)
+        contract = build_contract(aip, step_idx, autogov_policy=None, mode_override=None)
+
+        if no_llm:
+            sep = sep_builder.build(aip, step_idx, contract)
+            typer.secho(" deterministic", fg=typer.colors.YELLOW)
+        else:
+            try:
+                sep = sep_builder.build_with_llm(aip, step_idx, contract, model)
+                if sep.provenance and sep.provenance.generator == "llm":
+                    typer.secho(f" ✓ LLM ({sep.provenance.model})", fg=typer.colors.GREEN)
+                else:
+                    typer.secho(" deterministic (LLM fallback)", fg=typer.colors.YELLOW)
+            except Exception as e:
+                typer.secho(f" ✗ LLM failed: {e}", fg=typer.colors.RED)
+                typer.echo(f"    Falling back to deterministic...")
+                sep = sep_builder.build(aip, step_idx, contract)
+
+        # Embed SEP data in AIP step
+        aip["plan"][step_idx]["objective"] = sep.objective
+        aip["plan"][step_idx]["files_to_touch"] = [
+            {"path": fc.path, "action": fc.action, "description": fc.description or ""}
+            for fc in sep.files_to_touch
+        ]
+        aip["plan"][step_idx]["verification_steps"] = [
+            {"command": vs.command, "expected_outcome": vs.expected_outcome, "required": vs.required}
+            for vs in sep.verification_steps
+        ]
+        if sep.provenance:
+            aip["plan"][step_idx]["provenance"] = {
+                "generator": sep.provenance.generator,
+                "model": sep.provenance.model,
+            }
+
+    # Save enriched AIP
+    with open(aip_path, "w") as f:
+        yaml.dump(aip, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    return aip
+
+
 @app.command()
 def compile(
     spec_path: Path | None = typer.Argument(None, help="Path to Markdown spec file (uses current spec if omitted)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output YAML path (default: aips/<stem>.yaml)"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing compiled file"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM SEP enrichment, use placeholder SEPs only."),
+    model: str = typer.Option(DEFAULT_MODEL, "--model", "-m", help="LLM model for SEP generation."),
 ):
-    """Compile Markdown spec to validated YAML AIP."""
+    """Compile Markdown spec to validated YAML AIP with LLM-enriched SEPs.
+
+    By default, uses LLM to generate detailed Step Execution Plans (SEPs)
+    for each step in the spec. Use --no-llm for placeholder-only mode.
+    """
     from spec.compiler import compile_spec as do_compile
 
     # Get config
@@ -814,6 +895,14 @@ def compile(
 
         typer.secho(f"✓ Compiled {spec_path} → {output}", fg=typer.colors.GREEN)
         typer.secho("✓ Validation passed", fg=typer.colors.GREEN)
+
+        # ==== SEP ENRICHMENT ====
+        # Enrich all steps with LLM-generated SEPs (or placeholders if --no-llm)
+        plan = aip.get("plan", [])
+        if plan:
+            typer.echo(f"\nEnriching {len(plan)} step(s) with SEP data...")
+            aip = _enrich_aip_with_seps(aip, output, model, no_llm)
+            typer.secho(f"✓ SEP enrichment complete", fg=typer.colors.GREEN)
 
         # Log compilation to audit trail
         import hashlib
@@ -946,6 +1035,7 @@ def validate(
 EXIT_PASS = 0
 EXIT_FAIL = 1  # FAIL_* termination reasons
 EXIT_ESCALATE = 2  # ESCALATE_* termination reasons
+EXIT_NO_AIP = 3  # AIP not found or SEP not enriched
 
 
 def _show_commit_suggestions(project_root: Path, step_def: dict, step_num: int) -> None:
@@ -1061,8 +1151,8 @@ def _run_verify_only(run_dir_path: str, model: str | None) -> None:
         typer.secho(f"Error: Run directory not found: {run_dir}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
-    # Find SEP file
-    sep_path = run_dir / "sep.yaml"
+    # Find SEP file in input directory (AIP v2.0: SEP is written to input/ for adapters)
+    sep_path = run_dir / "input" / "sep.yaml"
     if not sep_path.exists():
         typer.secho(f"Error: SEP file not found: {sep_path}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
@@ -1143,27 +1233,16 @@ def _run_autonomous_step(
     autogov_project: str | None = None,
     autogov_source: str | None = None,
     mode_override: str | None = None,
-    plan_only: bool = False,
-    from_sep: str | None = None,
     skip_sep_review: bool = False,
     model: str | None = None,
 ) -> None:
     """
     Run a step autonomously with scope enforcement.
 
-    SEP Workflow:
-    1. If --from-sep provided:
-       - Load SEP from file (exit 6 if file missing, malformed, or schema-invalid)
-       - Validate SEP matches current AIP/step (exit 7 if mismatch)
-       - Enforce contract safety (exit 7 if widening detected)
-       - Execute directly (skip generation)
-    2. Else:
-       - Build contract (existing)
-       - Build SEP from contract + AIP
-       - Save SEP to runs/<aip_id>/<timestamp>/step-N/sep.yaml
-       - If --plan-only: print SEP path and exit
-       - Else if not --skip-sep-review: print SEP path, prompt for continue
-       - Execute step
+    SEP Workflow (AIP v2.0):
+    1. Load pre-enriched SEP from AIP (generated during compile)
+    2. If not --skip-sep-review: show SEP, prompt for continue
+    3. Execute step
 
     For v0.6 governor config:
     - Auto-materializes AIP from governor if needed
@@ -1173,25 +1252,19 @@ def _run_autonomous_step(
 
     Args:
         governance_bundle: Optional GovernanceBundle from autogov loader
-        plan_only: Generate SEP and stop without execution
-        from_sep: Path to approved SEP file to execute from
         skip_sep_review: Skip SEP review gate
 
     Exit codes:
         0 = PASS (step completed successfully)
         1 = FAIL_* (scope violation, patch apply failure, verification failure, protocol error, dirty worktree)
         2 = ESCALATE_* (needs human review, ambiguous)
-        6 = SEP file error (missing, malformed, or schema-invalid)
-        7 = SEP mismatch (AIP/step mismatch or contract safety violation)
     """
     from datetime import datetime
 
-    from spec.autogov.exceptions import SepFileError, SepMismatchError
     from spec.executor import StepRunner, TerminationReason
     from spec.executor.artifacts import get_artifact_root
     from spec.executor.contract import build_contract
-    from spec.executor.sep import SepError, StepExecutionPlan, load_sep, save_sep
-    from spec.executor.sep_builder import SEPBuilder
+    from spec.executor.sep import StepExecutionPlan, load_sep_from_aip
 
     # Get config
     config_path, cfg = find_config()
@@ -1231,6 +1304,13 @@ def _run_autonomous_step(
     with open(actual_aip_path) as f:
         aip = yaml.safe_load(f)
 
+    # AIP v2.0 version validation
+    aip_version = aip.get("version", "0.1")
+    if aip_version not in ("2.0", "0.1"):
+        typer.echo(f"Error: Unsupported AIP version '{aip_version}'.", err=True)
+        typer.echo("  Supported versions: 2.0, 0.1 (legacy)", err=True)
+        raise typer.Exit(EXIT_FAIL)
+
     # Validate step number
     plan = aip.get("plan", [])
     if not plan:
@@ -1261,10 +1341,6 @@ def _run_autonomous_step(
     typer.echo(f"  Adapter: {adapter}")
     if dry_run:
         typer.secho("  Mode: DRY RUN (preview only)", fg=typer.colors.YELLOW)
-    if plan_only:
-        typer.secho("  Mode: PLAN ONLY (generate SEP and stop)", fg=typer.colors.YELLOW)
-    if from_sep:
-        typer.secho(f"  Mode: FROM SEP ({from_sep})", fg=typer.colors.CYAN)
     typer.echo(f"{'='*60}\n")
 
     # Resolve artifact root (defaults to local-governor for v0.6 config)
@@ -1289,158 +1365,74 @@ def _run_autonomous_step(
             source=autogov_source,
         )
 
-    # ==== SEP WORKFLOW ====
+    # ==== SEP WORKFLOW (AIP v2.0) ====
+    # SEP data must be pre-enriched in AIP steps during compile.
+    # If not enriched, error out and point user to recompile.
     sep: StepExecutionPlan | None = None
-    sep_path: Path | None = None
     run_step_dir: Path | None = None
 
-    # Build contract (needed for both paths)
+    # Build contract (needed for execution)
     autogov_policy = None
     if governance_context:
         autogov_policy = governance_context.get("autogov", {})
 
     contract = build_contract(aip, step_idx, autogov_policy, mode_override)
 
-    if from_sep:
-        # --from-sep workflow: Load and validate SEP from file
-        sep_file = Path(from_sep)
+    # Check if AIP step has enriched SEP data (at step level, not nested)
+    step_objective = step_def.get("objective", "")
+    has_enriched_sep = (
+        step_objective
+        and len(step_objective) > 20  # More than just a stub
+        and step_def.get("files_to_touch")  # Has files defined
+    )
 
-        # Exit 6: File missing
-        if not sep_file.exists():
-            raise SepFileError(f"SEP file not found: {sep_file}")
+    if not has_enriched_sep:
+        typer.secho(f"\n✗ Step {step_id} is missing enriched SEP data.", fg=typer.colors.RED, err=True)
+        typer.echo("  SEPs are generated during compilation.", err=True)
+        typer.echo("\nTo fix, recompile the spec:", err=True)
+        typer.echo(f"  spec compile <your-spec.md>", err=True)
+        typer.echo("\nOr use --no-llm for placeholder SEPs:", err=True)
+        typer.echo(f"  spec compile <your-spec.md> --no-llm", err=True)
+        raise typer.Exit(EXIT_NO_AIP)
 
-        # Exit 6: Malformed or schema-invalid
-        try:
-            sep = load_sep(sep_file)
-        except SepError as e:
-            raise SepFileError(f"SEP file error: {e}")
+    # Load existing SEP from AIP step
+    sep = load_sep_from_aip(aip, step_idx)
+    typer.secho(f"✓ Loaded SEP from AIP step {step_id}", fg=typer.colors.GREEN)
+    typer.echo(f"  Objective: {sep.objective[:80]}..." if len(sep.objective) > 80 else f"  Objective: {sep.objective}")
+    typer.echo(f"  Files to touch: {len(sep.files_to_touch)}")
+    typer.echo(f"  Verification steps: {len(sep.verification_steps)}")
 
-        # Exit 7: Validate SEP matches current AIP/step
-        if sep.aip_id != aip_id:
-            raise SepMismatchError(
-                f"SEP aip_id mismatch: SEP has '{sep.aip_id}', expected '{aip_id}'"
-            )
-        if sep.step_id != step_id:
-            raise SepMismatchError(
-                f"SEP step_id mismatch: SEP has '{sep.step_id}', expected '{step_id}'"
-            )
-        if sep.step_index != step_num:
-            raise SepMismatchError(
-                f"SEP step_index mismatch: SEP has {sep.step_index}, expected {step_num}"
-            )
+    # SEP review gate (unless --skip-sep-review)
+    if not skip_sep_review:
+        typer.echo(f"\n{'='*60}")
+        typer.secho("SEP Review Gate", bold=True)
+        typer.echo(f"{'='*60}")
+        typer.echo(f"\nReview the SEP in AIP: {actual_aip_path} (step {step_id})")
+        typer.echo("\nPlanned file changes:")
+        for fc in sep.files_to_touch:
+            typer.echo(f"  [{fc.action}] {fc.path}")
+        typer.echo()
 
-        # Exit 7: Enforce canonical SEP location so we can colocate execution artifacts.
-        if sep_file.name != "sep.yaml":
-            raise SepMismatchError(
-                f"SEP path must end with 'sep.yaml' (got: {sep_file.name})"
-            )
-        run_step_dir = sep_file.parent
-        if run_step_dir.name != step_id:
-            raise SepMismatchError(
-                f"SEP directory mismatch: SEP is in '{run_step_dir.name}', expected '{step_id}'"
-            )
-        try:
-            run_step_dir.resolve().relative_to(runs_dir.resolve())
-        except ValueError:
-            raise SepMismatchError(
-                f"SEP must be under {runs_dir} to run with colocated artifacts (got: {sep_file})"
-            )
+        import sys
 
-        # Exit 7: Enforce contract safety - SEP cannot widen contract scope
-        # SEP allowed_paths must be equal to or a subset of contract allowed_paths
-        sep_allowed_set = set(sep.allowed_paths)
-        contract_allowed_set = set(contract.allowed_paths)
-        extra_allowed = sep_allowed_set - contract_allowed_set
-        if extra_allowed:
-            raise SepMismatchError(
-                f"SEP allowed_paths widening detected: {sorted(extra_allowed)} "
-                f"not in contract allowed_paths"
-            )
-
-        # SEP forbidden_paths must be equal to or a superset of contract forbidden_paths
-        sep_forbidden_set = set(sep.forbidden_paths)
-        contract_forbidden_set = set(contract.forbidden_paths)
-        missing_forbidden = contract_forbidden_set - sep_forbidden_set
-        if missing_forbidden:
-            raise SepMismatchError(
-                f"SEP forbidden_paths weakening detected: {sorted(missing_forbidden)} "
-                f"missing from SEP forbidden_paths"
-            )
-
-        sep_path = sep_file
-        typer.secho(f"✓ Loaded SEP from: {sep_path}", fg=typer.colors.GREEN)
-        typer.echo(f"  Objective: {sep.objective[:80]}..." if len(sep.objective) > 80 else f"  Objective: {sep.objective}")
-        typer.echo(f"  Files to touch: {len(sep.files_to_touch)}")
-        typer.echo(f"  Verification steps: {len(sep.verification_steps)}")
-
-    else:
-        # Normal workflow: Build SEP from contract + AIP
-        sep_builder = SEPBuilder()
-
-        # Use LLM for SEP generation if --model is provided
-        if model is not None:
-            typer.echo(f"Using LLM ({model}) for SEP generation...")
-            sep = sep_builder.build_with_llm(aip, step_idx, contract, model)
-            # Print SEP source based on provenance
-            if sep.provenance and sep.provenance.generator == "llm":
-                typer.echo(f"  Source: LLM ({sep.provenance.model})")
-            else:
-                typer.echo("  Source: deterministic (LLM fallback)")
+        # In non-interactive contexts (tests/CI), prompting causes click.Abort.
+        # Honor the default choice and continue.
+        if sys.stdin is None or not sys.stdin.isatty():
+            proceed = True
         else:
-            sep = sep_builder.build(aip, step_idx, contract)
-            typer.echo("  Source: deterministic")
+            proceed = typer.confirm("Continue with execution?", default=True)
 
-        # Create run directory and save SEP
+        if not proceed:
+            typer.secho("\nExecution cancelled by user.", fg=typer.colors.YELLOW)
+            typer.echo(f"SEP embedded in AIP: {actual_aip_path}")
+            typer.echo("\nTo resume later:")
+            typer.echo(f"  spec run --step {step_num} {actual_aip_path}")
+            raise typer.Exit(EXIT_PASS)
+
+        # Create run directory for execution artifacts (not for SEP)
         timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
         run_step_dir = runs_dir / aip_id / timestamp / step_id
         run_step_dir.mkdir(parents=True, exist_ok=True)
-        sep_path = run_step_dir / "sep.yaml"
-        save_sep(sep, sep_path)
-
-        typer.secho(f"✓ Generated SEP: {sep_path}", fg=typer.colors.GREEN)
-        typer.echo(f"  Objective: {sep.objective[:80]}..." if len(sep.objective) > 80 else f"  Objective: {sep.objective}")
-        typer.echo(f"  Files to touch: {len(sep.files_to_touch)}")
-        typer.echo(f"  Verification steps: {len(sep.verification_steps)}")
-        typer.echo(f"  Estimated complexity: {sep.estimated_complexity}")
-        if sep.requires_human_review:
-            typer.secho("  ⚠ Human review recommended (sensitive paths)", fg=typer.colors.YELLOW)
-
-        # --plan-only: Print SEP path and exit
-        if plan_only:
-            typer.echo(f"\n{'='*60}")
-            typer.secho("Plan only mode - SEP generated, execution skipped.", fg=typer.colors.YELLOW)
-            typer.echo(f"  SEP path: {sep_path}")
-            typer.echo("\nTo execute from this SEP:")
-            typer.echo(f"  spec run --step {step_num} --from-sep {sep_path}")
-            typer.echo(f"{'='*60}")
-            raise typer.Exit(EXIT_PASS)
-
-        # SEP review gate (unless --skip-sep-review)
-        if not skip_sep_review:
-            typer.echo(f"\n{'='*60}")
-            typer.secho("SEP Review Gate", bold=True)
-            typer.echo(f"{'='*60}")
-            typer.echo(f"\nReview the SEP at: {sep_path}")
-            typer.echo("\nPlanned file changes:")
-            for fc in sep.files_to_touch:
-                typer.echo(f"  [{fc.action}] {fc.path}")
-            typer.echo()
-
-            import sys
-
-            # In non-interactive contexts (tests/CI), prompting causes click.Abort.
-            # Honor the default choice and continue.
-            if sys.stdin is None or not sys.stdin.isatty():
-                proceed = True
-            else:
-                proceed = typer.confirm("Continue with execution?", default=True)
-
-            if not proceed:
-                typer.secho("\nExecution cancelled by user.", fg=typer.colors.YELLOW)
-                typer.echo(f"SEP saved at: {sep_path}")
-                typer.echo("\nTo resume later:")
-                typer.echo(f"  spec run --step {step_num} --from-sep {sep_path}")
-                raise typer.Exit(EXIT_PASS)
 
     # ==== EXECUTE STEP ====
     runner = StepRunner(repo_root=project_root, runs_dir=runs_dir, adapter_name=adapter)
@@ -1501,8 +1493,11 @@ def _run_autonomous_step(
     if result.artifacts_dir:
         typer.echo(f"  Artifacts: {runs_dir / result.artifacts_dir}/")
 
-    if sep_path:
-        typer.echo(f"  SEP: {sep_path}")
+    # SEP is now embedded in AIP (v2.0) - show input path if it exists
+    if run_step_dir:
+        input_sep_path = run_step_dir / "input" / "sep.yaml"
+        if input_sep_path.exists():
+            typer.echo(f"  SEP: {input_sep_path}")
 
     typer.echo(f"{'='*60}")
 
@@ -1518,8 +1513,10 @@ def _run_autonomous_step(
         patch_content = None
         patch_path = run_step_dir / "patch.diff"
 
-        if sep_path and sep_path.exists():
-            sep_yaml_content = sep_path.read_text()
+        # SEP is now at input/sep.yaml (written by runner for adapter)
+        input_sep_path = run_step_dir / "input" / "sep.yaml"
+        if input_sep_path.exists():
+            sep_yaml_content = input_sep_path.read_text()
         if patch_path.exists():
             patch_content = patch_path.read_text()
 
@@ -1650,16 +1647,6 @@ def run(
     adapter: str = typer.Option("claude", "--adapter", help="Agent adapter to use (autonomous mode only)"),
     mode: str | None = typer.Option(None, "--mode", "-M", help="Adapter mode: 'oneshot' (headless, constrained) or 'interactive' (TUI). Default: oneshot."),
     autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
-    plan_only: bool = typer.Option(
-        False,
-        "--plan-only",
-        help="Generate SEP and stop. Do not execute.",
-    ),
-    from_sep: str | None = typer.Option(
-        None,
-        "--from-sep",
-        help="Execute from approved SEP file instead of generating new one.",
-    ),
     skip_sep_review: bool = typer.Option(
         False,
         "--skip-sep-review",
@@ -1668,7 +1655,7 @@ def run(
     model: str | None = typer.Option(
         None,
         "--model",
-        help="LLM model alias for SEP generation and verification (e.g., gpt-4o, claude-sonnet). When provided with --plan-only, generates SEP via LLM instead of deterministic builder.",
+        help="LLM model for post-execution verification (e.g., gpt-4o, claude-sonnet).",
     ),
     verify_only: str | None = typer.Option(
         None,
@@ -1681,9 +1668,12 @@ def run(
     Without --step: Interactive human-in-the-loop mode with gate approvals.
     With --step N: Autonomous execution of step N with scope enforcement.
 
+    NOTE: SEPs must be pre-generated via 'spec compile'. Use 'spec compile --no-llm'
+    for placeholder-only mode if LLM enrichment is not desired.
+
     Autonomous mode (--step N):
         Executes the full step lifecycle:
-        1. Build step contract with scope constraints
+        1. Load pre-enriched SEP from AIP (generated during compile)
         2. Run agent (Claude by default)
         3. Apply patch
         4. Check scope violations
@@ -1780,12 +1770,7 @@ def run(
             "autogov_source": autogov_cfg.get("source") if autogov_enabled else None,
         }
 
-        # Backward-compatible: only pass SEP-related flags when explicitly used.
-        # This keeps external callers/tests that monkeypatch _run_autonomous_step working.
-        if plan_only:
-            kwargs["plan_only"] = plan_only
-        if from_sep is not None:
-            kwargs["from_sep"] = from_sep
+        # Optional flags
         if skip_sep_review:
             kwargs["skip_sep_review"] = skip_sep_review
         if model is not None:

@@ -149,6 +149,74 @@ def save_sep(sep: StepExecutionPlan, path: Path) -> None:
     path.write_text(yaml_content, encoding="utf-8")
 
 
+def load_sep_from_aip(aip: dict, step_idx: int) -> StepExecutionPlan:
+    """
+    Load a StepExecutionPlan from an AIP step (AIP v2.0 embedded SEP).
+
+    AIP v2.0 embeds SEP fields directly in each step:
+    - objective
+    - files_to_touch
+    - verification_steps
+    """
+    aip_id = aip.get("aip_id", "unknown")
+    plan = aip.get("plan", [])
+
+    if step_idx < 0 or step_idx >= len(plan):
+        raise SepLoadError(f"Step index {step_idx} out of range (0-{len(plan) - 1})")
+
+    step = plan[step_idx]
+    step_id = step.get("step_id", f"step-{step_idx + 1:03d}")
+
+    # Convert files_to_touch dicts to FileChange objects
+    files_to_touch: list[FileChange] = []
+    for fc_dict in step.get("files_to_touch", []):
+        if isinstance(fc_dict, dict):
+            files_to_touch.append(
+                FileChange(
+                    path=fc_dict.get("path", ""),
+                    action=fc_dict.get("action", "modify"),
+                    description=fc_dict.get("description", ""),
+                    estimated_lines=fc_dict.get("estimated_lines"),
+                )
+            )
+
+    # Convert verification_steps dicts to VerificationStep objects
+    verification_steps: list[VerificationStep] = []
+    for vs_dict in step.get("verification_steps", []):
+        if isinstance(vs_dict, dict):
+            verification_steps.append(
+                VerificationStep(
+                    command=vs_dict.get("command", ""),
+                    expected_outcome=vs_dict.get("expected_outcome", ""),
+                    required=vs_dict.get("required", True),
+                )
+            )
+
+    # Load provenance if present
+    provenance: SEPProvenance | None = None
+    provenance_data = step.get("provenance")
+    if provenance_data is not None and isinstance(provenance_data, dict):
+        provenance = SEPProvenance(
+            generator=provenance_data.get("generator", "deterministic"),
+            model=provenance_data.get("model"),
+        )
+
+    return StepExecutionPlan(
+        aip_id=aip_id,
+        step_id=step_id,
+        step_index=step_idx + 1,  # 1-based for display
+        created_at=datetime.now(UTC).isoformat(),
+        objective=step.get("objective", step.get("description", "")),
+        files_to_touch=files_to_touch,
+        verification_steps=verification_steps,
+        allowed_paths=step.get("allowed_paths", []),
+        forbidden_paths=step.get("forbidden_paths", []),
+        estimated_complexity=step.get("estimated_complexity", "medium"),
+        requires_human_review=step.get("requires_human_review", False),
+        provenance=provenance,
+    )
+
+
 def load_sep(path: Path) -> StepExecutionPlan:
     """
     Load a StepExecutionPlan from a YAML file.

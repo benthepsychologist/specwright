@@ -2,6 +2,10 @@
 Scope Checker
 
 Validates that touched files are within allowed paths and not in forbidden paths.
+
+Supports both relative and absolute paths in allowed_paths:
+- Relative paths are matched against repo-relative touched files
+- Absolute paths are matched against absolute touched file paths (repo_root + relative)
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from fnmatch import fnmatch
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -57,40 +62,45 @@ class ScopeResult:
 
 
 class PathTraversalError(Exception):
-    """Raised when a path contains traversal sequences or is absolute."""
+    """Raised when a path contains traversal sequences."""
 
 
-def _normalize_path(path: str) -> str:
+def _normalize_path(path: str, allow_absolute: bool = False) -> str:
     """
     Normalize a file path for consistent matching.
 
     - Strips leading ./
     - Strips leading/trailing whitespace
     - Converts backslashes to forward slashes
-    - Rejects path traversal (../) and absolute paths
+    - Rejects path traversal (../)
+    - Rejects absolute paths unless allow_absolute=True
+
+    Args:
+        path: The path to normalize
+        allow_absolute: If True, allows absolute paths (for allowed_paths patterns)
 
     Raises:
-        PathTraversalError: If path contains traversal or is absolute
+        PathTraversalError: If path contains traversal or is absolute (when not allowed)
     """
     path = path.strip()
     path = path.replace("\\", "/")
 
-    # Reject absolute paths
-    if path.startswith("/"):
+    # Reject absolute paths unless explicitly allowed
+    if path.startswith("/") and not allow_absolute:
         raise PathTraversalError(f"Absolute paths not allowed: {path}")
 
     # Reject path traversal
     if ".." in path.split("/"):
         raise PathTraversalError(f"Path traversal not allowed: {path}")
 
-    # Strip leading ./
+    # Strip leading ./ (only for relative paths)
     if path.startswith("./"):
         path = path[2:]
 
     return path
 
 
-def _matches_glob(file_path: str, pattern: str) -> bool:
+def _matches_glob(file_path: str, pattern: str, repo_root: Path | None = None) -> bool:
     """
     Check if a file path matches a glob pattern.
 
@@ -98,9 +108,21 @@ def _matches_glob(file_path: str, pattern: str) -> bool:
     - ** for any directory depth
     - * for any characters within a path segment (does NOT cross directories)
     - ? for single character
+
+    For absolute patterns, file_path is converted to absolute using repo_root.
     """
-    file_path = _normalize_path(file_path)
-    pattern = _normalize_path(pattern)
+    is_absolute_pattern = pattern.startswith("/")
+
+    # Normalize paths appropriately
+    file_path = _normalize_path(file_path, allow_absolute=False)
+    pattern = _normalize_path(pattern, allow_absolute=True)
+
+    # For absolute patterns, convert file_path to absolute
+    if is_absolute_pattern:
+        if repo_root is None:
+            # Can't compare without repo_root - no match
+            return False
+        file_path = str(repo_root / file_path)
 
     # Handle ** patterns specially
     if "**" in pattern:
@@ -153,29 +175,29 @@ def _matches_glob(file_path: str, pattern: str) -> bool:
     return True
 
 
-def _is_allowed(file_path: str, allowed_paths: list[str]) -> bool:
+def _is_allowed(file_path: str, allowed_paths: list[str], repo_root: Path | None = None) -> bool:
     """Check if a file is allowed by any of the allowed path patterns."""
-    file_path = _normalize_path(file_path)
+    file_path = _normalize_path(file_path, allow_absolute=False)
     for pattern in allowed_paths:
-        if _matches_glob(file_path, pattern):
+        if _matches_glob(file_path, pattern, repo_root):
             return True
     return False
 
 
-def _is_forbidden(file_path: str, forbidden_paths: list[str]) -> tuple[bool, str | None]:
+def _is_forbidden(file_path: str, forbidden_paths: list[str], repo_root: Path | None = None) -> tuple[bool, str | None]:
     """
     Check if a file matches any forbidden path pattern.
 
     Returns (is_forbidden, matched_pattern).
     """
-    file_path = _normalize_path(file_path)
+    file_path = _normalize_path(file_path, allow_absolute=False)
     for pattern in forbidden_paths:
-        if _matches_glob(file_path, pattern):
+        if _matches_glob(file_path, pattern, repo_root):
             return True, pattern
     return False, None
 
 
-def check_scope(touched: list[str], contract: StepContract) -> ScopeResult:
+def check_scope(touched: list[str], contract: StepContract, repo_root: Path | None = None) -> ScopeResult:
     """
     Check if all touched files are within scope.
 
@@ -187,18 +209,19 @@ def check_scope(touched: list[str], contract: StepContract) -> ScopeResult:
     even if it matches an allowed path.
 
     Args:
-        touched: List of file paths from git diff --name-only
+        touched: List of file paths from git diff --name-only (relative to repo)
         contract: StepContract with allowed_paths and forbidden_paths
+        repo_root: Repository root path (needed for absolute path patterns)
 
     Returns:
         ScopeResult with passed=True if all files are in scope
     """
     violations: list[ScopeViolation] = []
-    checked_files = [_normalize_path(f) for f in touched]
+    checked_files = [_normalize_path(f, allow_absolute=False) for f in touched]
 
     for file_path in checked_files:
         # Check forbidden paths first (forbidden always wins)
-        is_forbidden, matched_pattern = _is_forbidden(file_path, contract.forbidden_paths)
+        is_forbidden, matched_pattern = _is_forbidden(file_path, contract.forbidden_paths, repo_root)
         if is_forbidden:
             violations.append(
                 ScopeViolation(
@@ -210,7 +233,7 @@ def check_scope(touched: list[str], contract: StepContract) -> ScopeResult:
             continue
 
         # Check allowed paths
-        if not _is_allowed(file_path, contract.allowed_paths):
+        if not _is_allowed(file_path, contract.allowed_paths, repo_root):
             violations.append(
                 ScopeViolation(
                     file_path=file_path,

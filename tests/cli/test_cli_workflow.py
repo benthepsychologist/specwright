@@ -414,7 +414,7 @@ def test_compile_converts_md_to_yaml(temp_project):
         ])
 
         # Compile it - should now succeed with fixed templates
-        result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
+        result = runner.invoke(app, ["compile", "--no-llm", ".specwright/specs/compile-test.md"])
 
         # Compilation and validation should both succeed
         assert result.exit_code == 0
@@ -459,7 +459,7 @@ def test_compile_creates_output_directory(temp_project):
             shutil.rmtree(aips_dir)
 
         # Compile should create the directory and succeed
-        result = runner.invoke(app, ["compile", ".specwright/specs/dir-test.md"])
+        result = runner.invoke(app, ["compile", "--no-llm", ".specwright/specs/dir-test.md"])
 
         # Should succeed and create directory
         assert result.exit_code == 0
@@ -521,7 +521,7 @@ Second step must still be detected.
             encoding="utf-8",
         )
 
-        result = runner.invoke(app, ["compile", str(spec_path)])
+        result = runner.invoke(app, ["compile", "--no-llm", str(spec_path)])
         assert result.exit_code == 0
 
         aip_path = temp_project / ".specwright" / "aips" / "fenced-h2.yaml"
@@ -576,7 +576,7 @@ def test_validate_yaml_aip(temp_project):
             "--owner", "frank",
             "--goal", "Test YAML validation"
         ])
-        runner.invoke(app, ["compile", ".specwright/specs/yaml-validate.md"])
+        runner.invoke(app, ["compile", "--no-llm", ".specwright/specs/yaml-validate.md"])
 
         # Validate compiled YAML
         result = runner.invoke(app, ["validate", ".specwright/aips/yaml-validate.yaml"])
@@ -712,6 +712,14 @@ def aip_with_plan(tmp_path):
                     "forbidden_paths": [".git/**"],
                     "verification_commands": ["echo 'ok'"],
                 },
+                # SEP data at step level (AIP v2.0)
+                "objective": "Test step one objective for autonomous execution",
+                "files_to_touch": [
+                    {"path": "src/main.py", "action": "modify", "description": "Main file"},
+                ],
+                "verification_steps": [
+                    {"command": "echo 'ok'", "expected_outcome": "ok", "required": True},
+                ],
             },
             {
                 "step_id": "step-002",
@@ -722,6 +730,14 @@ def aip_with_plan(tmp_path):
                     "forbidden_paths": [".git/**"],
                     "verification_commands": ["echo 'ok'"],
                 },
+                # SEP data at step level (AIP v2.0)
+                "objective": "Test step two objective for autonomous execution",
+                "files_to_touch": [
+                    {"path": "tests/test_main.py", "action": "modify", "description": "Test file"},
+                ],
+                "verification_steps": [
+                    {"command": "echo 'ok'", "expected_outcome": "ok", "required": True},
+                ],
             },
         ],
         "pull_request": {

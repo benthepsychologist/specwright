@@ -448,7 +448,10 @@ class SpecParser:
         return repo
 
     def _convert_steps_to_schema_format(self, steps: list[dict]) -> list[dict]:
-        """Convert our parsed step format to schema-compliant format."""
+        """Convert our parsed step format to schema-compliant format.
+
+        AIP v2.0: Each step includes embedded SEP fields (objective, files_to_touch, verification_steps).
+        """
         schema_steps = []
         for step in steps:
             # Map our fields to schema fields
@@ -506,6 +509,32 @@ class SpecParser:
 
             if step.get("verification_commands"):
                 schema_step["verification_commands"] = step["verification_commands"]
+
+            # ========================================
+            # AIP v2.0: Embedded SEP fields
+            # ========================================
+            # objective: derived from prompt or description
+            schema_step["objective"] = prompt_text if prompt_text else description
+
+            # files_to_touch: derived from allowed_paths (stub - will be enriched by LLM)
+            files_to_touch = []
+            for path in step.get("allowed_paths", []):
+                files_to_touch.append({
+                    "path": path,
+                    "action": "modify",
+                    "description": ""
+                })
+            schema_step["files_to_touch"] = files_to_touch
+
+            # verification_steps: derived from verification_commands
+            verification_steps = []
+            for cmd in step.get("verification_commands", []):
+                verification_steps.append({
+                    "command": cmd,
+                    "expected_outcome": "Command exits successfully with code 0",
+                    "required": True
+                })
+            schema_step["verification_steps"] = verification_steps
 
             schema_steps.append(schema_step)
 
@@ -600,7 +629,8 @@ class SpecParser:
 
         aip = {
             # Required top-level fields
-            "version": self.frontmatter.get("version", "0.1"),
+            # AIP version is always "2.0" (embedded SEP format); spec frontmatter version is ignored
+            "version": "2.0",
             "aip_id": aip_id,
             "project_slug": project_slug,
             "spec_version": self.frontmatter.get("spec_version", "1.0.0"),

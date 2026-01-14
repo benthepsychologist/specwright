@@ -161,7 +161,7 @@ def write_step_summary(
         result: StepResult from execution
         contract_path: Path to contract.yaml (auto-discovered if None)
         prompt_path: Path to prompt.md (auto-discovered if None)
-        sep_path: Path to sep.yaml (auto-discovered if None)
+        sep_path: Path to input/sep.yaml (auto-discovered if None)
         patch_path: Path to patch.diff (auto-discovered if None)
         llm_verification: Optional dict with LLM verification result:
             {status: "pass"|"fail"|"skipped", rationale: str, model: str}
@@ -175,7 +175,7 @@ def write_step_summary(
     if prompt_path is None:
         prompt_path = run_dir / "input" / "prompt.md"
     if sep_path is None:
-        sep_path = run_dir / "sep.yaml"
+        sep_path = run_dir / "input" / "sep.yaml"
     if patch_path is None:
         patch_path = run_dir / "patch.diff"
 

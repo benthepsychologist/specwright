@@ -438,3 +438,72 @@ class TestGlobPatterns:
         assert not check_scope([".env.local"], contract).passed
         assert not check_scope([".envrc"], contract).passed
         assert check_scope(["env.py"], contract).passed
+
+
+class TestAbsolutePathPatterns:
+    """Tests for absolute path patterns in allowed_paths (multi-repo support)."""
+
+    def test_absolute_allowed_path_with_repo_root(self) -> None:
+        """Test that absolute allowed paths work when repo_root is provided."""
+        from pathlib import Path
+
+        contract = make_contract(
+            allowed_paths=["/home/developer/.local/registry/schemas/**"],
+        )
+        # Touched file is relative, will be converted to /workspace/test/schemas/foo.json
+        touched = ["schemas/foo.json"]
+        repo_root = Path("/home/developer/.local/registry")
+
+        result = check_scope(touched, contract, repo_root=repo_root)
+
+        assert result.passed
+        assert len(result.violations) == 0
+
+    def test_absolute_allowed_path_mismatch(self) -> None:
+        """Test that absolute paths don't match files in different repos."""
+        from pathlib import Path
+
+        contract = make_contract(
+            allowed_paths=["/home/developer/.local/registry/schemas/**"],
+        )
+        # File is in /workspace/life, not /home/developer/.local/registry
+        touched = ["schemas/foo.json"]
+        repo_root = Path("/workspace/life")
+
+        result = check_scope(touched, contract, repo_root=repo_root)
+
+        assert not result.passed
+        assert len(result.violations) == 1
+        assert result.violations[0].violation_type == ViolationType.NOT_ALLOWED
+
+    def test_mixed_absolute_and_relative_allowed_paths(self) -> None:
+        """Test that mixed absolute and relative patterns work together."""
+        from pathlib import Path
+
+        contract = make_contract(
+            allowed_paths=[
+                "src/**",  # Relative pattern
+                "/external/registry/schemas/**",  # Absolute pattern
+            ],
+        )
+        repo_root = Path("/workspace/myrepo")
+
+        # Relative path matches relative pattern
+        result1 = check_scope(["src/main.py"], contract, repo_root=repo_root)
+        assert result1.passed
+
+        # File not matching any pattern
+        result2 = check_scope(["docs/readme.md"], contract, repo_root=repo_root)
+        assert not result2.passed
+
+    def test_absolute_allowed_path_without_repo_root(self) -> None:
+        """Test that absolute patterns don't match without repo_root."""
+        contract = make_contract(
+            allowed_paths=["/home/developer/.local/registry/schemas/**"],
+        )
+        touched = ["schemas/foo.json"]
+
+        # Without repo_root, absolute patterns can't be matched
+        result = check_scope(touched, contract, repo_root=None)
+
+        assert not result.passed  # No match possible without repo_root

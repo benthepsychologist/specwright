@@ -44,6 +44,9 @@ Generate a YAML SEP with the following structure:
 - estimated_complexity: low|medium|high
 - requires_human_review: boolean
 
+IMPORTANT: Quote all glob patterns containing special characters like *, ?, [, etc.
+For example, use "*.lock" not *.lock (unquoted asterisks are YAML aliases).
+
 Respond with valid YAML only, no markdown code fences.
 """
 

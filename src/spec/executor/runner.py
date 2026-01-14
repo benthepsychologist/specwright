@@ -300,15 +300,9 @@ class StepRunner:
                 )
                 return self._finalize_artifacts(result, run_dir)
 
-        # Write SEP to canonical location: runs/<...>/step-N/sep.yaml
-        # IMPORTANT: If a SEP already exists, do not overwrite it.
-        # This preserves manually-authored/approved SEPs in --from-sep workflows.
-        sep_on_disk = run_dir / "sep.yaml"
-        if not sep_on_disk.exists():
-            save_sep(step_sep, sep_on_disk)
-
-        # Always write a copy into the input bundle so adapters have access.
-        # This is an internal artifact; it's OK if it differs in formatting.
+        # AIP v2.0: SEP is embedded in AIP, not stored as separate file.
+        # We only write to input/ for adapter consumption.
+        # Write a copy into the input bundle so adapters have access.
         save_sep(step_sep, input_dir / "sep.yaml")
 
         # Write prompt.md
@@ -581,7 +575,7 @@ class StepRunner:
 
         # Scope check (fail fast on violations)
         touched_files, touched_metadata = self._get_touched_files(baseline)
-        scope_result = check_scope(touched_files, contract)
+        scope_result = check_scope(touched_files, contract, repo_root=self.repo_root)
         result.scope_result = scope_result
 
         # Write policy report to iteration dir (with touched file breakdown)
@@ -755,8 +749,7 @@ class StepRunner:
         Write final artifacts (audit-essential set only).
 
         Essential artifacts:
-        - sep.yaml (already written during SEP workflow)
-        - input/sep.yaml (adapter consumption bundle, already written)
+        - input/sep.yaml (adapter consumption bundle, contains SEP from AIP)
         - patch.diff (changes made)
         - step_summary.yaml (comprehensive execution record)
         - result.json (execution result)
@@ -788,7 +781,7 @@ class StepRunner:
             result=result,
             contract_path=run_dir / "input" / "contract.yaml",
             prompt_path=run_dir / "input" / "prompt.md",
-            sep_path=run_dir / "sep.yaml",
+            sep_path=run_dir / "input" / "sep.yaml",
             patch_path=run_dir / "patch.diff",
         )
 

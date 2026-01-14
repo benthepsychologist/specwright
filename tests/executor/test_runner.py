@@ -921,7 +921,11 @@ class TestArtifactTreeCompleteness:
 
 
 class TestSEPWorkflow:
-    """Tests for Step Execution Plan (SEP) workflow integration."""
+    """Tests for Step Execution Plan (SEP) workflow integration.
+
+    AIP v2.0: SEP data is embedded in AIP steps. The runner writes
+    input/sep.yaml for adapter consumption, but no canonical sep.yaml.
+    """
 
     def _find_run_dir(self, runs_dir: Path) -> Path:
         """Find the first run directory."""
@@ -931,10 +935,10 @@ class TestSEPWorkflow:
                     return step_dir
         raise ValueError("No run directory found")
 
-    def test_sep_written_to_canonical_location(
+    def test_sep_written_to_input_bundle(
         self, mock_repo: Path, sample_aip: dict[str, Any]
     ) -> None:
-        """Test SEP is written to runs/<aip_id>/<timestamp>/step-N/sep.yaml."""
+        """Test SEP is written to input/sep.yaml for adapter access."""
         runner = StepRunner(repo_root=mock_repo)
 
         runner.run_step(sample_aip, step_idx=0, dry_run=True)
@@ -942,20 +946,20 @@ class TestSEPWorkflow:
         runs_dir = mock_repo / "runs"
         run_dir = self._find_run_dir(runs_dir)
 
-        # SEP should exist at step root
-        sep_path = run_dir / "sep.yaml"
-        assert sep_path.exists(), "sep.yaml not written to canonical location"
+        # SEP should exist in input directory for adapter consumption
+        input_sep_path = run_dir / "input" / "sep.yaml"
+        assert input_sep_path.exists(), "sep.yaml not written to input bundle"
 
         # Load and verify SEP content
-        sep = load_sep(sep_path)
+        sep = load_sep(input_sep_path)
         assert sep.aip_id == sample_aip["aip_id"]
         assert sep.step_id == "step-001"
         assert sep.step_index == 1  # 1-based
 
-    def test_sep_copied_to_input_bundle(
+    def test_no_canonical_sep_file(
         self, mock_repo: Path, sample_aip: dict[str, Any]
     ) -> None:
-        """Test SEP is also copied to input bundle for adapter access."""
+        """AIP v2.0: No canonical sep.yaml at step root (embedded in AIP)."""
         runner = StepRunner(repo_root=mock_repo)
 
         runner.run_step(sample_aip, step_idx=0, dry_run=True)
@@ -963,9 +967,9 @@ class TestSEPWorkflow:
         runs_dir = mock_repo / "runs"
         run_dir = self._find_run_dir(runs_dir)
 
-        # SEP should also exist in input directory
-        input_sep_path = run_dir / "input" / "sep.yaml"
-        assert input_sep_path.exists(), "sep.yaml not copied to input bundle"
+        # Canonical sep.yaml should NOT exist (AIP v2.0 embeds SEP in AIP)
+        sep_path = run_dir / "sep.yaml"
+        assert not sep_path.exists(), "sep.yaml should not be at step root in AIP v2.0"
 
     def test_sep_included_in_result(
         self, mock_repo: Path, sample_aip: dict[str, Any]

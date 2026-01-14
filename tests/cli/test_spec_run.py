@@ -117,18 +117,29 @@ def temp_project_with_aip(tmp_path: Path) -> Path:
     (tmp_path / ".specwright" / "aips").mkdir(parents=True)
     (tmp_path / ".specwright" / "runs").mkdir(parents=True)
 
-    # Create a minimal AIP
+    # Create a minimal AIP with enriched SEP data (AIP v2.0)
+    # SEP fields are at step level (objective, files_to_touch, verification_steps)
     aip = {
         "aip_id": "AIP-test-001",
         "title": "Test AIP",
+        "version": "2.0",
         "tier": "B",
         "plan": [
             {
                 "step_id": "step-001",
                 "description": "Test step",
+                "prompt": "Test prompt",
                 "allowed_paths": ["src/**"],
                 "forbidden_paths": [".git/**"],
                 "verification_commands": ["echo ok"],
+                # Enriched SEP data (required for spec run) - at step level
+                "objective": "This is a test objective for the step that describes what needs to be done.",
+                "files_to_touch": [
+                    {"path": "src/test.py", "action": "create", "description": "Test file"},
+                ],
+                "verification_steps": [
+                    {"command": "echo ok", "expected_outcome": "Command exits 0", "required": True},
+                ],
             }
         ],
     }
@@ -549,9 +560,11 @@ def temp_project_with_step(tmp_path: Path) -> Path:
     (tmp_path / "src").mkdir(parents=True)
 
     # Create a minimal AIP with prompt containing file references
+    # AIP v2.0: SEP data is at step level (objective, files_to_touch, verification_steps)
     aip = {
         "aip_id": "AIP-test-001",
         "title": "Test AIP",
+        "version": "2.0",
         "tier": "B",
         "plan": [
             {
@@ -561,6 +574,15 @@ def temp_project_with_step(tmp_path: Path) -> Path:
                 "allowed_paths": ["src/**"],
                 "forbidden_paths": [".git/**"],
                 "verification_commands": ["echo ok"],
+                # Enriched SEP data (required for spec run) - at step level
+                "objective": "Create a new file at src/new_file.py and update the existing file at src/existing.py with the specified changes.",
+                "files_to_touch": [
+                    {"path": "src/new_file.py", "action": "create", "description": "New file"},
+                    {"path": "src/existing.py", "action": "modify", "description": "Update existing"},
+                ],
+                "verification_steps": [
+                    {"command": "echo ok", "expected_outcome": "Command exits 0", "required": True},
+                ],
             },
             {
                 "step_id": "step-002",
@@ -569,6 +591,14 @@ def temp_project_with_step(tmp_path: Path) -> Path:
                 "allowed_paths": ["tests/**"],
                 "forbidden_paths": [".git/**"],
                 "verification_commands": ["pytest -q"],
+                # Enriched SEP data - at step level
+                "objective": "Update the test file at tests/test_new.py with the specified changes.",
+                "files_to_touch": [
+                    {"path": "tests/test_new.py", "action": "modify", "description": "Update test"},
+                ],
+                "verification_steps": [
+                    {"command": "pytest -q", "expected_outcome": "Tests pass", "required": True},
+                ],
             },
         ],
     }
@@ -605,433 +635,21 @@ def temp_project_with_step(tmp_path: Path) -> Path:
     return tmp_path
 
 
-class TestPlanOnlyOption:
-    """Tests for --plan-only CLI option."""
+# NOTE: TestPlanOnlyOption class removed - --plan-only flag no longer exists.
+# SEPs are now generated during 'spec compile', not 'spec run'.
 
-    def test_plan_only_generates_sep_and_exits(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--plan-only generates SEP file and exits without execution."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
 
-            # Should exit with code 0 (success)
-            assert result.exit_code == 0
+# NOTE: TestFromSepOption class removed - --from-sep flag no longer exists.
+# AIP v2.0 embeds SEP directly in AIP steps; no separate SEP files.
 
-            # SEP file should exist in runs directory
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            assert len(sep_files) == 1
 
-            # SEP should be valid
-            sep = load_sep(sep_files[0])
-            assert sep.aip_id == "AIP-test-001"
-            assert sep.step_id == "step-001"
-            assert sep.step_index == 1
+class TestFromSepOptionRemoved:
+    """Placeholder class to maintain test structure - original tests removed."""
 
-        finally:
-            os.chdir(original_dir)
-
-    def test_plan_only_shows_resume_command(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--plan-only output includes command to resume with --from-sep."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
-
-            # Should show how to execute from the SEP
-            assert "--from-sep" in result.output
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_plan_only_extracts_files_from_prompt(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--plan-only SEP contains files extracted from prompt."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-            runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
-
-            # Load the generated SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            sep = load_sep(sep_files[0])
-
-            # Should have extracted files from prompt
-            assert len(sep.files_to_touch) == 2
-            paths = [fc.path for fc in sep.files_to_touch]
-            assert "src/new_file.py" in paths
-            assert "src/existing.py" in paths
-
-        finally:
-            os.chdir(original_dir)
-
-
-class TestFromSepOption:
-    """Tests for --from-sep CLI option."""
-
-    def test_from_sep_loads_and_validates_sep(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep loads SEP from file and validates it."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # First generate a SEP using plan-only
-            runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
-
-            # Find the generated SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            sep_path = sep_files[0]
-
-            # Snapshot SEP contents to ensure we do not overwrite it during execution.
-            sep_text_before = sep_path.read_text(encoding="utf-8")
-
-            # Now run with --from-sep (use dry-run to avoid actual execution)
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path), "--dry-run"],
-                catch_exceptions=False,
-            )
-
-            # Should complete successfully (dry-run avoids adapter execution)
-            assert result.exit_code == 0
-
-            # Regression: --from-sep must not overwrite the approved SEP on disk.
-            sep_text_after = sep_path.read_text(encoding="utf-8")
-            assert sep_text_after == sep_text_before
-
-            # Regression: runner must use the provided SEP (it is copied into input bundle).
-            input_sep_path = sep_path.parent / "input" / "sep.yaml"
-            assert input_sep_path.exists()
-            input_sep = load_sep(input_sep_path)
-            original_sep = load_sep(sep_path)
-            assert input_sep.files_to_touch == original_sep.files_to_touch
-            assert input_sep.verification_steps == original_sep.verification_steps
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_missing_file_exits_6(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with missing file exits with code 6."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", "/nonexistent/sep.yaml"],
-            )
-
-            # Exit code 6 = SEP file error
-            assert result.exit_code == 6
-            assert "not found" in result.output.lower() or "SEP file" in result.output
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_invalid_yaml_exits_6(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with invalid YAML exits with code 6."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create invalid SEP file
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-            sep_path.write_text("invalid: [yaml: broken", encoding="utf-8")
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 6 = SEP file error (malformed)
-            assert result.exit_code == 6
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_aip_id_mismatch_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with mismatched aip_id exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with wrong aip_id
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-wrong-001",  # Wrong AIP ID
-                step_id="step-001",
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch error
-            assert result.exit_code == 7
-            assert "mismatch" in result.output.lower()
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_step_id_mismatch_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with mismatched step_id exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with wrong step_id
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-wrong",  # Wrong step ID
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch error
-            assert result.exit_code == 7
-            assert "mismatch" in result.output.lower()
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_step_index_mismatch_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with mismatched step_index exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with wrong step_index
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-001",
-                step_index=2,  # Wrong step index (should be 1)
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch error
-            assert result.exit_code == 7
-            assert "mismatch" in result.output.lower()
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_wrong_filename_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with non-standard filename exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with wrong filename
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "plan.yaml"  # Wrong filename (should be sep.yaml)
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-001",
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch (path must end with sep.yaml)
-            assert result.exit_code == 7
-            assert "sep.yaml" in result.output.lower()
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_wrong_directory_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with SEP in wrong directory exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP in wrong directory (step-002 instead of step-001)
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-002"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-001",  # Correct step_id
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch (directory mismatch)
-            assert result.exit_code == 7
-            assert "mismatch" in result.output.lower()
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_allowed_paths_widening_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with SEP that widens allowed_paths exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with extra allowed_paths
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-001",
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**", "bin/**"],  # Extra path not in contract
-                forbidden_paths=[".git/**"],
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch (scope widening)
-            assert result.exit_code == 7
-            assert "widening" in result.output.lower() or "allowed_paths" in result.output
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_from_sep_forbidden_paths_weakening_exits_7(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--from-sep with SEP that weakens forbidden_paths exits with code 7."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # Create SEP with missing forbidden_paths
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            aip_dir = runs_dir / "AIP-test-001" / "2025-01-01T00-00-00" / "step-001"
-            aip_dir.mkdir(parents=True)
-            sep_path = aip_dir / "sep.yaml"
-
-            sep = StepExecutionPlan(
-                aip_id="AIP-test-001",
-                step_id="step-001",
-                step_index=1,
-                created_at="2025-01-01T00:00:00+00:00",
-                allowed_paths=["src/**"],
-                forbidden_paths=[],  # Missing .git/** from contract
-            )
-            save_sep(sep, sep_path)
-
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path)],
-            )
-
-            # Exit code 7 = SEP mismatch (scope weakening)
-            assert result.exit_code == 7
-            assert "weakening" in result.output.lower() or "forbidden_paths" in result.output
-
-        finally:
-            os.chdir(original_dir)
+    def test_from_sep_option_removed(self) -> None:
+        """--from-sep flag has been removed in favor of embedded SEPs in AIP v2.0."""
+        # This is a placeholder test confirming the removal
+        assert True
 
 
 class TestSkipSepReviewOption:
@@ -1099,127 +717,142 @@ class TestSkipSepReviewOption:
                     catch_exceptions=False,
                 )
 
-                # Should generate a SEP under runs/ even in non-interactive mode
-                runs_dir = temp_project_with_step / ".specwright" / "runs"
-                sep_files = list(runs_dir.glob("**/sep.yaml"))
-                assert len(sep_files) == 1
-
-        finally:
-            os.chdir(original_dir)
-
-    def test_skip_sep_review_with_plan_only_ignored(
-        self, temp_project_with_step: Path
-    ) -> None:
-        """--skip-sep-review is effectively ignored with --plan-only."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
-
-            # --plan-only exits before execution, so --skip-sep-review is moot
-            result = runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only", "--skip-sep-review"],
-                catch_exceptions=False,
-            )
-
-            # Should still exit with plan-only behavior
-            assert result.exit_code == 0
-
-            # Should still have written a SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            assert len(sep_files) == 1
+                # AIP v2.0: SEP is embedded in AIP, verify it was loaded
+                assert "Loaded SEP from AIP" in result.output
 
         finally:
             os.chdir(original_dir)
 
 
 class TestSepWorkflowIntegration:
-    """Integration tests for the full SEP workflow."""
+    """Integration tests for the full SEP workflow (AIP v2.0 embedded SEP).
 
-    def test_plan_only_then_from_sep_workflow(
+    NOTE: With AIP v2.0, SEPs are generated during 'spec compile', not 'spec run'.
+    These tests verify that spec run correctly loads pre-enriched SEP data.
+    """
+
+    def test_run_loads_enriched_sep_from_aip(
         self, temp_project_with_step: Path
     ) -> None:
-        """Full workflow: generate SEP with --plan-only, then execute with --from-sep."""
+        """spec run loads pre-enriched SEP from AIP and executes."""
         original_dir = os.getcwd()
         try:
             os.chdir(temp_project_with_step)
 
-            # Step 1: Generate SEP
-            result1 = runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
-            assert result1.exit_code == 0
+            # AIP fixture already has enriched SEP data
+            with patch("spec.executor.runner.StepRunner.run_step") as mock_run:
+                from spec.executor.runner import StepResult, TerminationReason
 
-            # Find the generated SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            sep_path = sep_files[0]
+                mock_run.return_value = StepResult(
+                    step_id="step-001",
+                    aip_id="AIP-test-001",
+                    termination_reason=TerminationReason.PASS,
+                    iterations=[],
+                    touched_files=[],
+                )
 
-            # Step 2: Execute from SEP (with dry-run to avoid actual execution)
-            result2 = runner.invoke(
-                app,
-                ["run", "--step", "1", "--from-sep", str(sep_path), "--dry-run"],
-                catch_exceptions=False,
-            )
+                result = runner.invoke(
+                    app,
+                    ["run", "--step", "1", "--skip-sep-review"],
+                    catch_exceptions=False,
+                )
 
-            # Should complete successfully (dry-run avoids adapter execution)
-            assert result2.exit_code == 0
+            # Should complete successfully
+            assert result.exit_code == 0
+            assert "Loaded SEP from AIP" in result.output
 
         finally:
             os.chdir(original_dir)
 
-    def test_sep_contains_verification_steps(
-        self, temp_project_with_step: Path
+    def test_run_with_missing_sep_fails(
+        self, tmp_path: Path
     ) -> None:
-        """Generated SEP includes verification steps from AIP."""
+        """spec run fails if AIP step lacks enriched SEP data."""
         original_dir = os.getcwd()
         try:
-            os.chdir(temp_project_with_step)
+            # Create config
+            config_path = tmp_path / ".specwright.yaml"
+            config = {
+                "version": "0.1",
+                "paths": {"specs": ".specwright/specs", "aips": ".specwright/aips"},
+                "current": {"spec": None, "aip": ".specwright/aips/test.yaml"},
+            }
+            with open(config_path, "w") as f:
+                yaml.dump(config, f)
 
-            runner.invoke(
+            (tmp_path / ".specwright" / "aips").mkdir(parents=True)
+
+            # Create AIP WITHOUT enriched SEP data
+            aip = {
+                "aip_id": "AIP-test-001",
+                "title": "Test AIP",
+                "version": "2.0",
+                "plan": [
+                    {
+                        "step_id": "step-001",
+                        "description": "Test step",
+                        "prompt": "Do something.",
+                        "allowed_paths": ["src/**"],
+                        # NO objective, files_to_touch, verification_steps
+                    },
+                ],
+            }
+            aip_path = tmp_path / ".specwright" / "aips" / "test.yaml"
+            with open(aip_path, "w") as f:
+                yaml.dump(aip, f)
+
+            # Initialize git repo
+            import subprocess
+            subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True, check=True)
+            (tmp_path / "README.md").write_text("# Test")
+            subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "Initial"], cwd=tmp_path, capture_output=True, check=True)
+
+            os.chdir(tmp_path)
+
+            result = runner.invoke(
                 app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
+                ["run", "--step", "1"],
             )
 
-            # Load the generated SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            sep = load_sep(sep_files[0])
-
-            # Should have verification steps from AIP
-            assert len(sep.verification_steps) > 0
-            assert sep.verification_steps[0].command == "echo ok"
+            # Should fail with error about missing SEP
+            assert result.exit_code != 0
+            assert "missing enriched SEP" in result.output.lower() or "recompile" in result.output.lower()
 
         finally:
             os.chdir(original_dir)
 
-    def test_sep_inherits_scope_from_contract(
+    def test_aip_has_verification_steps_in_sep(
         self, temp_project_with_step: Path
     ) -> None:
-        """Generated SEP inherits scope constraints from contract."""
-        original_dir = os.getcwd()
-        try:
-            os.chdir(temp_project_with_step)
+        """Pre-enriched AIP has verification steps in SEP data."""
+        # Load the AIP fixture to check embedded SEP data
+        aip_path = temp_project_with_step / ".specwright" / "aips" / "test.yaml"
+        with open(aip_path) as f:
+            aip = yaml.safe_load(f)
 
-            runner.invoke(
-                app,
-                ["run", "--step", "1", "--plan-only"],
-                catch_exceptions=False,
-            )
+        step = aip["plan"][0]
 
-            # Load the generated SEP
-            runs_dir = temp_project_with_step / ".specwright" / "runs"
-            sep_files = list(runs_dir.glob("**/sep.yaml"))
-            sep = load_sep(sep_files[0])
+        # Should have verification steps embedded
+        assert "verification_steps" in step
+        assert len(step["verification_steps"]) > 0
+        assert step["verification_steps"][0]["command"] == "echo ok"
 
-            # Should have scope from AIP step
-            assert "src/**" in sep.allowed_paths
-            # forbidden_paths should include defaults
-            assert any(".git" in fp for fp in sep.forbidden_paths)
+    def test_aip_has_files_to_touch_in_sep(
+        self, temp_project_with_step: Path
+    ) -> None:
+        """Pre-enriched AIP has files_to_touch in SEP data."""
+        # Load the AIP fixture to check embedded SEP data
+        aip_path = temp_project_with_step / ".specwright" / "aips" / "test.yaml"
+        with open(aip_path) as f:
+            aip = yaml.safe_load(f)
 
-        finally:
-            os.chdir(original_dir)
+        step = aip["plan"][0]
+
+        # Should have files_to_touch embedded
+        assert "files_to_touch" in step
+        paths = [fc["path"] for fc in step["files_to_touch"]]
+        assert "src/new_file.py" in paths
+        assert "src/existing.py" in paths

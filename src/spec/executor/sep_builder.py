@@ -154,7 +154,7 @@ class SEPBuilder:
         import typer
 
         from spec.llm.client import LLMClient, LLMExecutionError
-        from spec.llm.config import LLMConfigError, require_llm_enabled
+        from spec.llm.config import LLMConfig
         from spec.llm.prompts import render_sep_generation_prompt
 
         # Build AIP context for the prompt
@@ -169,8 +169,10 @@ class SEPBuilder:
         )
 
         try:
-            # Load config and check LLM is enabled
-            config = require_llm_enabled()
+            # Use default LLM config (enabled, with standard timeout)
+            # Note: We don't use require_llm_enabled() here because spec compile
+            # should attempt LLM calls directly without requiring config.yaml setup
+            config = LLMConfig(enabled=True, timeout_s=120)
 
             # Create client and send prompt
             client = LLMClient(config, model)
@@ -181,7 +183,7 @@ class SEPBuilder:
             typer.echo(f"✓ SEP generated via LLM ({model})")
             return sep
 
-        except (LLMConfigError, LLMExecutionError) as e:
+        except LLMExecutionError as e:
             # LLM failed - fall back to deterministic build with warning
             typer.secho(f"⚠ LLM SEP generation failed: {e}", fg=typer.colors.YELLOW, err=True)
             typer.echo("  Falling back to deterministic SEP builder...")
