@@ -1413,6 +1413,28 @@ def _run_autonomous_step(
             typer.echo(f"  [{fc.action}] {fc.path}")
         typer.echo()
 
+        # Check for out-of-repo allowed paths
+        out_of_repo_paths = []
+        for allowed_path in contract.allowed_paths:
+            if allowed_path.startswith("/"):
+                # It's an absolute path - check if it's outside project_root
+                try:
+                    Path(allowed_path.rstrip("*")).relative_to(project_root)
+                except ValueError:
+                    out_of_repo_paths.append(allowed_path)
+
+        if out_of_repo_paths:
+            typer.secho("\n⚠️  Out-of-Repo Paths Detected", fg=typer.colors.YELLOW, bold=True)
+            typer.echo("This step targets paths outside the current repository:")
+            for p in out_of_repo_paths:
+                typer.echo(f"  • {p}")
+            typer.echo(f"\nCurrent repo: {project_root}")
+            typer.echo("\nThe agent will run from this repo. Files created in external paths")
+            typer.echo("won't be tracked by git here. You may need to:")
+            typer.echo("  1. Run this step manually from the target repo, or")
+            typer.echo("  2. Create files in the external location yourself")
+            typer.echo()
+
         import sys
 
         # In non-interactive contexts (tests/CI), prompting causes click.Abort.
@@ -1420,7 +1442,10 @@ def _run_autonomous_step(
         if sys.stdin is None or not sys.stdin.isatty():
             proceed = True
         else:
-            proceed = typer.confirm("Continue with execution?", default=True)
+            if out_of_repo_paths:
+                proceed = typer.confirm("Continue anyway (out-of-repo work)?", default=False)
+            else:
+                proceed = typer.confirm("Continue with execution?", default=True)
 
         if not proceed:
             typer.secho("\nExecution cancelled by user.", fg=typer.colors.YELLOW)
