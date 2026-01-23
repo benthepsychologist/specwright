@@ -28,6 +28,9 @@ class GitCapture(BaseModel):
     commit_sha: str | None = Field(
         default=None, description="SHA if agent committed during step"
     )
+    working_tree_dirty: bool = Field(
+        default=False, description="True if working tree has uncommitted changes"
+    )
 
     model_config = {"extra": "forbid"}
 
