@@ -38,6 +38,11 @@ from spec.cli.epic import epic_app
 
 app.add_typer(epic_app, name="epic")
 
+# Register v2 executor commands
+from spec.cli.exec_commands import exec_app
+
+app.add_typer(exec_app, name="exec")
+
 
 class RiskTier(str, Enum):
     """Risk tier enumeration."""
