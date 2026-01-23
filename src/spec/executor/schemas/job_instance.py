@@ -41,6 +41,10 @@ class Step(BaseModel):
     payload: dict[str, Any] = Field(
         default_factory=dict, description="Backend-specific payload (fully resolved)"
     )
+    continue_on_failure: bool = Field(
+        default=False,
+        description="If True, continue to next step even if this step fails",
+    )
 
     model_config = {"extra": "forbid"}
 

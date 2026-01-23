@@ -765,3 +765,272 @@ class TestExecuteVariableResolution:
         # The run_id should be resolved in the manifest
         manifest = store.read_step_manifest(result.run_id, 1)
         assert manifest.payload["command"] == "echo test-run-abc"
+
+
+# =============================================================================
+# Continue on Failure Tests
+# =============================================================================
+
+
+class TestContinueOnFailure:
+    """Tests for continue_on_failure behavior."""
+
+    @pytest.fixture
+    def git_repo(self, tmp_path):
+        """Create a test git repository."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        (repo_path / "test.txt").write_text("hello")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        return repo_path
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        """Create a test store."""
+        return RunStore(root=tmp_path / "runs")
+
+    def test_continue_on_failure_runs_subsequent_steps(self, git_repo, store):
+        """When continue_on_failure=True, subsequent steps still run."""
+        job_def = JobDef(
+            job_id="continue-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo step1", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,  # KEY
+                    payload={"command": "exit 1", "capture_git": False},  # FAILS
+                ),
+                StepTemplate(
+                    step_id="step3",
+                    backend=Backend.cmd,
+                    payload={"command": "echo step3 ran", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "continue-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # All three steps should have run
+        assert store.read_step_outcome(result.run_id, 1).outcome == OutcomeStatus.completed
+        assert store.read_step_outcome(result.run_id, 2).outcome == OutcomeStatus.failed
+        assert store.read_step_outcome(result.run_id, 3).outcome == OutcomeStatus.completed
+
+        # Final status should be completed_with_errors
+        assert result.status == RunStatus.completed_with_errors
+
+    def test_fail_fast_without_continue_flag(self, git_repo, store):
+        """Without continue_on_failure, failure aborts."""
+        job_def = JobDef(
+            job_id="failfast-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo step1", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    continue_on_failure=False,  # DEFAULT - fail fast
+                    payload={"command": "exit 1", "capture_git": False},  # FAILS
+                ),
+                StepTemplate(
+                    step_id="step3",
+                    backend=Backend.cmd,
+                    payload={"command": "echo should not run", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "failfast-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # Step 3 should NOT have run
+        step3_outcome_path = store.get_step_path(result.run_id, 3) / "outcome.yaml"
+        assert not step3_outcome_path.exists()
+
+        # Final status should be failed
+        assert result.status == RunStatus.failed
+
+    def test_multiple_failures_with_continue(self, git_repo, store):
+        """Multiple steps can fail with continue_on_failure."""
+        job_def = JobDef(
+            job_id="multi-fail-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo ok", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "exit 1", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step3",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "exit 2", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step4",
+                    backend=Backend.cmd,
+                    payload={"command": "echo final", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "multi-fail-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # All four steps should have run
+        assert store.read_step_outcome(result.run_id, 1).outcome == OutcomeStatus.completed
+        assert store.read_step_outcome(result.run_id, 2).outcome == OutcomeStatus.failed
+        assert store.read_step_outcome(result.run_id, 3).outcome == OutcomeStatus.failed
+        assert store.read_step_outcome(result.run_id, 4).outcome == OutcomeStatus.completed
+
+        # Final status should be completed_with_errors
+        assert result.status == RunStatus.completed_with_errors
+
+    def test_aip1_style_captures_on_agent_failure(self, git_repo, store):
+        """Even if agent step fails, capture/assess/finalize still run."""
+        job_def = JobDef(
+            job_id="aip1-style-test",
+            steps=[
+                # Step 1: Setup (must succeed)
+                StepTemplate(
+                    step_id="setup",
+                    backend=Backend.cmd,
+                    continue_on_failure=False,
+                    payload={"command": "echo setup", "capture_git": False},
+                ),
+                # Step 2: Agent work (continue on failure)
+                StepTemplate(
+                    step_id="agent.work",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo partial work && exit 1", "capture_git": False},
+                ),
+                # Step 3: Capture (best effort)
+                StepTemplate(
+                    step_id="capture",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo capturing", "capture_git": False},
+                ),
+                # Step 4: Assess (best effort)
+                StepTemplate(
+                    step_id="assess",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo assessing", "capture_git": False},
+                ),
+                # Step 5: Finalize (always try)
+                StepTemplate(
+                    step_id="finalize",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo finalized", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "aip1-style-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # All 5 steps should have artifacts
+        for step_n in range(1, 6):
+            step_path = store.get_step_path(result.run_id, step_n)
+            assert (step_path / "manifest.yaml").exists()
+            assert (step_path / "outcome.yaml").exists()
+            assert (step_path / "capture.yaml").exists()
+
+        # Verify outcomes
+        assert store.read_step_outcome(result.run_id, 1).outcome == OutcomeStatus.completed
+        assert store.read_step_outcome(result.run_id, 2).outcome == OutcomeStatus.failed  # Agent failed
+        assert store.read_step_outcome(result.run_id, 3).outcome == OutcomeStatus.completed
+        assert store.read_step_outcome(result.run_id, 4).outcome == OutcomeStatus.completed
+        assert store.read_step_outcome(result.run_id, 5).outcome == OutcomeStatus.completed
+
+        # Final status
+        assert result.status == RunStatus.completed_with_errors
+
+    def test_all_steps_succeed_returns_completed(self, git_repo, store):
+        """When all steps succeed, status is completed (not completed_with_errors)."""
+        job_def = JobDef(
+            job_id="all-success-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,  # Flag doesn't matter when successful
+                    payload={"command": "echo ok", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo ok", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "all-success-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # Should be completed (not completed_with_errors)
+        assert result.status == RunStatus.completed

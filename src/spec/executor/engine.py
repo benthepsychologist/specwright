@@ -281,6 +281,7 @@ def compile_job(
                 policy_profile=ctx.get("policy_profile", "default"),
             ),
             payload=resolved_payload,
+            continue_on_failure=template.continue_on_failure,
         )
         steps.append(step)
 
@@ -378,7 +379,7 @@ def _create_aip1_job_def() -> JobDef:
         version="0.1",
         description="Execute an AIP with a single agent step",
         steps=[
-            # Step 1: Create feature branch
+            # Step 1: Create feature branch - must succeed
             StepTemplate(
                 step_id="branch.create",
                 backend=Backend.cmd,
@@ -387,8 +388,9 @@ def _create_aip1_job_def() -> JobDef:
                     "command": "git checkout -b @payload.feature_branch",
                     "capture_git": True,
                 },
+                continue_on_failure=False,  # Must succeed to proceed
             ),
-            # Step 2: Run agent with AIP
+            # Step 2: Run agent with AIP - continue on failure to capture/assess
             StepTemplate(
                 step_id="agent.run_aip",
                 backend=Backend.claude_code,
@@ -399,8 +401,9 @@ def _create_aip1_job_def() -> JobDef:
                     "capture_git": True,
                 },
                 timeout_s=1800,  # 30 minutes for agent work
+                continue_on_failure=True,  # Capture even if agent fails
             ),
-            # Step 3: Capture bundle
+            # Step 3: Capture bundle - best effort
             StepTemplate(
                 step_id="capture.bundle",
                 backend=Backend.cmd,
@@ -409,8 +412,9 @@ def _create_aip1_job_def() -> JobDef:
                     "command": "git diff HEAD~1 --stat || git diff --stat",
                     "capture_git": True,
                 },
+                continue_on_failure=True,  # Best effort
             ),
-            # Step 4: Assess acceptance
+            # Step 4: Assess acceptance - best effort
             StepTemplate(
                 step_id="assess.acceptance",
                 backend=Backend.llm,
@@ -419,8 +423,9 @@ def _create_aip1_job_def() -> JobDef:
                     "prompt": "Review the changes and assess against acceptance criteria.",
                     "context": "AIP path: @payload.aip_path",
                 },
+                continue_on_failure=True,  # Best effort
             ),
-            # Step 5: Finalize run
+            # Step 5: Finalize run - always try
             StepTemplate(
                 step_id="finalize.run",
                 backend=Backend.cmd,
@@ -429,6 +434,7 @@ def _create_aip1_job_def() -> JobDef:
                     "command": "echo 'Run finalized'",
                     "capture_git": False,
                 },
+                continue_on_failure=True,  # Always try to finalize
             ),
         ],
     )
@@ -648,10 +654,16 @@ def _run_steps(
     """
     Run the step dispatch loop.
 
+    Respects continue_on_failure flag on steps:
+    - If a step fails and continue_on_failure=False, abort immediately (RunStatus.failed)
+    - If a step fails and continue_on_failure=True, continue to next step
+    - Final status: completed (all ok), completed_with_errors (some failed but continued), failed (abort)
+
     Returns:
         Tuple of (final_status, list of step outcomes)
     """
     outcomes: list[StepOutcome] = []
+    any_step_failed = False
 
     # Build run context for variable resolution
     run_ctx = {
@@ -683,6 +695,8 @@ def _run_steps(
             )
             outcomes.append(outcome)
             store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+
+            # Variable errors are always fatal - can't continue without resolved payload
             return RunStatus.failed, outcomes
 
         # Create manifest
@@ -702,6 +716,8 @@ def _run_steps(
         store.write_step_manifest(run_record.run_id, step.step_n, manifest)
 
         # Dispatch to backend
+        capture = None
+        backend_error = None
         try:
             backend = get_backend(step.backend.value)
             capture = backend.dispatch(
@@ -710,31 +726,36 @@ def _run_steps(
                 policy=run_record.policy,
             )
         except BackendError as e:
-            # Backend error - fail the step
-            duration_ms = int((time.time() - start_time) * 1000)
-            outcome = _create_failed_outcome(
-                step=step,
-                error=str(e),
-                duration_ms=duration_ms,
-            )
-            outcomes.append(outcome)
-            store.write_step_outcome(run_record.run_id, step.step_n, outcome)
-            return RunStatus.failed, outcomes
+            backend_error = str(e)
         except Exception as e:
-            # Unexpected error
-            duration_ms = int((time.time() - start_time) * 1000)
-            outcome = _create_failed_outcome(
-                step=step,
-                error=f"Unexpected error: {e}",
-                duration_ms=duration_ms,
-            )
-            outcomes.append(outcome)
-            store.write_step_outcome(run_record.run_id, step.step_n, outcome)
-            return RunStatus.failed, outcomes
+            backend_error = f"Unexpected error: {e}"
 
         duration_ms = int((time.time() - start_time) * 1000)
 
-        # Determine outcome status
+        # Handle backend errors
+        if backend_error:
+            outcome = _create_failed_outcome(
+                step=step,
+                error=backend_error,
+                duration_ms=duration_ms,
+            )
+            outcomes.append(outcome)
+            store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+
+            # Update run context even for failures
+            run_ctx["steps"][step.step_id] = {
+                "outcome": OutcomeStatus.failed.value,
+                "capture_ref": outcome.capture_ref,
+            }
+
+            if step.continue_on_failure:
+                any_step_failed = True
+                continue  # Move to next step
+            else:
+                return RunStatus.failed, outcomes
+
+        # Determine outcome status from capture
+        assert capture is not None
         if capture.agent and capture.agent.exit_code == 124:
             outcome_status = OutcomeStatus.timeout
         elif capture.agent and capture.agent.exit_code != 0:
@@ -765,10 +786,17 @@ def _run_steps(
             "capture_ref": outcome.capture_ref,
         }
 
-        # Check if we should abort
+        # Check if we should abort or continue
         if outcome_status != OutcomeStatus.completed:
-            return RunStatus.failed, outcomes
+            if step.continue_on_failure:
+                any_step_failed = True
+                continue  # Move to next step
+            else:
+                return RunStatus.failed, outcomes
 
+    # All steps completed (some may have failed with continue_on_failure)
+    if any_step_failed:
+        return RunStatus.completed_with_errors, outcomes
     return RunStatus.completed, outcomes
 
 

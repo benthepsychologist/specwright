@@ -30,6 +30,10 @@ class StepTemplate(BaseModel):
     timeout_s: int | None = Field(
         default=None, description="Step-specific timeout override"
     )
+    continue_on_failure: bool = Field(
+        default=False,
+        description="If True, continue to next step even if this step fails",
+    )
 
     model_config = {"extra": "forbid"}
 
