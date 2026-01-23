@@ -1,97 +1,88 @@
 """
-Spec Executor Module
+Spec Executor Module - v2 Job-Based Executor
 
-Autonomous step execution with scope enforcement and agent adapters.
+Job-based execution with compile → execute flow.
 """
 
-from spec.executor.adapters import (
-    AdapterError,
-    AgentAdapter,
-    ClaudeAdapter,
-    ProtocolError,
-    ToolNotFoundError,
-    get_adapter,
-    list_adapters,
+from spec.executor.backends import (
+    BackendBase,
+    BackendError,
+    UnknownBackendError,
+    get_backend,
+    list_backends,
 )
-from spec.executor.adapters import (
-    EscalationRequired as AdapterEscalationRequired,
+from spec.executor.engine import (
+    CompileError,
+    ExecutorError,
+    VariableError,
+    compile_job,
+    execute,
+    get_job_def,
+    list_job_defs,
+    register_job_def,
 )
-from spec.executor.artifacts import (
-    ArtifactWriter,
-    create_artifact_writer,
-    write_failure_context,
-    write_input_bundle,
+from spec.executor.sandbox import (
+    PolicyViolation,
+    SandboxEnforcer,
+    capture_git_state,
 )
-from spec.executor.contract import (
-    EscalationRequired,
-    StepContract,
-    build_contract,
-    load_contract,
-    save_contract,
+from spec.executor.schemas import (
+    AttemptRecord,
+    Backend,
+    Common,
+    GitCapture,
+    JobDef,
+    JobInstance,
+    OutcomeStatus,
+    Policy,
+    RepoScope,
+    RunRecord,
+    RunStatus,
+    Step,
+    StepCapture,
+    StepManifest,
+    StepOutcome,
+    StepTemplate,
 )
-from spec.executor.runner import (
-    IterationResult,
-    StepResult,
-    StepRunner,
-    TerminationReason,
-    render_gate_package,
-)
-from spec.executor.scope import (
-    PathTraversalError,
-    ScopeResult,
-    ScopeViolation,
-    ViolationType,
-    check_scope,
-    generate_policy_report,
-)
-from spec.executor.verify import (
-    CommandResult,
-    VerificationResult,
-    generate_verification_report,
-    run_command,
-    run_commands,
-    verify,
-)
+from spec.executor.store import RunStore
 
 __all__ = [
-    # Contract
-    "StepContract",
-    "EscalationRequired",
-    "build_contract",
-    "save_contract",
-    "load_contract",
-    # Artifacts
-    "ArtifactWriter",
-    "create_artifact_writer",
-    "write_input_bundle",
-    "write_failure_context",
-    # Scope
-    "PathTraversalError",
-    "ScopeResult",
-    "ScopeViolation",
-    "ViolationType",
-    "check_scope",
-    "generate_policy_report",
-    # Verification
-    "CommandResult",
-    "VerificationResult",
-    "generate_verification_report",
-    "run_command",
-    "run_commands",
-    "verify",
-    # Adapters
-    "AdapterError",
-    "AdapterEscalationRequired",
-    "AgentAdapter",
-    "ClaudeAdapter",
-    "ProtocolError",
-    "ToolNotFoundError",
-    "get_adapter",
-    "list_adapters",
-    # Runner
-    "IterationResult",
-    "StepResult",
-    "StepRunner",
-    "TerminationReason",
-    "render_gate_package",
+    # Engine
+    "compile_job",
+    "execute",
+    "register_job_def",
+    "get_job_def",
+    "list_job_defs",
+    "CompileError",
+    "ExecutorError",
+    "VariableError",
+    # Backends
+    "BackendBase",
+    "BackendError",
+    "UnknownBackendError",
+    "get_backend",
+    "list_backends",
+    # Sandbox
+    "SandboxEnforcer",
+    "PolicyViolation",
+    "capture_git_state",
+    # Schemas
+    "Backend",
+    "JobDef",
+    "StepTemplate",
+    "JobInstance",
+    "Step",
+    "Common",
+    "RunRecord",
+    "Policy",
+    "RepoScope",
+    "RunStatus",
+    "AttemptRecord",
+    "StepManifest",
+    "StepOutcome",
+    "OutcomeStatus",
+    "StepCapture",
+    "GitCapture",
+    # Store
+    "RunStore",
 ]
