@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "OutcomeStatus": {
+      "description": "Outcome status for a step.",
+      "enum": [
+        "completed",
+        "failed",
+        "timeout",
+        "cancelled"
+      ],
+      "title": "OutcomeStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Summary record for a step execution.\n\nStored at: ~/.local/local-governor/runs/{run_id}/steps/step-{step_n:03d}/outcome.yaml\n\nThis is the summary - detailed evidence is in StepCapture.",
+  "properties": {
+    "step_n": {
+      "description": "Step number (1-indexed)",
+      "minimum": 1,
+      "title": "Step N",
+      "type": "integer"
+    },
+    "step_id": {
+      "description": "Unique identifier for this step",
+      "title": "Step Id",
+      "type": "string"
+    },
+    "outcome": {
+      "$ref": "#/$defs/OutcomeStatus",
+      "description": "Step outcome status"
+    },
+    "duration_ms": {
+      "description": "Execution duration in milliseconds",
+      "minimum": 0,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "manifest_ref": {
+      "description": "Relative path to manifest.yaml (e.g., 'steps/step-001/manifest.yaml')",
+      "title": "Manifest Ref",
+      "type": "string"
+    },
+    "capture_ref": {
+      "description": "Relative path to capture.yaml (e.g., 'steps/step-001/capture.yaml')",
+      "title": "Capture Ref",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error message if failed",
+      "title": "Error"
+    }
+  },
+  "required": [
+    "step_n",
+    "step_id",
+    "outcome",
+    "duration_ms",
+    "manifest_ref",
+    "capture_ref"
+  ],
+  "title": "StepOutcome",
+  "type": "object"
+}

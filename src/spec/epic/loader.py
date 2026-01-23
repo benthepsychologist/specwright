@@ -36,6 +36,24 @@ class EpicValidationError(SpecwrightError):
     exit_code = 3
 
 
+def _disable_implicit_timestamps(yaml: YAML) -> None:
+    """Disable YAML 1.1 implicit timestamp parsing.
+
+    Without this, values like 2026-01-16T00:00:00Z may be parsed as datetime
+    objects by the YAML loader, which makes downstream validation and
+    round-tripping less predictable.
+    """
+    try:
+        resolvers = yaml.Resolver.yaml_implicit_resolvers
+    except Exception:
+        return
+
+    for key, mappings in list(resolvers.items()):
+        resolvers[key] = [
+            m for m in mappings if not m or m[0] != "tag:yaml.org,2002:timestamp"
+        ]
+
+
 def get_governor_root() -> Path:
     """Get the governor root directory.
 
@@ -102,6 +120,7 @@ def load_epic_from_path(path: Path) -> Epic:
         raise EpicNotFoundError(f"Epic file not found: {path}")
 
     yaml = YAML()
+    _disable_implicit_timestamps(yaml)
     yaml.preserve_quotes = True
 
     try:

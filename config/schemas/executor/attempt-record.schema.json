@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "AttemptStatus": {
+      "description": "Status of an attempt.",
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "AttemptStatus",
+      "type": "string"
+    },
+    "OutcomeStatus": {
+      "description": "Outcome status for a step.",
+      "enum": [
+        "completed",
+        "failed",
+        "timeout",
+        "cancelled"
+      ],
+      "title": "OutcomeStatus",
+      "type": "string"
+    },
+    "StepOutcome": {
+      "additionalProperties": false,
+      "description": "Summary record for a step execution.\n\nStored at: ~/.local/local-governor/runs/{run_id}/steps/step-{step_n:03d}/outcome.yaml\n\nThis is the summary - detailed evidence is in StepCapture.",
+      "properties": {
+        "step_n": {
+          "description": "Step number (1-indexed)",
+          "minimum": 1,
+          "title": "Step N",
+          "type": "integer"
+        },
+        "step_id": {
+          "description": "Unique identifier for this step",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/OutcomeStatus",
+          "description": "Step outcome status"
+        },
+        "duration_ms": {
+          "description": "Execution duration in milliseconds",
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "integer"
+        },
+        "manifest_ref": {
+          "description": "Relative path to manifest.yaml (e.g., 'steps/step-001/manifest.yaml')",
+          "title": "Manifest Ref",
+          "type": "string"
+        },
+        "capture_ref": {
+          "description": "Relative path to capture.yaml (e.g., 'steps/step-001/capture.yaml')",
+          "title": "Capture Ref",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Error message if failed",
+          "title": "Error"
+        }
+      },
+      "required": [
+        "step_n",
+        "step_id",
+        "outcome",
+        "duration_ms",
+        "manifest_ref",
+        "capture_ref"
+      ],
+      "title": "StepOutcome",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Record for a single execution attempt.\n\nStored at: ~/.local/local-governor/runs/{run_id}/attempts/attempt-{attempt_n:03d}.yaml\n\nA run may have multiple attempts if retries are enabled.",
+  "properties": {
+    "attempt_n": {
+      "description": "Attempt number (1-indexed)",
+      "minimum": 1,
+      "title": "Attempt N",
+      "type": "integer"
+    },
+    "started_at": {
+      "description": "When this attempt started",
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When this attempt ended",
+      "title": "Ended At"
+    },
+    "status": {
+      "$ref": "#/$defs/AttemptStatus",
+      "default": "running",
+      "description": "Attempt status"
+    },
+    "step_outcomes": {
+      "description": "Outcomes for each completed step in this attempt",
+      "items": {
+        "$ref": "#/$defs/StepOutcome"
+      },
+      "title": "Step Outcomes",
+      "type": "array"
+    },
+    "final_step_n": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Last step that was executed (may be partial)",
+      "title": "Final Step N"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error message if failed",
+      "title": "Error"
+    }
+  },
+  "required": [
+    "attempt_n",
+    "started_at"
+  ],
+  "title": "AttemptRecord",
+  "type": "object"
+}

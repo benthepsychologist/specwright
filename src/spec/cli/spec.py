@@ -2351,5 +2351,498 @@ def list_specs(
     typer.echo()
 
 
+# =============================================================================
+# AIP v3 Commands (epic-driven execution model)
+# =============================================================================
+
+
+@app.command("aip-compile")
+@_specwright_exception_handler
+def compile_spec(
+    spec_id: str = typer.Argument(..., help="Spec identifier to compile"),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
+    ),
+    output: Path = typer.Option(
+        None, "--output", "-o", help="Output path (default: governor storage)"
+    ),
+    from_file: Path = typer.Option(
+        None, "--from-file", "-f", help="Load from existing AIP file instead of epic"
+    ),
+):
+    """Compile an AIP v3 context packet from an epic spec.
+
+    This reads the spec entry from an epic and produces an AIP v3 skeleton.
+    The epic.yaml is the source of truth - no spec.md layer.
+
+    Examples:
+        spec compile e008-01-core --epic e008-specwright-v2
+        spec compile e008-01-core -e e008-specwright-v2 -o ./my-aip.yaml
+        spec compile e008-01-core --from-file /path/to/aip.yaml
+    """
+    from spec.aip.compiler import (
+        compile_from_aip_file,
+        compile_from_epic,
+        get_aip_storage_path,
+        save_compiled_aip,
+    )
+    from spec.epic.loader import list_epics, load_epic
+
+    # Handle --from-file: load existing AIP
+    if from_file:
+        aip = compile_from_aip_file(from_file)
+        typer.secho(f"Loaded AIP from: {from_file}", fg=typer.colors.GREEN)
+        if output:
+            aip.save(output)
+            typer.secho(f"Saved to: {output}", fg=typer.colors.GREEN)
+        return
+
+    # Auto-detect epic if not specified
+    if epic_id is None:
+        epic_ids = list_epics()
+        for eid in epic_ids:
+            epic = load_epic(eid)
+            if epic.get_spec(spec_id):
+                epic_id = eid
+                break
+        if epic_id is None:
+            typer.secho(
+                f"Error: Could not find spec '{spec_id}' in any epic. "
+                "Use --epic to specify.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    # Compile from epic
+    aip = compile_from_epic(epic_id, spec_id)
+
+    # Save to output or standard location
+    if output:
+        aip.save(output)
+        typer.secho(f"Compiled AIP saved to: {output}", fg=typer.colors.GREEN)
+    else:
+        path = save_compiled_aip(aip, epic_id, spec_id)
+        typer.secho(f"Compiled AIP saved to: {path}", fg=typer.colors.GREEN)
+
+    # Show summary
+    typer.echo(f"\nAIP v3 Context Packet:")
+    typer.echo(f"  Epic:    {aip.metadata.epic_id}")
+    typer.echo(f"  Spec:    {aip.metadata.spec_id}")
+    typer.echo(f"  Branch:  {aip.workspace.branch}")
+    typer.echo(f"  Goal:    {aip.goal[:60]}..." if len(aip.goal) > 60 else f"  Goal:    {aip.goal}")
+    typer.echo(f"  Steps:   {len(aip.steps)} (use 'spec aip-enrich' to generate)")
+
+
+@app.command("aip-enrich")
+@_specwright_exception_handler
+def enrich_spec(
+    spec_id: str = typer.Argument(..., help="Spec identifier to enrich"),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
+    ),
+    guidance_only: bool = typer.Option(
+        False, "--guidance-only", help="Only add guidance, never generate steps"
+    ),
+    generate_steps: bool = typer.Option(
+        False, "--generate-steps", help="Generate steps even if present (requires confirmation)"
+    ),
+    overwrite_steps: bool = typer.Option(
+        False, "--overwrite-steps", help="Destructive replace of steps (requires confirmation)"
+    ),
+    model: str = typer.Option(
+        None, "--model", "-m", help="LLM model to use"
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip confirmation prompts"
+    ),
+):
+    """Enrich an AIP with LLM-generated steps and guidance.
+
+    Modes:
+    - Default (smart): Generate steps if empty, otherwise add guidance only
+    - --guidance-only: Never generate steps, only add guidance to existing
+    - --generate-steps: Generate steps even if present (requires confirmation)
+    - --overwrite-steps: Destructive replace of steps (requires confirmation)
+
+    Examples:
+        spec enrich e008-01-core --epic e008-specwright-v2
+        spec enrich e008-01-core --guidance-only
+        spec enrich e008-01-core --generate-steps --yes
+    """
+    from spec.aip.compiler import load_compiled_aip, save_compiled_aip
+    from spec.aip.enricher import EnrichMode, enrich_aip
+    from spec.epic.loader import list_epics, load_epic
+
+    # Auto-detect epic if not specified
+    if epic_id is None:
+        epic_ids = list_epics()
+        for eid in epic_ids:
+            epic = load_epic(eid)
+            if epic.get_spec(spec_id):
+                epic_id = eid
+                break
+        if epic_id is None:
+            typer.secho(
+                f"Error: Could not find spec '{spec_id}' in any epic. "
+                "Use --epic to specify.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    # Load the AIP
+    aip = load_compiled_aip(epic_id, spec_id)
+
+    # Determine mode
+    mode = EnrichMode.SMART
+    if guidance_only:
+        mode = EnrichMode.GUIDANCE_ONLY
+    elif overwrite_steps:
+        mode = EnrichMode.OVERWRITE_STEPS
+    elif generate_steps:
+        mode = EnrichMode.GENERATE_STEPS
+
+    # Track whether step generation is expected for this invocation.
+    requested_step_generation = (
+        mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS)
+        or (mode == EnrichMode.SMART and not aip.steps)
+    )
+
+    # Drift guard: if we already have artifacts for this spec, generating steps
+    # after-the-fact tends to produce retroactive plans that don't match what ran.
+    from spec.artifacts.storage import ArtifactStorage
+
+    storage = ArtifactStorage(epic_id=epic_id, spec_id=spec_id)
+    has_run_artifacts = storage.exists("run_metadata.json")
+
+    if has_run_artifacts and mode == EnrichMode.SMART and not aip.steps:
+        typer.secho(
+            "Warning: Existing run artifacts detected for this spec. "
+            "Skipping step generation in SMART mode to avoid post-run drift. "
+            "Use --generate-steps (or --overwrite-steps) to force.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        mode = EnrichMode.GUIDANCE_ONLY
+
+    # If explicitly forcing step generation after a run, require confirmation.
+    if has_run_artifacts and mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS):
+        if not yes:
+            msg = (
+                "Existing run artifacts detected. Regenerating steps now may drift from what actually ran. "
+                "Continue?"
+            )
+            if not typer.confirm(msg):
+                typer.echo("Aborted.")
+                raise typer.Exit(0)
+
+    # Confirmation for destructive modes
+    if mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS) and aip.steps:
+        if not yes:
+            msg = (
+                f"This will {'replace' if mode == EnrichMode.OVERWRITE_STEPS else 'regenerate'} "
+                f"{len(aip.steps)} existing steps. Continue?"
+            )
+            if not typer.confirm(msg):
+                typer.echo("Aborted.")
+                raise typer.Exit(0)
+
+    # Enrich the AIP
+    typer.echo(f"Enriching AIP {spec_id} (mode: {mode.value})...")
+    result = enrich_aip(aip, mode=mode, model=model)
+
+    # Show warnings
+    for warning in result.warnings:
+        typer.secho(f"Warning: {warning}", fg=typer.colors.YELLOW, err=True)
+
+    # If we expected to generate steps but ended up with none, treat this as a
+    # hard failure so HITL gates don't silently pass.
+    if requested_step_generation and not result.aip.steps:
+        typer.secho(
+            "Error: Step generation was requested but produced 0 steps. "
+            "Check your --model/provider configuration and try again.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(EnrichError.exit_code)
+
+    # Save the enriched AIP
+    path = save_compiled_aip(result.aip, epic_id, spec_id)
+    typer.secho(f"Enriched AIP saved to: {path}", fg=typer.colors.GREEN)
+
+    # Show summary
+    typer.echo(f"\nEnrichment Summary:")
+    typer.echo(f"  Steps generated:  {result.steps_generated}")
+    typer.echo(f"  Guidance added:   {result.guidance_added}")
+    typer.echo(f"  Total steps:      {len(result.aip.steps)}")
+
+    if result.aip.steps:
+        typer.echo(f"\nSteps:")
+        for step in result.aip.steps:
+            has_guidance = "+" if step.guidance else "-"
+            typer.echo(f"  [{has_guidance}] {step.id}: {step.title}")
+
+
+@app.command("aip-run")
+@_specwright_exception_handler
+def run_spec(
+    spec_id: str = typer.Argument(..., help="Spec identifier to run"),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
+    ),
+    interactive: bool = typer.Option(
+        False, "--interactive", "-i", help="Run in interactive TUI mode"
+    ),
+    timeout: int = typer.Option(
+        None, "--timeout", "-t", help="Timeout in seconds (default: from AIP or 1800)"
+    ),
+    print_output: bool = typer.Option(
+        False, "--print", "-p", help="Print Claude output to stdout"
+    ),
+):
+    """Run a spec using Claude Code.
+
+    Default mode: Background execution with --dangerously-skip-permissions --print.
+    Interactive mode: Launches Claude TUI for human-guided execution.
+
+    Examples:
+        spec run e008-01-core --epic e008-specwright-v2
+        spec run e008-01-core --interactive
+        spec run e008-01-core --timeout 3600 --print
+    """
+    from spec.aip.compiler import load_compiled_aip
+    from spec.artifacts.collector import ArtifactCollector
+    from spec.epic.loader import list_epics, load_epic
+    from spec.runner.background import run_background
+    from spec.runner.interactive import run_interactive
+
+    # Auto-detect epic if not specified
+    if epic_id is None:
+        epic_ids = list_epics()
+        for eid in epic_ids:
+            epic = load_epic(eid)
+            if epic.get_spec(spec_id):
+                epic_id = eid
+                break
+        if epic_id is None:
+            typer.secho(
+                f"Error: Could not find spec '{spec_id}' in any epic. "
+                "Use --epic to specify.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    # Load the AIP
+    aip = load_compiled_aip(epic_id, spec_id)
+
+    typer.echo(f"Running spec: {spec_id}")
+    typer.echo(f"  Epic:    {epic_id}")
+    typer.echo(f"  Branch:  {aip.workspace.branch}")
+    typer.echo(f"  Repo:    {aip.workspace.repo_path}")
+    typer.echo(f"  Mode:    {'interactive' if interactive else 'background'}")
+    typer.echo("")
+
+    if interactive:
+        # Interactive mode
+        typer.echo("Launching Claude TUI...")
+        result = run_interactive(aip)
+        typer.echo(f"\nClaude exited with code: {result.exit_code}")
+
+        # Collect artifacts (limited in interactive mode)
+        collector = ArtifactCollector.for_aip(aip)
+        collector.capture_diff()
+        collector.run_verification()
+        typer.secho(
+            f"Artifacts saved to: {collector.storage._artifact_dir}",
+            fg=typer.colors.GREEN,
+        )
+    else:
+        # Background mode
+        typer.echo("Starting background execution...")
+        result = run_background(
+            aip,
+            timeout=timeout,
+            print_output=print_output,
+        )
+
+        # Collect artifacts
+        collector = ArtifactCollector.for_aip(aip)
+        artifacts = collector.collect_all(result)
+
+        typer.echo("")
+        typer.echo(f"Execution complete:")
+        typer.echo(f"  Exit code:  {result.exit_code}")
+        typer.echo(f"  Duration:   {result.duration_seconds:.1f}s")
+        typer.echo(f"  Timeout:    {'yes' if result.timeout_reached else 'no'}")
+
+        if result.error:
+            typer.secho(f"  Error:      {result.error}", fg=typer.colors.RED)
+
+        typer.echo(f"\nArtifacts:")
+        for name, path in artifacts.items():
+            typer.echo(f"  {name}: {path}")
+
+        # Show verification summary
+        verification = collector.storage.read_json("verification.json")
+        if verification:
+            status = verification.get("status", "unknown")
+            color = typer.colors.GREEN if status == "pass" else typer.colors.RED
+            typer.secho(f"\nVerification: {status}", fg=color)
+
+
+@app.command("aip-status")
+@_specwright_exception_handler
+def aip_status(
+    spec_id: str = typer.Argument(..., help="Spec identifier to check"),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
+    ),
+):
+    """Show run status and artifact summary for a spec.
+
+    Examples:
+        spec aip-status e008-01-core --epic e008-specwright-v2
+    """
+    from spec.artifacts.storage import ArtifactStorage
+    from spec.epic.loader import list_epics, load_epic
+
+    # Auto-detect epic if not specified
+    if epic_id is None:
+        epic_ids = list_epics()
+        for eid in epic_ids:
+            epic = load_epic(eid)
+            if epic.get_spec(spec_id):
+                epic_id = eid
+                break
+        if epic_id is None:
+            typer.secho(
+                f"Error: Could not find spec '{spec_id}' in any epic. "
+                "Use --epic to specify.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    storage = ArtifactStorage(epic_id, spec_id)
+    summary = storage.get_summary()
+
+    typer.echo(f"Spec Status: {spec_id}")
+    typer.echo(f"  Epic:         {epic_id}")
+    typer.echo(f"  Artifact dir: {summary['artifact_dir']}")
+    typer.echo("")
+
+    if not summary["artifacts"]:
+        typer.echo("No artifacts found. Run 'spec run' first.")
+        return
+
+    typer.echo("Artifacts:")
+    for artifact in summary["artifacts"]:
+        size_kb = artifact["size"] / 1024
+        typer.echo(f"  {artifact['name']:<20} {size_kb:>8.1f} KB  {artifact['modified']}")
+
+    # Show run metadata if available
+    metadata = storage.read_json("run_metadata.json")
+    if metadata:
+        typer.echo(f"\nLast Run:")
+        typer.echo(f"  Started:  {metadata.get('started_at', 'unknown')}")
+        typer.echo(f"  Duration: {metadata.get('duration_seconds', 0):.1f}s")
+        typer.echo(f"  Exit:     {metadata.get('exit_code', 'unknown')}")
+        if metadata.get("timeout_reached"):
+            typer.secho("  Status:   TIMEOUT (resumable)", fg=typer.colors.YELLOW)
+        elif metadata.get("error"):
+            typer.secho(f"  Error:    {metadata['error']}", fg=typer.colors.RED)
+
+    # Show verification status if available
+    verification = storage.read_json("verification.json")
+    if verification:
+        status = verification.get("status", "unknown")
+        color = typer.colors.GREEN if status == "pass" else typer.colors.RED
+        typer.echo(f"\nVerification: ", nl=False)
+        typer.secho(status, fg=color)
+
+        results = verification.get("results", [])
+        passed = sum(1 for r in results if r.get("success"))
+        typer.echo(f"  {passed}/{len(results)} commands passed")
+
+
+@app.command("aip-diff")
+@_specwright_exception_handler
+def aip_diff(
+    spec_id: str = typer.Argument(..., help="Spec identifier"),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
+    ),
+    stat: bool = typer.Option(
+        False, "--stat", "-s", help="Show diff stats only"
+    ),
+):
+    """Show the patch.diff for a spec.
+
+    Examples:
+        spec aip-diff e008-01-core --epic e008-specwright-v2
+        spec aip-diff e008-01-core --stat
+    """
+    import subprocess
+
+    from spec.artifacts.storage import ArtifactStorage
+    from spec.epic.loader import list_epics, load_epic
+
+    # Auto-detect epic if not specified
+    if epic_id is None:
+        epic_ids = list_epics()
+        for eid in epic_ids:
+            epic = load_epic(eid)
+            if epic.get_spec(spec_id):
+                epic_id = eid
+                break
+        if epic_id is None:
+            typer.secho(
+                f"Error: Could not find spec '{spec_id}' in any epic. "
+                "Use --epic to specify.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+
+    storage = ArtifactStorage(epic_id, spec_id)
+
+    # Check if patch.diff exists
+    diff_content = storage.read_text("patch.diff")
+    if diff_content is None:
+        typer.secho(
+            "No patch.diff found. Run 'spec run' first.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(1)
+
+    if not diff_content.strip():
+        typer.echo("No changes (empty diff)")
+        return
+
+    if stat:
+        # Show stat summary
+        # Use git to parse the diff
+        result = subprocess.run(
+            ["git", "apply", "--stat"],
+            input=diff_content,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            typer.echo(result.stdout)
+        else:
+            # Fallback: count lines
+            lines = diff_content.splitlines()
+            files = [l for l in lines if l.startswith("diff --git")]
+            adds = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
+            dels = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+            typer.echo(f"{len(files)} files changed, {adds} insertions(+), {dels} deletions(-)")
+    else:
+        # Print full diff
+        typer.echo(diff_content)
+
+
 if __name__ == "__main__":
     app()

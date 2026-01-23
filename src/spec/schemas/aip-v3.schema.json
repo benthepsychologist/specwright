@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specplatform.org/schemas/aip-v3.schema.json",
+  "title": "AIP v3 Context Packet",
+  "description": "Schema for AIP v3 context packets - the core data structure for epic-driven execution",
+  "type": "object",
+  "required": ["version", "kind", "metadata", "workspace", "goal"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "3.0",
+      "description": "AIP schema version"
+    },
+    "kind": {
+      "type": "string",
+      "const": "context-packet",
+      "description": "Document kind identifier"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["epic_id", "spec_id", "owner", "created"],
+      "additionalProperties": false,
+      "properties": {
+        "epic_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Parent epic identifier"
+        },
+        "spec_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Spec identifier within the epic"
+        },
+        "owner": {
+          "type": "string",
+          "description": "Owner/author of this spec"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 creation timestamp"
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 last update timestamp"
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "required": ["mode", "repo_path", "branch", "base_branch"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["single-repo", "multi-repo"],
+          "description": "Workspace mode"
+        },
+        "repo_path": {
+          "type": "string",
+          "description": "Absolute path to the repository"
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9/_-]+$",
+          "description": "Working branch for this spec"
+        },
+        "base_branch": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9/_-]+$",
+          "description": "Base branch to diff against"
+        },
+        "allowed_paths": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Glob patterns for allowed modifications"
+        }
+      }
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 10,
+      "description": "What this spec accomplishes"
+    },
+    "expectations": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Acceptance criteria - what success looks like"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Architectural, technical, or policy constraints"
+    },
+    "checks": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Check IDs to run after completion"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "description": "Maximum execution time before pause"
+        },
+        "auto_resume_on_crash": {
+          "type": "boolean",
+          "description": "Whether to auto-resume after crash"
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum retry attempts"
+        },
+        "pause_on_timeout": {
+          "type": "boolean",
+          "description": "Whether timeout is resumable pause vs failure"
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "description": "Implementation phases (logical units of work within an AIP). Note: phases are NOT executor steps - the entire AIP is passed to a single agent step in the aip-1 job template.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "objective"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^phase-\\d+$",
+            "description": "Phase identifier"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 3,
+            "description": "Human-readable phase title"
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 10,
+            "description": "What this phase accomplishes"
+          },
+          "guidance": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "likely_files": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Files likely to be created or modified"
+              },
+              "patterns_to_follow": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["file"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": {
+                      "type": "string",
+                      "description": "Path to reference file"
+                    },
+                    "note": {
+                      "type": "string",
+                      "description": "What to learn from this file"
+                    }
+                  }
+                },
+                "description": "Reference files with patterns to follow"
+              },
+              "approach": {
+                "type": "string",
+                "description": "Recommended implementation approach"
+              },
+              "watch_out_for": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Common pitfalls to avoid"
+              }
+            }
+          },
+          "verification": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["cmd"],
+              "additionalProperties": false,
+              "properties": {
+                "cmd": {
+                  "type": "string",
+                  "description": "Command to verify phase success"
+                },
+                "expected": {
+                  "type": "string",
+                  "description": "Expected output or behavior"
+                }
+              }
+            },
+            "description": "Commands to verify phase completion"
+          }
+        }
+      }
+    },
+    "final_verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["cmd"],
+        "additionalProperties": false,
+        "properties": {
+          "cmd": {
+            "type": "string",
+            "description": "Command to verify overall success"
+          },
+          "expected": {
+            "type": "string",
+            "description": "Expected output or behavior"
+          }
+        }
+      },
+      "description": "Commands to verify overall spec completion"
+    }
+  }
+}

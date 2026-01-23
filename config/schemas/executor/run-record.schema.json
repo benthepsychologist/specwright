@@ -1,0 +1,165 @@
+{
+  "$defs": {
+    "Policy": {
+      "additionalProperties": false,
+      "description": "Execution policy settings.",
+      "properties": {
+        "profile": {
+          "default": "default",
+          "description": "Policy profile name",
+          "title": "Profile",
+          "type": "string"
+        },
+        "blocked_commands": {
+          "description": "Commands blocked during execution",
+          "items": {
+            "type": "string"
+          },
+          "title": "Blocked Commands",
+          "type": "array"
+        },
+        "allow_commit": {
+          "default": true,
+          "description": "Allow git commits",
+          "title": "Allow Commit",
+          "type": "boolean"
+        },
+        "allow_push": {
+          "default": false,
+          "description": "Allow git push",
+          "title": "Allow Push",
+          "type": "boolean"
+        },
+        "allow_merge": {
+          "default": false,
+          "description": "Allow git merge",
+          "title": "Allow Merge",
+          "type": "boolean"
+        }
+      },
+      "title": "Policy",
+      "type": "object"
+    },
+    "RepoScope": {
+      "additionalProperties": false,
+      "description": "Repository scope for a run.",
+      "properties": {
+        "repo_path": {
+          "format": "path",
+          "title": "Repo Path",
+          "type": "string"
+        },
+        "branch": {
+          "title": "Branch",
+          "type": "string"
+        },
+        "base_commit": {
+          "description": "SHA of the base commit at run start",
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "remote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Remote URL (optional)",
+          "title": "Remote"
+        }
+      },
+      "required": [
+        "repo_path",
+        "branch",
+        "base_commit"
+      ],
+      "title": "RepoScope",
+      "type": "object"
+    },
+    "RunStatus": {
+      "description": "Status of a run.",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top-level record for a run.\n\nStored at: ~/.local/local-governor/runs/{run_id}/run.yaml",
+  "properties": {
+    "run_id": {
+      "description": "Unique identifier for this run",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "job_id": {
+      "description": "Job template ID (e.g., 'aip-1')",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "job_hash": {
+      "description": "Hash of the compiled JobInstance",
+      "title": "Job Hash",
+      "type": "string"
+    },
+    "repo": {
+      "$ref": "#/$defs/RepoScope",
+      "description": "Repository scope"
+    },
+    "policy": {
+      "$ref": "#/$defs/Policy",
+      "description": "Execution policy"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus",
+      "default": "pending",
+      "description": "Current status"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "envelope": {
+      "additionalProperties": true,
+      "description": "Original envelope data",
+      "title": "Envelope",
+      "type": "object"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error message if failed",
+      "title": "Error"
+    }
+  },
+  "required": [
+    "run_id",
+    "job_id",
+    "job_hash",
+    "repo"
+  ],
+  "title": "RunRecord",
+  "type": "object"
+}

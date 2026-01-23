@@ -38,9 +38,27 @@ if TYPE_CHECKING:
     pass
 
 
+def _disable_implicit_timestamps(yaml: YAML) -> None:
+    """Disable YAML 1.1 implicit timestamp parsing.
+
+    Keeps ISO-like scalars (e.g., 2026-01-16T00:00:00Z) as strings instead of
+    auto-converting to datetime objects.
+    """
+    try:
+        resolvers = yaml.Resolver.yaml_implicit_resolvers
+    except Exception:
+        return
+
+    for key, mappings in list(resolvers.items()):
+        resolvers[key] = [
+            m for m in mappings if not m or m[0] != "tag:yaml.org,2002:timestamp"
+        ]
+
+
 def _get_yaml() -> YAML:
     """Get configured YAML instance for round-trip preservation."""
     yaml = YAML()
+    _disable_implicit_timestamps(yaml)
     yaml.preserve_quotes = True
     yaml.default_flow_style = False
     yaml.indent(mapping=2, sequence=4, offset=2)
@@ -115,7 +133,7 @@ def create_epic(
     # Create epic object
     now = datetime.now(timezone.utc)
     epic = Epic(
-        version="0.1",
+        version="0.2",
         kind="epic",
         id=id,
         title=title,
@@ -298,12 +316,16 @@ def _spec_to_map(spec: SpecRef) -> CommentedMap:
     m["id"] = spec.id
     m["repo"] = spec.repo
     m["branch"] = spec.branch
-    m["path"] = spec.path
+    if spec.path:
+        m["path"] = spec.path
     m["status"] = spec.status.value
     if spec.depends_on:
         m["depends_on"] = CommentedSeq(spec.depends_on)
     if spec.expectations:
         m["expectations"] = CommentedSeq(spec.expectations)
+    if getattr(spec, "constraints", None):
+        if spec.constraints:
+            m["constraints"] = CommentedSeq(spec.constraints)
     if spec.checks:
         m["checks"] = CommentedSeq(spec.checks)
     return m

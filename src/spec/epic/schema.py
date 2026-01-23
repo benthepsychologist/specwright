@@ -108,10 +108,11 @@ class SpecRef:
     id: str
     repo: str
     branch: str
-    path: str
+    path: str | None = None
     status: SpecStatus = SpecStatus.PLANNED
     depends_on: list[str] = field(default_factory=list)
     expectations: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
 
 
@@ -417,13 +418,16 @@ def _spec_to_dict(spec: SpecRef) -> dict[str, Any]:
         "id": spec.id,
         "repo": spec.repo,
         "branch": spec.branch,
-        "path": spec.path,
         "status": spec.status.value,
     }
+    if spec.path:
+        result["path"] = spec.path
     if spec.depends_on:
         result["depends_on"] = spec.depends_on
     if spec.expectations:
         result["expectations"] = spec.expectations
+    if spec.constraints:
+        result["constraints"] = spec.constraints
     if spec.checks:
         result["checks"] = spec.checks
     return result

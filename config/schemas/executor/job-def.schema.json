@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "Backend": {
+      "description": "Execution backend types.",
+      "enum": [
+        "cmd",
+        "llm",
+        "claude-code",
+        "codex"
+      ],
+      "title": "Backend",
+      "type": "string"
+    },
+    "StepTemplate": {
+      "additionalProperties": false,
+      "description": "Template for a step in a JobDef.\n\nStep templates are expanded during compilation to produce Step instances.",
+      "properties": {
+        "step_id": {
+          "description": "Unique identifier for this step template",
+          "title": "Step Id",
+          "type": "string"
+        },
+        "backend": {
+          "$ref": "#/$defs/Backend",
+          "description": "Execution backend"
+        },
+        "description": {
+          "default": "",
+          "description": "Human-readable description",
+          "title": "Description",
+          "type": "string"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional condition expression (e.g., '@ctx.some_flag == true')",
+          "title": "Condition"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "description": "Backend-specific payload (may contain @ref expressions)",
+          "title": "Payload",
+          "type": "object"
+        },
+        "timeout_s": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step-specific timeout override",
+          "title": "Timeout S"
+        }
+      },
+      "required": [
+        "step_id",
+        "backend"
+      ],
+      "title": "StepTemplate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Job definition template.\n\nJobDefs are registered templates that describe how to execute a type of job.\nThey are compiled with an envelope to produce a JobInstance.\n\nExample job_id values: 'aip-1', 'verify', 'deploy'",
+  "properties": {
+    "job_id": {
+      "description": "Unique identifier for this job template",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "version": {
+      "default": "1.0",
+      "description": "Job template version",
+      "title": "Version",
+      "type": "string"
+    },
+    "description": {
+      "default": "",
+      "description": "Human-readable description",
+      "title": "Description",
+      "type": "string"
+    },
+    "steps": {
+      "description": "Ordered list of step templates to execute",
+      "items": {
+        "$ref": "#/$defs/StepTemplate"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "defaults": {
+      "additionalProperties": true,
+      "description": "Default values for @payload.* expressions",
+      "title": "Defaults",
+      "type": "object"
+    }
+  },
+  "required": [
+    "job_id",
+    "steps"
+  ],
+  "title": "JobDef",
+  "type": "object"
+}

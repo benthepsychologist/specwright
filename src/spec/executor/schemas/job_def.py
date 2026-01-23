@@ -1,0 +1,58 @@
+"""
+Job definition schemas: JobDef, StepTemplate.
+"""
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from spec.executor.schemas.shared import Backend
+
+
+class StepTemplate(BaseModel):
+    """
+    Template for a step in a JobDef.
+
+    Step templates are expanded during compilation to produce Step instances.
+    """
+
+    step_id: str = Field(description="Unique identifier for this step template")
+    backend: Backend = Field(description="Execution backend")
+    description: str = Field(default="", description="Human-readable description")
+    condition: str | None = Field(
+        default=None,
+        description="Optional condition expression (e.g., '@ctx.some_flag == true')",
+    )
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Backend-specific payload (may contain @ref expressions)",
+    )
+    timeout_s: int | None = Field(
+        default=None, description="Step-specific timeout override"
+    )
+
+    model_config = {"extra": "forbid"}
+
+
+class JobDef(BaseModel):
+    """
+    Job definition template.
+
+    JobDefs are registered templates that describe how to execute a type of job.
+    They are compiled with an envelope to produce a JobInstance.
+
+    Example job_id values: 'aip-1', 'verify', 'deploy'
+    """
+
+    job_id: str = Field(description="Unique identifier for this job template")
+    version: str = Field(default="1.0", description="Job template version")
+    description: str = Field(default="", description="Human-readable description")
+    steps: list[StepTemplate] = Field(
+        description="Ordered list of step templates to execute"
+    )
+    defaults: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Default values for @payload.* expressions",
+    )
+
+    model_config = {"extra": "forbid"}

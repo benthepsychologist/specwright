@@ -1,0 +1,172 @@
+{
+  "$defs": {
+    "AgentCapture": {
+      "additionalProperties": false,
+      "description": "Agent output capture for a step.\n\nCaptures stdout, stderr, and exit code from agent execution.",
+      "properties": {
+        "stdout_file": {
+          "description": "Relative path to stdout file (e.g., 'steps/step-001/stdout.txt')",
+          "title": "Stdout File",
+          "type": "string"
+        },
+        "stderr_file": {
+          "description": "Relative path to stderr file (e.g., 'steps/step-001/stderr.txt')",
+          "title": "Stderr File",
+          "type": "string"
+        },
+        "exit_code": {
+          "description": "Agent exit code",
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "transcript_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative path to transcript file if available",
+          "title": "Transcript File"
+        }
+      },
+      "required": [
+        "stdout_file",
+        "stderr_file",
+        "exit_code"
+      ],
+      "title": "AgentCapture",
+      "type": "object"
+    },
+    "GitCapture": {
+      "additionalProperties": false,
+      "description": "Git state capture for a step.\n\nCaptures the git state before and after step execution.",
+      "properties": {
+        "base_commit": {
+          "description": "SHA of the base commit before step",
+          "title": "Base Commit",
+          "type": "string"
+        },
+        "pre_status": {
+          "description": "Git status output before step",
+          "title": "Pre Status",
+          "type": "string"
+        },
+        "post_status": {
+          "description": "Git status output after step",
+          "title": "Post Status",
+          "type": "string"
+        },
+        "patch_file": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative path to unified diff file (e.g., 'steps/step-001/changes.patch')",
+          "title": "Patch File"
+        },
+        "changed_files": {
+          "description": "List of changed files with before/after hashes",
+          "items": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "title": "Changed Files",
+          "type": "array"
+        },
+        "commit_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "SHA if agent committed during step",
+          "title": "Commit Sha"
+        }
+      },
+      "required": [
+        "base_commit",
+        "pre_status",
+        "post_status"
+      ],
+      "title": "GitCapture",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Evidence bundle for a step execution.\n\nStored at: ~/.local/local-governor/runs/{run_id}/steps/step-{step_n:03d}/capture.yaml\n\nContains all evidence captured during step execution.",
+  "properties": {
+    "step_n": {
+      "description": "Step number (1-indexed)",
+      "minimum": 1,
+      "title": "Step N",
+      "type": "integer"
+    },
+    "step_id": {
+      "description": "Unique identifier for this step",
+      "title": "Step Id",
+      "type": "string"
+    },
+    "git": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GitCapture"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Git state capture (if applicable)"
+    },
+    "agent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentCapture"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Agent output capture (if applicable)"
+    },
+    "assessments": {
+      "description": "Structured assessments from llm backend",
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Assessments",
+      "type": "array"
+    },
+    "traces": {
+      "description": "Relative paths to trace files",
+      "items": {
+        "type": "string"
+      },
+      "title": "Traces",
+      "type": "array"
+    }
+  },
+  "required": [
+    "step_n",
+    "step_id"
+  ],
+  "title": "StepCapture",
+  "type": "object"
+}
