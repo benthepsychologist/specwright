@@ -52,6 +52,7 @@ class LlmBackend(BackendBase):
         manifest: StepManifest,
         artifacts_dir: Path,
         policy: Policy,  # noqa: ARG002 - policy not used for LLM calls
+        capture_patch: bool = False,  # noqa: ARG002 - LLM doesn't modify repo
     ) -> StepCapture:
         """Call LLM via llm package and capture response."""
         from spec.executor.schemas import AgentCapture, StepCapture

@@ -66,6 +66,7 @@ class BackendBase(ABC):
         manifest: StepManifest,
         artifacts_dir: Path,
         policy: Policy,
+        capture_patch: bool = False,
     ) -> StepCapture:
         """
         Execute a step and return capture evidence.
@@ -74,6 +75,7 @@ class BackendBase(ABC):
             manifest: Fully resolved step manifest
             artifacts_dir: Directory to write artifacts (stdout.txt, etc.)
             policy: Execution policy for sandbox enforcement
+            capture_patch: If True, generate changes.patch in artifacts_dir
 
         Returns:
             StepCapture with all evidence from execution

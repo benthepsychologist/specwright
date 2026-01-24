@@ -49,6 +49,10 @@ class Step(BaseModel):
         default=None,
         description="If set and step fails, skip to the step with this step_id",
     )
+    capture_patch: bool = Field(
+        default=False,
+        description="If True, generate changes.patch for this step (diff since baseline)",
+    )
 
     model_config = {"extra": "forbid"}
 

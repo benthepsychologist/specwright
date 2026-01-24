@@ -1478,19 +1478,20 @@ def enrich_spec(
         mode = EnrichMode.GENERATE_STEPS
 
     # Track whether step generation is expected for this invocation.
+    # Note: AIPv3 uses 'phases' not 'steps' - phases are logical units of work
     requested_step_generation = (
         mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS)
-        or (mode == EnrichMode.SMART and not aip.steps)
+        or (mode == EnrichMode.SMART and not aip.phases)
     )
 
     # Drift guard: if we already have artifacts for this spec, generating steps
     # after-the-fact tends to produce retroactive plans that don't match what ran.
-    from spec.artifacts.storage import ArtifactStorage
+    from spec.epic.loader import get_governor_root
 
-    storage = ArtifactStorage(epic_id=epic_id, spec_id=spec_id)
-    has_run_artifacts = storage.exists("run_metadata.json")
+    artifact_dir = get_governor_root() / "artifacts" / epic_id / spec_id
+    has_run_artifacts = (artifact_dir / "run_metadata.json").exists()
 
-    if has_run_artifacts and mode == EnrichMode.SMART and not aip.steps:
+    if has_run_artifacts and mode == EnrichMode.SMART and not aip.phases:
         typer.secho(
             "Warning: Existing run artifacts detected for this spec. "
             "Skipping step generation in SMART mode to avoid post-run drift. "
@@ -1512,11 +1513,11 @@ def enrich_spec(
                 raise typer.Exit(0)
 
     # Confirmation for destructive modes
-    if mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS) and aip.steps:
+    if mode in (EnrichMode.GENERATE_STEPS, EnrichMode.OVERWRITE_STEPS) and aip.phases:
         if not yes:
             msg = (
                 f"This will {'replace' if mode == EnrichMode.OVERWRITE_STEPS else 'regenerate'} "
-                f"{len(aip.steps)} existing steps. Continue?"
+                f"{len(aip.phases)} existing phases. Continue?"
             )
             if not typer.confirm(msg):
                 typer.echo("Aborted.")
@@ -1530,11 +1531,11 @@ def enrich_spec(
     for warning in result.warnings:
         typer.secho(f"Warning: {warning}", fg=typer.colors.YELLOW, err=True)
 
-    # If we expected to generate steps but ended up with none, treat this as a
+    # If we expected to generate phases but ended up with none, treat this as a
     # hard failure so HITL gates don't silently pass.
-    if requested_step_generation and not result.aip.steps:
+    if requested_step_generation and not result.aip.phases:
         typer.secho(
-            "Error: Step generation was requested but produced 0 steps. "
+            "Error: Phase generation was requested but produced 0 phases. "
             "Check your --model/provider configuration and try again.",
             fg=typer.colors.RED,
             err=True,
@@ -1547,15 +1548,15 @@ def enrich_spec(
 
     # Show summary
     typer.echo("\nEnrichment Summary:")
-    typer.echo(f"  Steps generated:  {result.steps_generated}")
+    typer.echo(f"  Phases generated: {result.steps_generated}")
     typer.echo(f"  Guidance added:   {result.guidance_added}")
-    typer.echo(f"  Total steps:      {len(result.aip.steps)}")
+    typer.echo(f"  Total phases:     {len(result.aip.phases)}")
 
-    if result.aip.steps:
-        typer.echo("\nSteps:")
-        for step in result.aip.steps:
-            has_guidance = "+" if step.guidance else "-"
-            typer.echo(f"  [{has_guidance}] {step.id}: {step.title}")
+    if result.aip.phases:
+        typer.echo("\nPhases:")
+        for phase in result.aip.phases:
+            has_guidance = "+" if phase.guidance else "-"
+            typer.echo(f"  [{has_guidance}] {phase.id}: {phase.title}")
 
 
 @app.command("aip-run", deprecated=True)

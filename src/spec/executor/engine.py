@@ -21,8 +21,10 @@ from pathlib import Path
 from typing import Any
 
 from spec.executor.backends import BackendError, get_backend
+from spec.executor.sandbox.capture import generate_patch
 from spec.executor.schemas import (
     AttemptRecord,
+    Backend,
     Common,
     JobDef,
     JobInstance,
@@ -283,6 +285,7 @@ def compile_job(
             payload=resolved_payload,
             continue_on_failure=template.continue_on_failure,
             on_failure_skip_to=template.on_failure_skip_to,
+            capture_patch=template.capture_patch,
         )
         steps.append(step)
 
@@ -415,6 +418,7 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 timeout_s=1800,  # 30 minutes for agent work
                 on_failure_skip_to="capture.bundle",  # Skip runs 2/3 on failure
+                capture_patch=True,
             ),
             # Step 3: Commit after Run 1
             StepTemplate(
@@ -440,6 +444,7 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 timeout_s=1800,
                 continue_on_failure=True,  # Run 3 proceeds even if this fails
+                capture_patch=True,
             ),
             # Step 5: Commit after Run 2
             StepTemplate(
@@ -465,6 +470,7 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 timeout_s=1800,
                 continue_on_failure=True,  # Best effort
+                capture_patch=True,
             ),
             # Step 7: Commit after Run 3
             StepTemplate(
@@ -785,6 +791,9 @@ def execute(
             error=str(e),
         )
 
+    # Generate final artifacts (patch and report)
+    _generate_run_artifacts(run_record, attempt, store)
+
     # Write final state
     store.write_attempt(run_id, attempt)
     store.write_run_record(run_id, run_record)
@@ -923,6 +932,9 @@ def execute_instance(
             error=str(e),
         )
 
+    # Generate final artifacts (patch and report)
+    _generate_run_artifacts(run_record, attempt, store)
+
     # Write final state
     store.write_attempt(run_id, attempt)
     store.write_run_record(run_id, run_record)
@@ -1005,6 +1017,10 @@ def _run_steps(
         # Write manifest
         store.write_step_manifest(run_record.run_id, step.step_n, manifest)
 
+        # Log step start
+        total_steps = len(job_instance.steps)
+        print(f"[{step.step_n}/{total_steps}] {step.step_id} ... started", flush=True)
+
         # Dispatch to backend
         capture = None
         backend_error = None
@@ -1014,6 +1030,7 @@ def _run_steps(
                 manifest=manifest,
                 artifacts_dir=step_dir,
                 policy=run_record.policy,
+                capture_patch=step.capture_patch,
             )
         except BackendError as e:
             backend_error = str(e)
@@ -1031,6 +1048,10 @@ def _run_steps(
             )
             outcomes.append(outcome)
             store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+
+            # Log step failure
+            duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
+            print(f"[{step.step_n}/{total_steps}] {step.step_id} ... failed ({duration_str})", flush=True)
 
             # Update run context even for failures
             run_ctx["steps"][step.step_id] = {
@@ -1072,6 +1093,10 @@ def _run_steps(
         store.write_step_capture(run_record.run_id, step.step_n, capture)
         store.write_step_outcome(run_record.run_id, step.step_n, outcome)
 
+        # Log step completion
+        duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
+        print(f"[{step.step_n}/{total_steps}] {step.step_id} ... {outcome_status.value} ({duration_str})", flush=True)
+
         outcomes.append(outcome)
 
         # Update run context with step info
@@ -1098,6 +1123,134 @@ def _run_steps(
     if any_step_failed:
         return RunStatus.completed_with_errors, outcomes
     return RunStatus.completed, outcomes
+
+
+def _generate_run_artifacts(
+    run_record: RunRecord,
+    attempt: AttemptRecord,
+    store: RunStore,
+) -> None:
+    """
+    Generate final run artifacts: changes_final.patch and run_report.md.
+
+    Called after all steps complete (success or failure).
+    """
+    run_dir = store.get_run_path(run_record.run_id)
+    repo_path = Path(run_record.repo.repo_path)
+    base_commit = run_record.repo.base_commit
+
+    # Generate final cumulative patch
+    try:
+        patch_path = run_dir / "changes_final.patch"
+        generate_patch(repo_path, base_commit, output_path=patch_path)
+        print(f"Generated: {patch_path.name}", flush=True)
+    except Exception as e:
+        print(f"Warning: Failed to generate changes_final.patch: {e}", flush=True)
+
+    # Generate run report using LLM
+    try:
+        _generate_run_report(run_record, attempt, store, run_dir)
+    except Exception as e:
+        print(f"Warning: Failed to generate run_report.md: {e}", flush=True)
+
+
+def _generate_run_report(
+    run_record: RunRecord,
+    attempt: AttemptRecord,
+    store: RunStore,
+    run_dir: Path,
+) -> None:
+    """Generate an LLM-interpreted run report."""
+    from spec.executor.backends.llm import LLMBackend
+
+    # Build summary of step outcomes
+    outcomes_summary = []
+    for outcome in attempt.step_outcomes or []:
+        outcomes_summary.append(
+            f"- Step {outcome.step_n} ({outcome.step_id}): {outcome.outcome.value}"
+            + (f" - {outcome.error}" if outcome.error else "")
+        )
+
+    # Read the final patch if it exists
+    patch_path = run_dir / "changes_final.patch"
+    patch_content = ""
+    if patch_path.exists():
+        patch_content = patch_path.read_text()
+        # Truncate if too long
+        if len(patch_content) > 50000:
+            patch_content = patch_content[:50000] + "\n... (truncated)"
+
+    prompt = f"""Analyze this automated job run and provide a brief report.
+
+## Run Information
+- Run ID: {run_record.run_id}
+- Job ID: {run_record.job_id}
+- Status: {run_record.status.value}
+- Repository: {run_record.repo.repo_path}
+- Branch: {run_record.repo.branch}
+
+## Step Outcomes
+{chr(10).join(outcomes_summary)}
+
+## Code Changes (diff from baseline)
+```diff
+{patch_content if patch_content else "(no changes)"}
+```
+
+## Instructions
+Provide a concise report (200-400 words) covering:
+1. **Summary**: What was accomplished in this run?
+2. **Assessment**: How well did the implementation meet expectations?
+3. **Issues**: Any failures, warnings, or concerns?
+4. **Recommendation**: What should happen next? (merge, fix issues, manual review, etc.)
+
+Be direct and actionable. Focus on what matters for the person reviewing this run.
+"""
+
+    # Use LLM backend to generate report
+    backend = LLMBackend()
+    try:
+        # Create a minimal manifest for the LLM call
+        manifest = StepManifest(
+            step_n=0,
+            step_id="run_report",
+            backend=Backend.llm,
+            common=Common(
+                repo_path=Path(run_record.repo.repo_path),
+                branch=run_record.repo.branch,
+                base_commit=run_record.repo.base_commit,
+            ),
+            payload={
+                "prompt": prompt,
+                "model": "gemini-3-pro-preview",
+            },
+        )
+
+        capture = backend.dispatch(
+            manifest=manifest,
+            artifacts_dir=run_dir,
+            policy=run_record.policy,
+        )
+
+        # Extract response and write report
+        if capture.llm and capture.llm.response:
+            report_path = run_dir / "run_report.md"
+            report_content = f"""# Run Report: {run_record.run_id}
+
+**Generated**: {datetime.now(UTC).isoformat()}
+**Status**: {run_record.status.value}
+**Job**: {run_record.job_id}
+
+---
+
+{capture.llm.response}
+"""
+            report_path.write_text(report_content)
+            print(f"Generated: {report_path.name}", flush=True)
+
+    except Exception as e:
+        # Log but don't fail the run
+        print(f"Warning: LLM report generation failed: {e}", flush=True)
 
 
 def _create_failed_outcome(
@@ -1148,6 +1301,10 @@ def _handle_step_failure(
         )
 
         if target_idx is not None and target_idx > step_idx:
+            # Log skip-to action
+            total_steps = len(job_instance.steps)
+            print(f"  → skipping to {step.on_failure_skip_to}", flush=True)
+
             # Skip intermediate steps
             for skip_idx in range(step_idx + 1, target_idx):
                 skipped_step = job_instance.steps[skip_idx]
@@ -1162,6 +1319,9 @@ def _handle_step_failure(
                 )
                 outcomes.append(skip_outcome)
                 store.write_step_outcome(run_record.run_id, skipped_step.step_n, skip_outcome)
+
+                # Log skipped step
+                print(f"[{skipped_step.step_n}/{total_steps}] {skipped_step.step_id} ... skipped", flush=True)
 
             # Return the target index to continue from
             return (target_idx, True)

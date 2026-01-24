@@ -54,6 +54,7 @@ class CodexBackend(BackendBase):
         manifest: StepManifest,
         artifacts_dir: Path,
         policy: Policy,
+        capture_patch: bool = False,
     ) -> StepCapture:
         """Spawn Codex session and capture output."""
         from spec.executor.schemas import AgentCapture, GitCapture, StepCapture
@@ -141,7 +142,8 @@ class CodexBackend(BackendBase):
         git_capture = None
         if capture_git:
             try:
-                patch_path = artifacts_dir / "changes.patch"
+                # Only generate patch file if capture_patch is True
+                patch_path = artifacts_dir / "changes.patch" if capture_patch else None
                 git_capture = capture_git_state(
                     repo_path,
                     common.base_commit,
