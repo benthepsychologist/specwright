@@ -17,6 +17,7 @@ from spec.autogov.exceptions import SpecwrightError
 
 if TYPE_CHECKING:
     from spec.aip.models import AIPv3
+    from spec.epic.schema import Epic
 
 
 class EnrichMode(str, Enum):
@@ -44,7 +45,7 @@ class EnrichResult:
     warnings: list[str]
 
 
-# Default prompts for AIP enrichment
+# Default prompts for AIP enrichment - parameterized for any target repo
 DEFAULT_STEP_PLANNING_PROMPT = """\
 You are a senior software engineer planning concrete, repo-grounded steps for a spec.
 
@@ -61,30 +62,17 @@ You are a senior software engineer planning concrete, repo-grounded steps for a 
 Repository: {repo_path}
 Branch: {branch}
 
-## Existing files (sample)
+## Existing files (sample from target repo)
 {existing_files}
 
-## Repo reality constraints (must follow)
-- This project is Specwright; Python package code lives under src/spec/...
-- AIP v3 uses dataclasses (NOT Pydantic).
-- CLI commands for this work are currently namespaced as:
-    - spec aip-compile
-    - spec aip-enrich
-    - spec aip-run
-    - spec aip-status
-    - spec aip-diff
-- Do NOT invent modules or paths. Only reference files under src/spec/... (or tests/...) that either:
-    (a) appear in the existing files sample, or
-    (b) are obviously adjacent to those paths (e.g., src/spec/aip/foo.py).
-- Prefer verification/dogfooding steps when likely already implemented; avoid "implement X" steps
-    unless you can point to where it should live in src/spec/....
-- Do NOT mention legacy namespaces like src/spec/governor/... or src/spec/executor/... unless explicitly asked.
+{repo_context}
 
 ## Instructions
 Generate a list of implementation steps. Each step should be:
 - Actionable and specific
 - Logically ordered (dependencies before dependents)
 - Verifiable with commands
+- Grounded in the actual file paths shown in "Existing files" above
 
 Respond with JSON only (no markdown fences):
 {{
@@ -111,23 +99,11 @@ Goal: {goal}
 Repository: {repo_path}
 Existing files (sample): {existing_files}
 
-## Repo reality constraints (must follow)
-- This project is Specwright; Python package code lives under src/spec/...
-- AIP v3 uses dataclasses (NOT Pydantic).
-- CLI commands for this work are currently namespaced as:
-    - spec aip-compile
-    - spec aip-enrich
-    - spec aip-run
-    - spec aip-status
-    - spec aip-diff
-- Do NOT suggest files outside this repo.
-- Do NOT invent modules or paths. Prefer referencing files from the existing files sample.
-- When suggesting new files, keep them adjacent to existing modules (e.g., src/spec/aip/<name>.py).
-- Do NOT mention legacy namespaces like src/spec/governor/... or src/spec/executor/... unless explicitly asked.
+{repo_context}
 
 ## Instructions
 Generate implementation guidance for this step. Include:
-- likely_files: Files likely to be created or modified
+- likely_files: Files likely to be created or modified (use paths consistent with the repo structure shown above)
 - patterns_to_follow: Reference files with patterns to learn from
 - approach: Recommended implementation approach (numbered steps)
 - watch_out_for: Common pitfalls to avoid
@@ -144,10 +120,104 @@ Respond with JSON only (no markdown fences):
 """
 
 
+def _build_repo_context(epic: Epic | None, spec_id: str | None) -> str:
+    """Build repo-specific context for enrichment prompts.
+
+    Args:
+        epic: The epic containing target repo info and spec expectations
+        spec_id: The spec ID to get expectations/constraints from
+
+    Returns:
+        Formatted context string for the prompt
+    """
+    if epic is None:
+        return ""
+
+    lines = ["## Repo Structure & Epic Expectations"]
+
+    # Get spec info
+    spec = epic.get_spec(spec_id) if spec_id else None
+    if spec:
+        # Get target repo info
+        target = epic.get_target(spec.repo)
+        if target:
+            lines.append(f"- Target project: {target.id}")
+            lines.append(f"- Target repo path: {target.repo_path}")
+
+        # Add epic expectations as explicit file path hints
+        if spec.expectations:
+            lines.append("\n### Expected File Locations (from epic)")
+            lines.append("These paths are specified in the epic - use them as authoritative guidance:")
+            for exp in spec.expectations:
+                lines.append(f"- {exp}")
+
+        # Add constraints
+        if spec.constraints:
+            lines.append("\n### Constraints (from epic)")
+            for con in spec.constraints:
+                lines.append(f"- {con}")
+
+    # Extract file paths from checks that apply to this spec
+    check_paths = _extract_check_file_paths(epic, spec_id)
+    if check_paths:
+        lines.append("\n### Verification Check Paths (files that will be checked)")
+        lines.append("The following files will be verified - ensure they exist at these exact paths:")
+        for path in check_paths:
+            lines.append(f"- {path}")
+
+    lines.append("\n## Path Constraints")
+    lines.append("- Do NOT invent modules or paths. Only reference files that:")
+    lines.append("    (a) appear in the existing files sample, or")
+    lines.append("    (b) are explicitly mentioned in the epic expectations above, or")
+    lines.append("    (c) are obviously adjacent to existing paths")
+    lines.append("- File paths in your steps MUST match the epic expectations above")
+
+    return "\n".join(lines)
+
+
+def _extract_check_file_paths(epic: Epic, spec_id: str | None) -> list[str]:
+    """Extract expected file paths from epic checks for a spec.
+
+    Args:
+        epic: The epic containing checks
+        spec_id: The spec ID to filter checks for
+
+    Returns:
+        List of file paths that checks will verify
+    """
+    paths = []
+
+    spec = epic.get_spec(spec_id) if spec_id else None
+    if not spec:
+        return paths
+
+    # Get checks that apply to this spec
+    for check_id in spec.checks:
+        check = epic.get_check(check_id)
+        if check:
+            for inp in check.inputs:
+                if inp.type == "file" and inp.path:
+                    # Resolve path with target repo
+                    target = epic.get_target(inp.target) if inp.target else None
+                    if target:
+                        paths.append(f"{inp.path} (in {target.id})")
+                    else:
+                        paths.append(inp.path)
+                elif inp.type == "directory" and inp.path:
+                    target = epic.get_target(inp.target) if inp.target else None
+                    if target:
+                        paths.append(f"{inp.path}/ (directory in {target.id})")
+                    else:
+                        paths.append(f"{inp.path}/")
+
+    return paths
+
+
 def enrich_aip(
     aip: AIPv3,
     mode: EnrichMode = EnrichMode.SMART,
     model: str | None = None,
+    epic: Epic | None = None,
 ) -> EnrichResult:
     """Enrich an AIP with LLM-generated steps and guidance.
 
@@ -155,6 +225,8 @@ def enrich_aip(
         aip: The AIP to enrich
         mode: Enrichment mode
         model: LLM model to use (default: from config)
+        epic: The epic containing target repo info and expectations (required for
+              correct path generation when enriching specs for non-specwright repos)
 
     Returns:
         EnrichResult with enriched AIP and status info
@@ -181,7 +253,7 @@ def enrich_aip(
     # Generate phases if needed
     if should_generate_phases:
         try:
-            new_phases = _generate_steps(enriched, model)
+            new_phases = _generate_steps(enriched, model, epic)
             if new_phases:
                 enriched.phases = new_phases
                 steps_generated = True
@@ -196,12 +268,19 @@ def enrich_aip(
                 continue
 
             try:
-                guidance = _generate_guidance(enriched, phase, model)
+                guidance = _generate_guidance(enriched, phase, model, epic)
                 if guidance:
                     phase.guidance = guidance
                     guidance_added = True
             except Exception as e:
                 warnings.append(f"Failed to generate guidance for {phase.id}: {e}")
+
+    # Validate generated paths against epic expectations
+    if epic and (steps_generated or guidance_added):
+        path_errors = _validate_aip_paths(enriched, epic)
+        if path_errors:
+            for err in path_errors:
+                warnings.append(f"Path validation: {err}")
 
     return EnrichResult(
         aip=enriched,
@@ -211,12 +290,13 @@ def enrich_aip(
     )
 
 
-def _generate_steps(aip: AIPv3, model: str | None) -> list:
+def _generate_steps(aip: AIPv3, model: str | None, epic: Epic | None = None) -> list:
     """Generate steps using LLM.
 
     Args:
         aip: The AIP to generate steps for
         model: LLM model to use
+        epic: The epic containing target repo info and expectations
 
     Returns:
         List of AIPStep instances
@@ -238,24 +318,31 @@ def _generate_steps(aip: AIPv3, model: str | None) -> list:
     expectations_text = "\n".join(f"- {e}" for e in aip.expectations) or "(none)"
     constraints_text = "\n".join(f"- {c}" for c in aip.constraints) or "(none)"
 
-    existing_files = _get_sample_files(aip.workspace.repo_path)
+    # Get target repo path from epic if available, otherwise use AIP workspace
+    target_repo_path = _get_target_repo_path(aip, epic)
+    existing_files = _get_sample_files(target_repo_path, epic)
 
     # Nudge step generation away from retroactive "implement X" when the repo
     # already appears to contain the expected v2 modules.
-    repo_state_hints = _infer_repo_state_hints(aip.workspace.repo_path)
+    repo_state_hints = _infer_repo_state_hints(target_repo_path)
     if repo_state_hints:
         if constraints_text == "(none)":
             constraints_text = repo_state_hints
         else:
             constraints_text = f"{constraints_text}\n{repo_state_hints}"
 
+    # Build repo-specific context from epic
+    spec_id = aip.metadata.spec_id if hasattr(aip, 'metadata') and aip.metadata else None
+    repo_context = _build_repo_context(epic, spec_id)
+
     prompt = template.format(
         goal=aip.goal,
         expectations=expectations_text,
         constraints=constraints_text,
-        repo_path=aip.workspace.repo_path,
+        repo_path=target_repo_path,
         branch=aip.workspace.branch,
         existing_files="\n".join(f"- {f}" for f in existing_files) or "(none)",
+        repo_context=repo_context,
     )
 
     response = client.prompt(prompt)
@@ -274,11 +361,31 @@ def _generate_steps(aip: AIPv3, model: str | None) -> list:
     return steps
 
 
+def _get_target_repo_path(aip: AIPv3, epic: Epic | None) -> str:
+    """Get the target repository path from epic or AIP.
+
+    Args:
+        aip: The AIP with workspace info
+        epic: The epic with target definitions
+
+    Returns:
+        Path to the target repository
+    """
+    if epic and hasattr(aip, 'metadata') and aip.metadata:
+        spec = epic.get_spec(aip.metadata.spec_id)
+        if spec:
+            target = epic.get_target(spec.repo)
+            if target:
+                return target.repo_path
+
+    return aip.workspace.repo_path
+
+
 def _infer_repo_state_hints(repo_path: str) -> str:
     """Return additional constraint lines based on observed repo state.
 
     This is intentionally heuristic: it biases the LLM toward verification-
-    oriented steps when key modules already exist.
+    oriented steps when many Python files already exist.
     """
     from pathlib import Path
 
@@ -286,34 +393,37 @@ def _infer_repo_state_hints(repo_path: str) -> str:
     if not repo.exists():
         return ""
 
-    markers = (
-        "src/spec/aip/compiler.py",
-        "src/spec/aip/enricher.py",
-        "src/spec/aip/models.py",
-        "src/spec/artifacts/storage.py",
-        "src/spec/runner/background.py",
-        "src/spec/cli/spec.py",
-    )
-    found = [m for m in markers if (repo / m).exists()]
+    # Count Python files to detect mature codebases
+    try:
+        py_files = list(repo.rglob("*.py"))
+        # Filter out common non-source directories
+        py_files = [
+            f for f in py_files
+            if not any(part.startswith(".") or part in ("__pycache__", "node_modules", ".venv", "venv", "build", "dist")
+                       for part in f.parts)
+        ]
 
-    if len(found) >= 4:
-        found_text = ", ".join(found)
-        return (
-            "- Repo state: Many v2 core modules already exist in this repo. "
-            "Prefer verification/hardening/dogfooding steps over greenfield implementation.\n"
-            f"- Repo state evidence: {found_text}"
-        )
+        if len(py_files) >= 20:
+            # Mature codebase - suggest verification over greenfield
+            return (
+                "- Repo state: This appears to be a mature codebase with existing code. "
+                "Prefer verification/hardening steps over greenfield implementation when features may already exist.\n"
+                f"- Repo state evidence: Found {len(py_files)} Python files"
+            )
+    except Exception:
+        pass
 
     return ""
 
 
-def _generate_guidance(aip: AIPv3, step, model: str | None):
+def _generate_guidance(aip: AIPv3, step, model: str | None, epic: Epic | None = None):
     """Generate guidance for a step using LLM.
 
     Args:
         aip: The parent AIP
         step: The step to generate guidance for
         model: LLM model to use
+        epic: The epic containing target repo info and expectations
 
     Returns:
         AIPStepGuidance instance
@@ -331,16 +441,24 @@ def _generate_guidance(aip: AIPv3, step, model: str | None):
     prompts = load_prompts()
     template = prompts.get("aip_step_guidance", DEFAULT_STEP_GUIDANCE_PROMPT)
 
-    # Get sample of existing files for context
-    existing_files = _get_sample_files(aip.workspace.repo_path)
+    # Get target repo path from epic if available
+    target_repo_path = _get_target_repo_path(aip, epic)
+
+    # Get sample of existing files for context from target repo
+    existing_files = _get_sample_files(target_repo_path, epic)
+
+    # Build repo-specific context from epic
+    spec_id = aip.metadata.spec_id if hasattr(aip, 'metadata') and aip.metadata else None
+    repo_context = _build_repo_context(epic, spec_id)
 
     prompt = template.format(
         step_id=step.id,
         step_title=step.title,
         step_objective=step.objective,
         goal=aip.goal,
-        repo_path=aip.workspace.repo_path,
+        repo_path=target_repo_path,
         existing_files=", ".join(existing_files) or "(none)",
+        repo_context=repo_context,
     )
 
     response = client.prompt(prompt)
@@ -361,11 +479,12 @@ def _generate_guidance(aip: AIPv3, step, model: str | None):
     )
 
 
-def _get_sample_files(repo_path: str, max_files: int = 40) -> list[str]:
+def _get_sample_files(repo_path: str, epic: Epic | None = None, max_files: int = 40) -> list[str]:
     """Get a sample of files from the repository for context.
 
     Args:
         repo_path: Path to the repository
+        epic: The epic (unused, but kept for consistency)
         max_files: Maximum number of files to return
 
     Returns:
@@ -379,46 +498,66 @@ def _get_sample_files(repo_path: str, max_files: int = 40) -> list[str]:
 
     files: list[str] = []
 
-    def _add_if_exists(rel_path: str) -> None:
-        p = repo / rel_path
-        if p.exists():
-            files.append(rel_path)
+    # Directories to skip
+    skip_dirs = {".git", "__pycache__", "node_modules", ".venv", "venv", "build", "dist", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache", "egg-info"}
+
+    def should_skip(path: Path) -> bool:
+        return any(part in skip_dirs or part.startswith(".") for part in path.parts)
 
     try:
-        # Seed with the most relevant modules first.
-        for seed in (
-            "src/spec/cli/spec.py",
-            "src/spec/aip/models.py",
-            "src/spec/aip/compiler.py",
-            "src/spec/aip/enricher.py",
-            "src/spec/artifacts/storage.py",
-            "src/spec/artifacts/collector.py",
-            "src/spec/runner/background.py",
-            "src/spec/runner/interactive.py",
-            "src/spec/llm/client.py",
-            "src/spec/llm/prompts.py",
-            "src/spec/schemas/aip-v3.schema.json",
-            "tests/aip/test_compiler.py",
-            "tests/aip/test_enricher.py",
-            "tests/runner/test_background.py",
-            "tests/artifacts/test_storage.py",
-        ):
-            _add_if_exists(seed)
+        # First pass: collect Python files organized by directory depth
+        # This gives us a good cross-section of the codebase
+        py_files: list[tuple[int, Path]] = []
 
-        # Add a small set of additional files from src/spec and tests.
-        for folder, pattern in ((repo / "src" / "spec", "*.py"), (repo / "tests", "test_*.py")):
-            if not folder.exists():
+        for f in repo.rglob("*.py"):
+            if should_skip(f.relative_to(repo)):
                 continue
-            for f in folder.rglob(pattern):
-                if len(files) >= max_files:
-                    break
-                rel = str(f.relative_to(repo))
-                if rel not in files:
-                    files.append(rel)
+            depth = len(f.relative_to(repo).parts)
+            py_files.append((depth, f))
+
+        # Sort by depth (shallower first) to get top-level structure first
+        py_files.sort(key=lambda x: (x[0], x[1].name))
+
+        # Add files, preferring __init__.py and key modules at each level
+        seen_dirs: set[str] = set()
+        for _, f in py_files:
+            if len(files) >= max_files:
+                break
+
+            rel = str(f.relative_to(repo))
+            parent_dir = str(f.parent.relative_to(repo))
+
+            # Always include __init__.py to show package structure
+            if f.name == "__init__.py":
+                files.append(rel)
+                seen_dirs.add(parent_dir)
+            # Include first file from each directory for variety
+            elif parent_dir not in seen_dirs:
+                files.append(rel)
+                seen_dirs.add(parent_dir)
+            # Then fill in with other files
+            elif rel not in files:
+                files.append(rel)
+
+        # Also include test files for completeness
+        if len(files) < max_files:
+            test_dirs = [repo / "tests", repo / "test"]
+            for test_dir in test_dirs:
+                if not test_dir.exists():
+                    continue
+                for f in test_dir.rglob("test_*.py"):
+                    if len(files) >= max_files:
+                        break
+                    if should_skip(f.relative_to(repo)):
+                        continue
+                    rel = str(f.relative_to(repo))
+                    if rel not in files:
+                        files.append(rel)
+
     except Exception:
         return files[:max_files]
 
-    return files
+    return files[:max_files]
 
 
 def _parse_json_response(response: str) -> dict:
@@ -452,3 +591,58 @@ def _parse_json_response(response: str) -> dict:
         raise EnrichError(f"Failed to parse LLM response as JSON: {e}")
 
     raise EnrichError(f"Expected JSON object, got {type(data).__name__}")
+
+
+def _validate_aip_paths(aip: AIPv3, epic: Epic) -> list[str]:
+    """Validate that AIP paths match epic expectations.
+
+    Args:
+        aip: The enriched AIP to validate
+        epic: The epic with expected file paths
+
+    Returns:
+        List of validation error messages (empty if valid)
+    """
+    errors: list[str] = []
+
+    spec_id = aip.metadata.spec_id if hasattr(aip, 'metadata') and aip.metadata else None
+    if not spec_id:
+        return errors
+
+    spec = epic.get_spec(spec_id)
+    if not spec:
+        return errors
+
+    # Get expected paths from epic check inputs
+    expected_paths: set[str] = set()
+    for check_id in spec.checks:
+        check = epic.get_check(check_id)
+        if check:
+            for inp in check.inputs:
+                if inp.type == "file" and inp.path:
+                    expected_paths.add(inp.path)
+                elif inp.type == "directory" and inp.path:
+                    expected_paths.add(inp.path.rstrip("/"))
+
+    if not expected_paths:
+        return errors
+
+    # Extract paths mentioned in AIP phases/guidance
+    aip_paths: set[str] = set()
+    for phase in aip.phases:
+        if phase.guidance and phase.guidance.likely_files:
+            for f in phase.guidance.likely_files:
+                aip_paths.add(f)
+
+    # Check for obvious mismatches (e.g., src/spec/ when lorchestra/ is expected)
+    for aip_path in aip_paths:
+        # Check if AIP path uses specwright's structure for a non-specwright target
+        if aip_path.startswith("src/spec/"):
+            target = epic.get_target(spec.repo)
+            if target and "specwright" not in target.repo_path.lower():
+                errors.append(
+                    f"AIP suggests '{aip_path}' but target repo is '{target.id}', "
+                    f"not specwright. Expected paths like: {list(expected_paths)[:3]}"
+                )
+
+    return errors

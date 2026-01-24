@@ -1449,6 +1449,7 @@ def enrich_spec(
     from spec.epic.loader import list_epics, load_epic
 
     # Auto-detect epic if not specified
+    epic = None
     if epic_id is None:
         epic_ids = list_epics()
         for eid in epic_ids:
@@ -1464,6 +1465,9 @@ def enrich_spec(
                 err=True,
             )
             raise typer.Exit(2)
+    else:
+        # Epic ID was explicitly provided, load it
+        epic = load_epic(epic_id)
 
     # Load the AIP
     aip = load_compiled_aip(epic_id, spec_id)
@@ -1523,9 +1527,9 @@ def enrich_spec(
                 typer.echo("Aborted.")
                 raise typer.Exit(0)
 
-    # Enrich the AIP
+    # Enrich the AIP (pass epic for target repo context and path validation)
     typer.echo(f"Enriching AIP {spec_id} (mode: {mode.value})...")
-    result = enrich_aip(aip, mode=mode, model=model)
+    result = enrich_aip(aip, mode=mode, model=model, epic=epic)
 
     # Show warnings
     for warning in result.warnings:

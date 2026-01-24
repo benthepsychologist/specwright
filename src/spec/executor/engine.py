@@ -437,8 +437,9 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.claude_code,
                 description="Run 2: Inspect for drift and fix",
                 payload={
-                    "prompt": _build_drift_fix_prompt(),
+                    "prompt_type": "drift_fix",  # Tells backend which prompt to build
                     "aip": "@payload.aip",
+                    "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
                 },
@@ -463,8 +464,9 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.claude_code,
                 description="Run 3: Final drift verification",
                 payload={
-                    "prompt": _build_drift_verify_prompt(),
+                    "prompt_type": "drift_verify",  # Tells backend which prompt to build
                     "aip": "@payload.aip",
+                    "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
                 },
@@ -520,9 +522,13 @@ def _create_aip1_job_def() -> JobDef:
     )
 
 
-def _build_drift_fix_prompt() -> str:
-    """Build prompt for Run 2: drift inspection and fix."""
-    return """# Drift Inspection and Fix
+def _build_drift_fix_prompt(epic_spec: dict | None = None) -> str:
+    """Build prompt for Run 2: drift inspection and fix.
+
+    Args:
+        epic_spec: Optional epic spec expectations to include as ground truth
+    """
+    prompt = """# Drift Inspection and Fix
 
 You are reviewing the code changes from the previous AIP implementation run.
 
@@ -550,10 +556,20 @@ Check `git log` and `git diff` to see what was implemented.
 Focus on correctness and spec adherence, not on style or refactoring.
 """
 
+    # Add epic expectations as ground truth if provided
+    if epic_spec:
+        prompt += _format_epic_expectations(epic_spec)
 
-def _build_drift_verify_prompt() -> str:
-    """Build prompt for Run 3: final drift verification."""
-    return """# Final Drift Verification
+    return prompt
+
+
+def _build_drift_verify_prompt(epic_spec: dict | None = None) -> str:
+    """Build prompt for Run 3: final drift verification.
+
+    Args:
+        epic_spec: Optional epic spec expectations to include as ground truth
+    """
+    prompt = """# Final Drift Verification
 
 You are performing a final verification pass on the AIP implementation.
 
@@ -579,6 +595,44 @@ This is the FINAL pass - focus on making sure everything is correct and complete
 
 Do not make unnecessary changes. Only fix actual issues.
 """
+
+    # Add epic expectations as ground truth if provided
+    if epic_spec:
+        prompt += _format_epic_expectations(epic_spec)
+
+    return prompt
+
+
+def _format_epic_expectations(epic_spec: dict) -> str:
+    """Format epic spec expectations for inclusion in prompts.
+
+    Args:
+        epic_spec: Dict containing spec expectations from epic
+
+    Returns:
+        Formatted string to append to prompts
+    """
+    lines = ["\n\n## Epic Expectations (Ground Truth)"]
+    lines.append("The following expectations come from the epic definition and take precedence over AIP details:")
+
+    if expectations := epic_spec.get("expectations"):
+        lines.append("\n### Expected Outcomes")
+        for exp in expectations:
+            lines.append(f"- {exp}")
+
+    if constraints := epic_spec.get("constraints"):
+        lines.append("\n### Constraints")
+        for con in constraints:
+            lines.append(f"- {con}")
+
+    if check_paths := epic_spec.get("check_paths"):
+        lines.append("\n### Files to be Verified (exact paths from epic)")
+        for path in check_paths:
+            lines.append(f"- {path}")
+
+    lines.append("\n**Important**: If the AIP suggests different file paths than the epic expectations, the epic expectations are authoritative.")
+
+    return "\n".join(lines)
 
 
 # Register aip-1 on module load

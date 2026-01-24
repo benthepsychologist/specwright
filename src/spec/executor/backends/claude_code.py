@@ -72,19 +72,25 @@ class ClaudeCodeBackend(BackendBase):
 
         # Extract payload fields
         prompt = payload.get("prompt")
+        prompt_type = payload.get("prompt_type")  # drift_fix, drift_verify, etc.
         aip_path = payload.get("aip_path")
         aip_data = payload.get("aip")  # Direct AIP dict from envelope
+        epic_spec = payload.get("epic_spec")  # Epic expectations for ground truth
+
+        # Handle prompt_type for drift steps - build prompt dynamically
+        if prompt_type and not prompt:
+            prompt = self._build_prompt_for_type(prompt_type, aip_data, epic_spec)
 
         if not prompt and not aip_path and not aip_data:
             raise BackendError(
-                "claude-code backend requires 'prompt', 'aip_path', or 'aip' in payload",
+                "claude-code backend requires 'prompt', 'prompt_type', 'aip_path', or 'aip' in payload",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
 
         # If we have AIP data directly, build prompt from it
         if aip_data and not prompt:
-            prompt = self._build_prompt_from_aip_data(aip_data)
+            prompt = self._build_prompt_from_aip_data(aip_data, epic_spec)
         # If we have an AIP path, build prompt from it
         elif aip_path and not prompt:
             prompt = self._build_prompt_from_aip(Path(aip_path))
@@ -202,8 +208,48 @@ class ClaudeCodeBackend(BackendBase):
 
         return self._build_prompt_from_aip_data(aip)
 
-    def _build_prompt_from_aip_data(self, aip: dict) -> str:
-        """Build a prompt from an AIP dict."""
+    def _build_prompt_for_type(
+        self,
+        prompt_type: str,
+        aip_data: dict | None,
+        epic_spec: dict | None,
+    ) -> str:
+        """Build a prompt based on type (drift_fix, drift_verify, etc.).
+
+        Args:
+            prompt_type: The type of prompt to build
+            aip_data: Optional AIP data to include
+            epic_spec: Optional epic spec expectations
+
+        Returns:
+            Built prompt string
+        """
+        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
+
+        if prompt_type == "drift_fix":
+            prompt = _build_drift_fix_prompt(epic_spec)
+        elif prompt_type == "drift_verify":
+            prompt = _build_drift_verify_prompt(epic_spec)
+        else:
+            raise BackendError(
+                f"Unknown prompt_type: {prompt_type}",
+                backend=self.name,
+            )
+
+        # Append AIP context if available
+        if aip_data:
+            prompt += "\n\n## AIP Context\n"
+            prompt += self._build_prompt_from_aip_data(aip_data, epic_spec)
+
+        return prompt
+
+    def _build_prompt_from_aip_data(self, aip: dict, epic_spec: dict | None = None) -> str:
+        """Build a prompt from an AIP dict.
+
+        Args:
+            aip: The AIP dict to build prompt from
+            epic_spec: Optional epic spec expectations (currently unused, for future expansion)
+        """
         parts = []
 
         # Handle AIPv3 structure (metadata.title, goal) or legacy (title, description)

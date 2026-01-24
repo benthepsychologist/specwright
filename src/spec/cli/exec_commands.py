@@ -50,6 +50,34 @@ def _echo_warning(message: str) -> None:
     typer.secho(message, fg=typer.colors.YELLOW)
 
 
+def _extract_check_paths(epic: Any, spec_id: str) -> list[str]:
+    """Extract file paths from epic checks that apply to this spec.
+
+    Args:
+        epic: The Epic object
+        spec_id: The spec ID to get checks for
+
+    Returns:
+        List of file paths that checks will verify
+    """
+    paths = []
+
+    spec = epic.get_spec(spec_id)
+    if not spec:
+        return paths
+
+    for check_id in spec.checks:
+        check = epic.get_check(check_id)
+        if check:
+            for inp in check.inputs:
+                if inp.type == "file" and inp.path:
+                    paths.append(inp.path)
+                elif inp.type == "directory" and inp.path:
+                    paths.append(inp.path.rstrip("/") + "/")
+
+    return paths
+
+
 def _echo_step(step_n: int, total: int, step_id: str, backend: str, status: str = "running") -> None:
     """Print step progress."""
     if status == "running":
@@ -140,6 +168,7 @@ def compile_command(
             "aip_path": str(aip_path.resolve()),
             "repo_path": str(repo_path),
             "feature_branch": branch,
+            "epic_spec": None,  # No epic context when compiling from file
         },
         "ctx": {
             "aip_id": aip_data.get("aip_id", aip_path.stem),
@@ -282,15 +311,31 @@ def run_command(
         raise typer.Exit(1)
 
     # Load AIP - either from file or from epic/spec
+    epic_spec = None  # Will be populated for epic/spec mode
     if epic_id and spec_id:
         # Load from governor
         from spec.aip.compiler import load_compiled_aip
+        from spec.epic.loader import load_epic
 
         try:
             aip = load_compiled_aip(epic_id, spec_id)
         except Exception as e:
             _echo_error(f"Failed to load AIP from epic/spec: {e}")
             raise typer.Exit(1)
+
+        # Load epic to get spec expectations for drift checking
+        try:
+            epic = load_epic(epic_id)
+            spec_ref = epic.get_spec(spec_id)
+            if spec_ref:
+                epic_spec = {
+                    "expectations": spec_ref.expectations,
+                    "constraints": spec_ref.constraints,
+                    "check_paths": _extract_check_paths(epic, spec_id),
+                }
+        except Exception as e:
+            # Non-fatal - epic_spec is optional enhancement
+            typer.secho(f"Warning: Could not load epic context: {e}", fg=typer.colors.YELLOW, err=True)
 
         aip_data = aip.to_dict()
 
@@ -336,6 +381,7 @@ def run_command(
             "feature_branch": branch,
             "epic_id": epic_id,
             "spec_id": spec_id,
+            "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         },
         "ctx": {
             "aip_id": aip_data.get("metadata", {}).get("spec_id") or aip_data.get("aip_id", spec_id or (aip_path.stem if aip_path else "unknown")),
