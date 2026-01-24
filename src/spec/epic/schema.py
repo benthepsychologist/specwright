@@ -31,6 +31,7 @@ class EventType(str, Enum):
 
     EPIC_CREATED = "epic.created"
     EPIC_UPDATED = "epic.updated"
+    EPIC_REVISED = "epic.revised"
     SPEC_ACTIVATED = "spec.activated"
     SPEC_BLOCKED = "spec.blocked"
     SPEC_DONE = "spec.done"

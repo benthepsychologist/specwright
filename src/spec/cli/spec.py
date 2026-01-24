@@ -1405,7 +1405,7 @@ def compile_spec(
     typer.echo(f"  Spec:    {aip.metadata.spec_id}")
     typer.echo(f"  Branch:  {aip.workspace.branch}")
     typer.echo(f"  Goal:    {aip.goal[:60]}..." if len(aip.goal) > 60 else f"  Goal:    {aip.goal}")
-    typer.echo(f"  Steps:   {len(aip.steps)} (use 'spec aip-enrich' to generate)")
+    typer.echo(f"  Phases:  {len(aip.phases)} (use 'spec aip-enrich' to generate)")
 
 
 @app.command("aip-enrich")
