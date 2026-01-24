@@ -415,7 +415,8 @@ class SandboxEnforcer:
         """
         Check if a command would switch branches.
 
-        Branch switching during a run is blocked to maintain deterministic execution.
+        Branch switching during a run is blocked to maintain deterministic execution,
+        EXCEPT for switching to or creating the expected branch.
 
         Args:
             command: The shell command to check
@@ -424,6 +425,11 @@ class SandboxEnforcer:
             CommandCheck result
         """
         if _is_git_checkout_branch(command):
+            # Allow checkout to the expected branch (the job's feature branch)
+            # This enables the branch.create step to work
+            if self.expected_branch and self._is_checkout_to_expected_branch(command):
+                return CommandCheck(allowed=True, command=command)
+
             return CommandCheck(
                 allowed=False,
                 command=command,
@@ -431,6 +437,30 @@ class SandboxEnforcer:
                 policy_rule="branch_integrity",
             )
         return CommandCheck(allowed=True, command=command)
+
+    def _is_checkout_to_expected_branch(self, command: str) -> bool:
+        """Check if command checks out to the expected branch."""
+        import shlex
+
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return False
+
+        # Find git checkout commands
+        for i, part in enumerate(parts):
+            if part == "git" and i + 1 < len(parts) and parts[i + 1] == "checkout":
+                # Look for the branch name in remaining args
+                checkout_args = parts[i + 2:]
+                # Handle: git checkout -b branch, git checkout branch
+                for j, arg in enumerate(checkout_args):
+                    if arg == "-b" and j + 1 < len(checkout_args):
+                        # git checkout -b <branch>
+                        return checkout_args[j + 1] == self.expected_branch
+                    elif not arg.startswith("-") and arg != "--":
+                        # git checkout <branch> (first non-flag arg)
+                        return arg == self.expected_branch
+        return False
 
     def enforce_branch_integrity(self, command: str) -> None:
         """

@@ -384,19 +384,30 @@ class TestJobDefRegistry:
         """Can get aip-1 JobDef."""
         job_def = get_job_def("aip-1")
         assert job_def.job_id == "aip-1"
-        assert len(job_def.steps) == 5
+        assert len(job_def.steps) == 10  # 3-pass model with commits
 
     def test_aip1_step_ids(self):
-        """aip-1 has correct step IDs."""
+        """aip-1 has correct step IDs for 3-pass model."""
         job_def = get_job_def("aip-1")
         step_ids = [s.step_id for s in job_def.steps]
         assert step_ids == [
             "branch.create",
             "agent.run_aip",
+            "commit.run1",
+            "agent.drift_fix",
+            "commit.run2",
+            "agent.drift_verify",
+            "commit.run3",
             "capture.bundle",
             "assess.acceptance",
             "finalize.run",
         ]
+
+    def test_aip1_on_failure_skip_to(self):
+        """agent.run_aip has on_failure_skip_to set to capture.bundle."""
+        job_def = get_job_def("aip-1")
+        run_aip = next(s for s in job_def.steps if s.step_id == "agent.run_aip")
+        assert run_aip.on_failure_skip_to == "capture.bundle"
 
     def test_register_custom_job_def(self):
         """Can register a custom JobDef."""
@@ -1034,3 +1045,79 @@ class TestContinueOnFailure:
 
         # Should be completed (not completed_with_errors)
         assert result.status == RunStatus.completed
+
+    def test_on_failure_skip_to_skips_intermediate_steps(self, git_repo, store):
+        """When on_failure_skip_to is set, intermediate steps are skipped."""
+        job_def = JobDef(
+            job_id="skip-to-test",
+            steps=[
+                StepTemplate(
+                    step_id="setup",
+                    backend=Backend.cmd,
+                    payload={"command": "echo setup", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="agent",
+                    backend=Backend.cmd,
+                    on_failure_skip_to="capture",  # Skip to capture on failure
+                    payload={"command": "exit 1", "capture_git": False},  # FAILS
+                ),
+                StepTemplate(
+                    step_id="commit1",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo commit1", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="drift-fix",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo drift-fix", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="capture",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo capture", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="finalize",
+                    backend=Backend.cmd,
+                    continue_on_failure=True,
+                    payload={"command": "echo finalize", "capture_git": False},
+                ),
+            ],
+        )
+        register_job_def(job_def)
+
+        envelope = {
+            "job_id": "skip-to-test",
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+
+        # Should complete with errors (agent failed, some skipped)
+        assert result.status == RunStatus.completed_with_errors
+
+        # Load outcomes and check what happened
+        attempt = store.read_attempt(result.run_id, 1)
+        step_ids = [o.step_id for o in attempt.step_outcomes]
+        outcomes = {o.step_id: o.outcome for o in attempt.step_outcomes}
+
+        # All 6 steps should have outcomes
+        assert len(step_ids) == 6
+
+        # Setup should complete
+        assert outcomes["setup"] == OutcomeStatus.completed
+
+        # Agent should fail
+        assert outcomes["agent"] == OutcomeStatus.failed
+
+        # commit1 and drift-fix should be skipped
+        assert outcomes["commit1"] == OutcomeStatus.skipped
+        assert outcomes["drift-fix"] == OutcomeStatus.skipped
+
+        # capture and finalize should complete
+        assert outcomes["capture"] == OutcomeStatus.completed
+        assert outcomes["finalize"] == OutcomeStatus.completed

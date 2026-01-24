@@ -45,6 +45,10 @@ class Step(BaseModel):
         default=False,
         description="If True, continue to next step even if this step fails",
     )
+    on_failure_skip_to: str | None = Field(
+        default=None,
+        description="If set and step fails, skip to the step with this step_id",
+    )
 
     model_config = {"extra": "forbid"}
 

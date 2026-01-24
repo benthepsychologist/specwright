@@ -14,6 +14,7 @@ class OutcomeStatus(str, Enum):
     failed = "failed"
     timeout = "timeout"
     cancelled = "cancelled"
+    skipped = "skipped"
 
 
 class StepOutcome(BaseModel):
@@ -29,11 +30,13 @@ class StepOutcome(BaseModel):
     step_id: str = Field(description="Unique identifier for this step")
     outcome: OutcomeStatus = Field(description="Step outcome status")
     duration_ms: int = Field(ge=0, description="Execution duration in milliseconds")
-    manifest_ref: str = Field(
-        description="Relative path to manifest.yaml (e.g., 'steps/step-001/manifest.yaml')"
+    manifest_ref: str | None = Field(
+        default=None,
+        description="Relative path to manifest.yaml (e.g., 'steps/step-001/manifest.yaml')",
     )
-    capture_ref: str = Field(
-        description="Relative path to capture.yaml (e.g., 'steps/step-001/capture.yaml')"
+    capture_ref: str | None = Field(
+        default=None,
+        description="Relative path to capture.yaml (e.g., 'steps/step-001/capture.yaml')",
     )
     error: str | None = Field(default=None, description="Error message if failed")
 

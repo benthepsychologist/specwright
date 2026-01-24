@@ -72,16 +72,20 @@ class ClaudeCodeBackend(BackendBase):
         # Extract payload fields
         prompt = payload.get("prompt")
         aip_path = payload.get("aip_path")
+        aip_data = payload.get("aip")  # Direct AIP dict from envelope
 
-        if not prompt and not aip_path:
+        if not prompt and not aip_path and not aip_data:
             raise BackendError(
-                "claude-code backend requires 'prompt' or 'aip_path' in payload",
+                "claude-code backend requires 'prompt', 'aip_path', or 'aip' in payload",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
 
+        # If we have AIP data directly, build prompt from it
+        if aip_data and not prompt:
+            prompt = self._build_prompt_from_aip_data(aip_data)
         # If we have an AIP path, build prompt from it
-        if aip_path and not prompt:
+        elif aip_path and not prompt:
             prompt = self._build_prompt_from_aip(Path(aip_path))
 
         # At this point prompt must be set
@@ -194,20 +198,40 @@ class ClaudeCodeBackend(BackendBase):
         with open(aip_path) as f:
             aip = yaml.safe_load(f)
 
-        # Build prompt from AIP structure
+        return self._build_prompt_from_aip_data(aip)
+
+    def _build_prompt_from_aip_data(self, aip: dict) -> str:
+        """Build a prompt from an AIP dict."""
         parts = []
 
-        if "title" in aip:
-            parts.append(f"# {aip['title']}")
+        # Handle AIPv3 structure (metadata.title, goal) or legacy (title, description)
+        title = aip.get("title")
+        if not title and "metadata" in aip:
+            title = aip["metadata"].get("title") or aip["metadata"].get("spec_id")
+        if title:
+            parts.append(f"# {title}")
 
-        if "description" in aip:
-            parts.append(f"\n{aip['description']}")
+        # Goal (AIPv3) or description (legacy)
+        goal = aip.get("goal") or aip.get("description")
+        if goal:
+            parts.append(f"\n{goal}")
 
+        # Acceptance criteria
         if "acceptance_criteria" in aip:
             parts.append("\n## Acceptance Criteria")
             for criterion in aip["acceptance_criteria"]:
                 parts.append(f"- {criterion}")
 
+        # Final verification (AIPv3)
+        if "final_verification" in aip:
+            parts.append("\n## Verification Commands")
+            for v in aip["final_verification"]:
+                if isinstance(v, dict):
+                    parts.append(f"- `{v.get('cmd', v)}`")
+                else:
+                    parts.append(f"- `{v}`")
+
+        # Phases (AIPv3) or legacy phases
         if "phases" in aip:
             parts.append("\n## Implementation Phases")
             for i, phase in enumerate(aip["phases"], 1):
@@ -217,7 +241,10 @@ class ClaudeCodeBackend(BackendBase):
                     parts.append(phase["description"])
                 if "tasks" in phase:
                     for task in phase["tasks"]:
-                        parts.append(f"- {task}")
+                        if isinstance(task, dict):
+                            parts.append(f"- {task.get('description', task)}")
+                        else:
+                            parts.append(f"- {task}")
 
         return "\n".join(parts)
 

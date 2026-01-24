@@ -41,9 +41,9 @@ app.add_typer(epic_app, name="epic")
 from spec.cli.exec_commands import (
     compile_command,
     execute_command,
+    logs_command,
     run_command,
     status_command,
-    logs_command,
 )
 
 app.command("compile")(compile_command)
@@ -1445,7 +1445,7 @@ def enrich_spec(
         spec enrich e008-01-core --generate-steps --yes
     """
     from spec.aip.compiler import load_compiled_aip, save_compiled_aip
-    from spec.aip.enricher import EnrichMode, enrich_aip
+    from spec.aip.enricher import EnrichError, EnrichMode, enrich_aip
     from spec.epic.loader import list_epics, load_epic
 
     # Auto-detect epic if not specified
@@ -1558,7 +1558,7 @@ def enrich_spec(
             typer.echo(f"  [{has_guidance}] {step.id}: {step.title}")
 
 
-@app.command("aip-run")
+@app.command("aip-run", deprecated=True)
 @_specwright_exception_handler
 def run_spec(
     spec_id: str = typer.Argument(..., help="Spec identifier to run"),
@@ -1575,18 +1575,32 @@ def run_spec(
         False, "--print", "-p", help="Print Claude output to stdout"
     ),
 ):
-    """Run a spec using Claude Code.
+    """[DEPRECATED] Run a spec using Claude Code.
+
+    DEPRECATED: Use 'spec run aip-1 --epic <epic> --spec <spec>' instead.
 
     Default mode: Background execution with --dangerously-skip-permissions --print.
     Interactive mode: Launches Claude TUI for human-guided execution.
 
     Examples:
-        spec run e008-01-core --epic e008-specwright-v2
-        spec run e008-01-core --interactive
-        spec run e008-01-core --timeout 3600 --print
+        # NEW (preferred):
+        spec run aip-1 --epic e008-specwright-v2 --spec e008-01-core
+
+        # OLD (deprecated):
+        spec aip-run e008-01-core --epic e008-specwright-v2
+        spec aip-run e008-01-core --interactive
     """
+    # Deprecation warning
+    typer.secho(
+        "Warning: 'spec aip-run' is deprecated. "
+        "Use 'spec run aip-1 --epic <epic> --spec <spec>' instead.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    typer.echo("")
     from spec.aip.compiler import load_compiled_aip
     from spec.artifacts.collector import ArtifactCollector
+    from spec.artifacts.storage import generate_run_id
     from spec.epic.loader import list_epics, load_epic
     from spec.runner.background import run_background
     from spec.runner.interactive import run_interactive
@@ -1611,8 +1625,12 @@ def run_spec(
     # Load the AIP
     aip = load_compiled_aip(epic_id, spec_id)
 
+    # Generate run ID upfront
+    run_id = generate_run_id()
+
     typer.echo(f"Running spec: {spec_id}")
     typer.echo(f"  Epic:    {epic_id}")
+    typer.echo(f"  Run ID:  {run_id}")
     typer.echo(f"  Branch:  {aip.workspace.branch}")
     typer.echo(f"  Repo:    {aip.workspace.repo_path}")
     typer.echo(f"  Mode:    {'interactive' if interactive else 'background'}")
@@ -1625,7 +1643,7 @@ def run_spec(
         typer.echo(f"\nClaude exited with code: {result.exit_code}")
 
         # Collect artifacts (limited in interactive mode)
-        collector = ArtifactCollector.for_aip(aip)
+        collector = ArtifactCollector.for_aip(aip, run_id=run_id)
         collector.capture_diff()
         collector.run_verification()
         typer.secho(
@@ -1642,7 +1660,7 @@ def run_spec(
         )
 
         # Collect artifacts
-        collector = ArtifactCollector.for_aip(aip)
+        collector = ArtifactCollector.for_aip(aip, run_id=run_id)
         artifacts = collector.collect_all(result)
 
         typer.echo("")
@@ -1666,7 +1684,7 @@ def run_spec(
             typer.secho(f"\nVerification: {status}", fg=color)
 
 
-@app.command("aip-status")
+@app.command("aip-status", deprecated=True)
 @_specwright_exception_handler
 def aip_status(
     spec_id: str = typer.Argument(..., help="Spec identifier to check"),
@@ -1674,11 +1692,24 @@ def aip_status(
         None, "--epic", "-e", help="Epic ID (auto-detected if not specified)"
     ),
 ):
-    """Show run status and artifact summary for a spec.
+    """[DEPRECATED] Show run status and artifact summary for a spec.
+
+    DEPRECATED: Use 'spec status <run_id>' instead.
 
     Examples:
+        # NEW (preferred):
+        spec status                     # List all runs
+        spec status run-20260124-...    # Show specific run
+
+        # OLD (deprecated):
         spec aip-status e008-01-core --epic e008-specwright-v2
     """
+    typer.secho(
+        "Warning: 'spec aip-status' is deprecated. Use 'spec status' instead.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    typer.echo("")
     from spec.artifacts.storage import ArtifactStorage
     from spec.epic.loader import list_epics, load_epic
 
@@ -1741,7 +1772,7 @@ def aip_status(
         typer.echo(f"  {passed}/{len(results)} commands passed")
 
 
-@app.command("aip-diff")
+@app.command("aip-diff", deprecated=True)
 @_specwright_exception_handler
 def aip_diff(
     spec_id: str = typer.Argument(..., help="Spec identifier"),
@@ -1752,12 +1783,23 @@ def aip_diff(
         False, "--stat", "-s", help="Show diff stats only"
     ),
 ):
-    """Show the patch.diff for a spec.
+    """[DEPRECATED] Show the patch.diff for a spec.
+
+    DEPRECATED: Use 'spec logs <run_id> <step_n> --patch' instead.
 
     Examples:
+        # NEW (preferred):
+        spec logs run-20260124-... 2 --patch
+
+        # OLD (deprecated):
         spec aip-diff e008-01-core --epic e008-specwright-v2
-        spec aip-diff e008-01-core --stat
     """
+    typer.secho(
+        "Warning: 'spec aip-diff' is deprecated. Use 'spec logs <run_id> <step> --patch' instead.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    typer.echo("")
     import subprocess
 
     from spec.artifacts.storage import ArtifactStorage
@@ -1809,9 +1851,9 @@ def aip_diff(
         else:
             # Fallback: count lines
             lines = diff_content.splitlines()
-            files = [l for l in lines if l.startswith("diff --git")]
-            adds = sum(1 for l in lines if l.startswith("+") and not l.startswith("+++"))
-            dels = sum(1 for l in lines if l.startswith("-") and not l.startswith("---"))
+            files = [line for line in lines if line.startswith("diff --git")]
+            adds = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+            dels = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
             typer.echo(f"{len(files)} files changed, {adds} insertions(+), {dels} deletions(-)")
     else:
         # Print full diff

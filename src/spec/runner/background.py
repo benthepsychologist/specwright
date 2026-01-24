@@ -8,10 +8,11 @@ and captures the output for artifact collection.
 from __future__ import annotations
 
 import os
+import selectors
 import shutil
 import subprocess
+import sys
 import time
-import selectors
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -194,6 +195,7 @@ def run_background(
                             transcript_file.flush()
                             if print_output:
                                 print(rest, end="")
+                                sys.stdout.flush()
                     break
 
                 # Wait briefly for output availability.
@@ -219,6 +221,7 @@ def run_background(
                     transcript_file.flush()
                     if print_output:
                         print(chunk, end="")
+                        sys.stdout.flush()
 
             if sel is not None:
                 try:

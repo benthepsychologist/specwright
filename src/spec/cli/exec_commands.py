@@ -136,6 +136,7 @@ def compile_command(
     envelope = {
         "job_id": job_id,
         "payload": {
+            "aip": aip_data,  # Include full AIP data
             "aip_path": str(aip_path.resolve()),
             "repo_path": str(repo_path),
             "feature_branch": branch,
@@ -235,7 +236,7 @@ def execute_command(
 
 def run_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
-    aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
+    aip_path: Path = typer.Argument(None, help="Path to AIP YAML file (optional if --epic/--spec used)"),
     repo_path: Path = typer.Option(
         None, "--repo", "-r", help="Repository path (default: current directory)"
     ),
@@ -248,6 +249,12 @@ def run_command(
     run_id: str = typer.Option(
         None, "--run-id", help="Custom run ID (default: auto-generated)"
     ),
+    epic_id: str = typer.Option(
+        None, "--epic", "-e", help="Epic ID to load AIP from (use with --spec)"
+    ),
+    spec_id: str = typer.Option(
+        None, "--spec", "-s", help="Spec ID to load AIP from (use with --epic)"
+    ),
 ) -> None:
     """Compile and execute a job in one step.
 
@@ -258,10 +265,15 @@ def run_command(
         spec run aip-1 ./my-feature.aip.yaml
         spec run aip-1 ./my-feature.aip.yaml --repo /workspace/target
         spec run aip-1 ./my-feature.aip.yaml --dry-run
+        spec run aip-1 --epic e005-command-plane --spec e005-01-schemas
     """
-    # Validate inputs
-    if not aip_path.exists():
-        _echo_error(f"AIP file not found: {aip_path}")
+    # Validate inputs - must have either aip_path or epic/spec
+    if aip_path is None and (epic_id is None or spec_id is None):
+        _echo_error("Must provide either AIP_PATH or both --epic and --spec")
+        raise typer.Exit(1)
+
+    if aip_path is not None and (epic_id is not None or spec_id is not None):
+        _echo_error("Cannot use both AIP_PATH and --epic/--spec")
         raise typer.Exit(1)
 
     if job_id not in list_job_defs():
@@ -269,35 +281,65 @@ def run_command(
         typer.echo(f"Available job IDs: {', '.join(list_job_defs())}")
         raise typer.Exit(1)
 
-    # Load AIP
-    try:
-        aip_data = _load_yaml(aip_path)
-    except Exception as e:
-        _echo_error(f"Failed to load AIP: {e}")
-        raise typer.Exit(1)
+    # Load AIP - either from file or from epic/spec
+    if epic_id and spec_id:
+        # Load from governor
+        from spec.aip.compiler import load_compiled_aip
 
-    # Resolve repo path
-    if repo_path is None:
-        repo_path = Path.cwd()
-    repo_path = repo_path.resolve()
+        try:
+            aip = load_compiled_aip(epic_id, spec_id)
+        except Exception as e:
+            _echo_error(f"Failed to load AIP from epic/spec: {e}")
+            raise typer.Exit(1)
 
-    # Resolve branch
-    if branch is None:
-        branch = aip_data.get("workspace", {}).get("branch")
-        if not branch:
-            aip_id = aip_data.get("aip_id", aip_path.stem)
-            branch = f"feat/{aip_id}"
+        aip_data = aip.to_dict()
+
+        # Resolve repo path from AIP
+        if repo_path is None:
+            repo_path = Path(aip.workspace.repo_path)
+        repo_path = repo_path.resolve()
+
+        # Resolve branch from AIP
+        if branch is None:
+            branch = aip.workspace.branch
+    else:
+        # Load from file
+        if not aip_path.exists():
+            _echo_error(f"AIP file not found: {aip_path}")
+            raise typer.Exit(1)
+
+        try:
+            aip_data = _load_yaml(aip_path)
+        except Exception as e:
+            _echo_error(f"Failed to load AIP: {e}")
+            raise typer.Exit(1)
+
+        # Resolve repo path
+        if repo_path is None:
+            repo_path = Path.cwd()
+        repo_path = repo_path.resolve()
+
+        # Resolve branch
+        if branch is None:
+            branch = aip_data.get("workspace", {}).get("branch")
+            if not branch:
+                aip_id = aip_data.get("aip_id", aip_path.stem)
+                branch = f"feat/{aip_id}"
 
     # Build envelope
     envelope = {
         "job_id": job_id,
         "payload": {
-            "aip_path": str(aip_path.resolve()),
+            "aip": aip_data,  # Include full AIP data
+            "aip_path": str(aip_path.resolve()) if aip_path else None,
             "repo_path": str(repo_path),
             "feature_branch": branch,
+            "epic_id": epic_id,
+            "spec_id": spec_id,
         },
         "ctx": {
-            "aip_id": aip_data.get("aip_id", aip_path.stem),
+            "aip_id": aip_data.get("metadata", {}).get("spec_id") or aip_data.get("aip_id", spec_id or (aip_path.stem if aip_path else "unknown")),
+            "epic_id": epic_id,
         },
     }
 
@@ -318,11 +360,15 @@ def run_command(
 
     # Generate run_id if not provided
     if run_id is None:
-        run_id = generate_run_id()
+        run_id = generate_run_id(spec_id=spec_id)
 
     typer.echo(f"Running job: {job_id}")
     typer.echo(f"  Run ID:   {run_id}")
-    typer.echo(f"  AIP:      {aip_path}")
+    if epic_id and spec_id:
+        typer.echo(f"  Epic:     {epic_id}")
+        typer.echo(f"  Spec:     {spec_id}")
+    else:
+        typer.echo(f"  AIP:      {aip_path}")
     typer.echo(f"  Repo:     {repo_path}")
     typer.echo(f"  Branch:   {branch}")
     typer.echo("")

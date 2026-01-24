@@ -151,7 +151,7 @@ class TestCompileCommand:
         with open(output_file) as f:
             data = yaml.safe_load(f)
         assert data["job_id"] == "aip-1"
-        assert len(data["steps"]) == 5  # aip-1 has 5 steps
+        assert len(data["steps"]) == 10  # aip-1 has 10 steps (3-pass model)
 
 
 # =============================================================================

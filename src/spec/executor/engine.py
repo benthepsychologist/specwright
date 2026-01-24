@@ -282,6 +282,7 @@ def compile_job(
             ),
             payload=resolved_payload,
             continue_on_failure=template.continue_on_failure,
+            on_failure_skip_to=template.on_failure_skip_to,
         )
         steps.append(step)
 
@@ -371,13 +372,24 @@ def list_job_defs() -> list[str]:
 
 
 def _create_aip1_job_def() -> JobDef:
-    """Create the aip-1 JobDef template."""
+    """Create the aip-1 JobDef template.
+
+    3-pass Claude execution model:
+    - Run 1 (agent.run_aip): Execute the AIP
+    - Run 2 (agent.drift_fix): Check for drift, make a plan, execute fixes
+    - Run 3 (agent.drift_verify): Final verification pass
+
+    Failure handling:
+    - If Run 1 fails: skip Runs 2 and 3 (via on_failure_skip_to)
+    - If Run 2 fails: still proceed with Run 3 (continue_on_failure=True)
+    - Commits after each successful Claude run
+    """
     from spec.executor.schemas.shared import Backend
 
     return JobDef(
         job_id="aip-1",
-        version="0.1",
-        description="Execute an AIP with a single agent step",
+        version="0.2",
+        description="Execute an AIP with 3-pass agent verification",
         steps=[
             # Step 1: Create feature branch - must succeed
             StepTemplate(
@@ -390,31 +402,93 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 continue_on_failure=False,  # Must succeed to proceed
             ),
-            # Step 2: Run agent with AIP - continue on failure to capture/assess
+            # Step 2: Run 1 - Execute AIP
             StepTemplate(
                 step_id="agent.run_aip",
                 backend=Backend.claude_code,
-                description="Execute AIP with agent",
+                description="Run 1: Execute AIP with agent",
                 payload={
-                    "aip_path": "@payload.aip_path",
+                    "aip": "@payload.aip",  # Direct AIP dict (preferred)
+                    "aip_path": "@payload.aip_path",  # File path (fallback)
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
                 },
                 timeout_s=1800,  # 30 minutes for agent work
-                continue_on_failure=True,  # Capture even if agent fails
+                on_failure_skip_to="capture.bundle",  # Skip runs 2/3 on failure
             ),
-            # Step 3: Capture bundle - best effort
+            # Step 3: Commit after Run 1
+            StepTemplate(
+                step_id="commit.run1",
+                backend=Backend.cmd,
+                description="Commit changes from run 1",
+                payload={
+                    "command": "git add -A && git commit -m 'aip: revision 1' || true",
+                    "capture_git": True,
+                },
+                continue_on_failure=True,  # Best effort
+            ),
+            # Step 4: Run 2 - Drift inspection and fix
+            StepTemplate(
+                step_id="agent.drift_fix",
+                backend=Backend.claude_code,
+                description="Run 2: Inspect for drift and fix",
+                payload={
+                    "prompt": _build_drift_fix_prompt(),
+                    "aip": "@payload.aip",
+                    "repo_path": "@payload.repo_path",
+                    "capture_git": True,
+                },
+                timeout_s=1800,
+                continue_on_failure=True,  # Run 3 proceeds even if this fails
+            ),
+            # Step 5: Commit after Run 2
+            StepTemplate(
+                step_id="commit.run2",
+                backend=Backend.cmd,
+                description="Commit changes from run 2",
+                payload={
+                    "command": "git add -A && git commit -m 'aip: revision 2 - drift fix' || true",
+                    "capture_git": True,
+                },
+                continue_on_failure=True,  # Best effort
+            ),
+            # Step 6: Run 3 - Final drift verification
+            StepTemplate(
+                step_id="agent.drift_verify",
+                backend=Backend.claude_code,
+                description="Run 3: Final drift verification",
+                payload={
+                    "prompt": _build_drift_verify_prompt(),
+                    "aip": "@payload.aip",
+                    "repo_path": "@payload.repo_path",
+                    "capture_git": True,
+                },
+                timeout_s=1800,
+                continue_on_failure=True,  # Best effort
+            ),
+            # Step 7: Commit after Run 3
+            StepTemplate(
+                step_id="commit.run3",
+                backend=Backend.cmd,
+                description="Commit changes from run 3",
+                payload={
+                    "command": "git add -A && git commit -m 'aip: revision 3 - verification' || true",
+                    "capture_git": True,
+                },
+                continue_on_failure=True,  # Best effort
+            ),
+            # Step 8: Capture bundle - best effort
             StepTemplate(
                 step_id="capture.bundle",
                 backend=Backend.cmd,
                 description="Bundle execution artifacts",
                 payload={
-                    "command": "git diff HEAD~1 --stat || git diff --stat",
+                    "command": "git log --oneline -10 || git diff --stat",
                     "capture_git": True,
                 },
                 continue_on_failure=True,  # Best effort
             ),
-            # Step 4: Assess acceptance - best effort
+            # Step 9: Assess acceptance - best effort
             StepTemplate(
                 step_id="assess.acceptance",
                 backend=Backend.llm,
@@ -425,7 +499,7 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 continue_on_failure=True,  # Best effort
             ),
-            # Step 5: Finalize run - always try
+            # Step 10: Finalize run - always try
             StepTemplate(
                 step_id="finalize.run",
                 backend=Backend.cmd,
@@ -440,6 +514,67 @@ def _create_aip1_job_def() -> JobDef:
     )
 
 
+def _build_drift_fix_prompt() -> str:
+    """Build prompt for Run 2: drift inspection and fix."""
+    return """# Drift Inspection and Fix
+
+You are reviewing the code changes from the previous AIP implementation run.
+
+## Your Task
+
+1. **Inspect Changes**: Review all code changes made so far (use `git diff` from base commit)
+
+2. **Check for Drift**: Compare the implementation against the AIP requirements:
+   - Are all acceptance criteria being addressed?
+   - Is the implementation aligned with the spec's intent?
+   - Are there any missing pieces or incomplete implementations?
+   - Are there any deviations from the expected behavior?
+
+3. **Make a Plan**: If you find any drift or issues:
+   - Document what needs to be fixed
+   - Prioritize the fixes
+
+4. **Execute Fixes**: Implement any necessary corrections to bring the code back in alignment with the AIP.
+
+## Context
+
+The AIP data is provided to you. The repository is the working directory.
+Check `git log` and `git diff` to see what was implemented.
+
+Focus on correctness and spec adherence, not on style or refactoring.
+"""
+
+
+def _build_drift_verify_prompt() -> str:
+    """Build prompt for Run 3: final drift verification."""
+    return """# Final Drift Verification
+
+You are performing a final verification pass on the AIP implementation.
+
+## Your Task
+
+1. **Final Review**: Review ALL changes made across previous runs (use `git diff` from base commit)
+
+2. **Acceptance Criteria Check**: Go through each acceptance criterion in the AIP:
+   - Is it fully implemented?
+   - Does it work as expected?
+   - Are there any edge cases missed?
+
+3. **Fix Remaining Issues**: If you find any remaining problems:
+   - Fix them directly
+   - Focus on correctness over completeness
+
+4. **Verification**: Run any verification commands specified in the AIP.
+
+## Context
+
+The AIP data is provided to you. The repository is the working directory.
+This is the FINAL pass - focus on making sure everything is correct and complete.
+
+Do not make unnecessary changes. Only fix actual issues.
+"""
+
+
 # Register aip-1 on module load
 register_job_def(_create_aip1_job_def())
 
@@ -449,11 +584,22 @@ register_job_def(_create_aip1_job_def())
 # =============================================================================
 
 
-def generate_run_id() -> str:
-    """Generate a unique run_id with timestamp."""
+def generate_run_id(spec_id: str | None = None) -> str:
+    """Generate a unique run_id with timestamp and optional spec.
+
+    Args:
+        spec_id: Optional spec identifier to include in run_id (e.g., 'e008-01-core')
+
+    Returns:
+        Run ID in format: run-{spec}-{timestamp}-{hash} or run-{timestamp}-{hash}
+    """
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     suffix = hashlib.sha256(str(time.time_ns()).encode()).hexdigest()[:6]
-    return f"run-{timestamp}-{suffix}"
+
+    if spec_id:
+        return f"run-{spec_id}-{timestamp}-{suffix}"
+    else:
+        return f"run-{timestamp}-{suffix}"
 
 
 def _get_current_commit(repo_path: Path) -> str:
@@ -794,10 +940,11 @@ def _run_steps(
     """
     Run the step dispatch loop.
 
-    Respects continue_on_failure flag on steps:
-    - If a step fails and continue_on_failure=False, abort immediately (RunStatus.failed)
-    - If a step fails and continue_on_failure=True, continue to next step
-    - Final status: completed (all ok), completed_with_errors (some failed but continued), failed (abort)
+    Respects continue_on_failure and on_failure_skip_to flags on steps:
+    - If a step fails and on_failure_skip_to is set, skip to that step
+    - If a step fails and continue_on_failure=False (and no skip_to), abort immediately
+    - If a step fails and continue_on_failure=True (and no skip_to), continue to next step
+    - Final status: completed (all ok), completed_with_errors (some failed/skipped), failed (abort)
 
     Returns:
         Tuple of (final_status, list of step outcomes)
@@ -814,7 +961,10 @@ def _run_steps(
         "steps": {},  # Will be populated as steps complete
     }
 
-    for step in job_instance.steps:
+    # Use index-based loop to support skip-to jumps
+    step_idx = 0
+    while step_idx < len(job_instance.steps):
+        step = job_instance.steps[step_idx]
         start_time = time.time()
 
         # Resolve any remaining @run.* references in payload
@@ -888,11 +1038,15 @@ def _run_steps(
                 "capture_ref": outcome.capture_ref,
             }
 
-            if step.continue_on_failure:
-                any_step_failed = True
-                continue  # Move to next step
-            else:
+            # Handle skip-to or continue-on-failure
+            skip_result = _handle_step_failure(
+                step, step_idx, job_instance, outcomes, run_record, store
+            )
+            if skip_result is None:
+                # No skip-to, no continue_on_failure - abort
                 return RunStatus.failed, outcomes
+            step_idx, any_step_failed = skip_result[0], True
+            continue
 
         # Determine outcome status from capture
         assert capture is not None
@@ -926,15 +1080,21 @@ def _run_steps(
             "capture_ref": outcome.capture_ref,
         }
 
-        # Check if we should abort or continue
+        # Check if we should abort, skip, or continue
         if outcome_status != OutcomeStatus.completed:
-            if step.continue_on_failure:
-                any_step_failed = True
-                continue  # Move to next step
-            else:
+            # Handle skip-to or continue-on-failure
+            skip_result = _handle_step_failure(
+                step, step_idx, job_instance, outcomes, run_record, store
+            )
+            if skip_result is None:
+                # No skip-to, no continue_on_failure - abort
                 return RunStatus.failed, outcomes
+            step_idx, any_step_failed = skip_result[0], True
+            continue
 
-    # All steps completed (some may have failed with continue_on_failure)
+        step_idx += 1
+
+    # All steps completed (some may have failed/skipped with continue_on_failure or skip_to)
     if any_step_failed:
         return RunStatus.completed_with_errors, outcomes
     return RunStatus.completed, outcomes
@@ -955,3 +1115,60 @@ def _create_failed_outcome(
         capture_ref=f"steps/step-{step.step_n:03d}/capture.yaml",
         error=error,
     )
+
+
+def _handle_step_failure(
+    step: Step,
+    step_idx: int,
+    job_instance: JobInstance,
+    outcomes: list[StepOutcome],
+    run_record: RunRecord,
+    store: RunStore,
+) -> tuple[int, bool] | None:
+    """
+    Handle step failure with skip-to or continue-on-failure logic.
+
+    Args:
+        step: The step that failed
+        step_idx: Current index in job_instance.steps
+        job_instance: The job instance
+        outcomes: List of outcomes to append skipped outcomes to
+        run_record: The run record
+        store: The run store
+
+    Returns:
+        Tuple of (next_step_idx, any_failed) if should continue, None if should abort
+    """
+    # Check for on_failure_skip_to first
+    if step.on_failure_skip_to:
+        # Find target step index
+        target_idx = next(
+            (i for i, s in enumerate(job_instance.steps) if s.step_id == step.on_failure_skip_to),
+            None,
+        )
+
+        if target_idx is not None and target_idx > step_idx:
+            # Skip intermediate steps
+            for skip_idx in range(step_idx + 1, target_idx):
+                skipped_step = job_instance.steps[skip_idx]
+                skip_outcome = StepOutcome(
+                    step_n=skipped_step.step_n,
+                    step_id=skipped_step.step_id,
+                    outcome=OutcomeStatus.skipped,
+                    duration_ms=0,
+                    manifest_ref=None,
+                    capture_ref=None,
+                    error=f"Skipped due to failure of {step.step_id}",
+                )
+                outcomes.append(skip_outcome)
+                store.write_step_outcome(run_record.run_id, skipped_step.step_n, skip_outcome)
+
+            # Return the target index to continue from
+            return (target_idx, True)
+
+    # Fall back to continue_on_failure
+    if step.continue_on_failure:
+        return (step_idx + 1, True)
+
+    # No skip-to and no continue_on_failure - abort
+    return None
