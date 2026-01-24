@@ -92,28 +92,28 @@ def simple_job():
 
 
 # =============================================================================
-# spec exec compile Tests
+# spec compile Tests
 # =============================================================================
 
 
 class TestCompileCommand:
-    """Tests for spec exec compile."""
+    """Tests for spec compile."""
 
     def test_compile_help(self):
         """Compile command shows help."""
-        result = runner.invoke(app, ["exec", "compile", "--help"])
+        result = runner.invoke(app, ["compile", "--help"])
         assert result.exit_code == 0
         assert "Compile a JobDef + AIP" in result.stdout
 
     def test_compile_missing_aip(self, tmp_path):
         """Compile fails with missing AIP file."""
-        result = runner.invoke(app, ["exec", "compile", "aip-1", "/nonexistent/aip.yaml"])
+        result = runner.invoke(app, ["compile", "aip-1", "/nonexistent/aip.yaml"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
     def test_compile_unknown_job_id(self, aip_file):
         """Compile fails with unknown job_id."""
-        result = runner.invoke(app, ["exec", "compile", "unknown-job", str(aip_file)])
+        result = runner.invoke(app, ["compile", "unknown-job", str(aip_file)])
         assert result.exit_code == 1
         assert "Unknown job_id" in result.output
 
@@ -121,7 +121,7 @@ class TestCompileCommand:
         """Compile outputs JobInstance to stdout."""
         result = runner.invoke(
             app,
-            ["exec", "compile", "aip-1", str(aip_file), "--repo", str(git_repo)],
+            ["compile", "aip-1", str(aip_file), "--repo", str(git_repo)],
         )
         assert result.exit_code == 0
         # Should output YAML
@@ -134,7 +134,6 @@ class TestCompileCommand:
         result = runner.invoke(
             app,
             [
-                "exec",
                 "compile",
                 "aip-1",
                 str(aip_file),
@@ -156,16 +155,16 @@ class TestCompileCommand:
 
 
 # =============================================================================
-# spec exec run Tests
+# spec run Tests
 # =============================================================================
 
 
 class TestRunCommand:
-    """Tests for spec exec run."""
+    """Tests for spec run."""
 
     def test_run_help(self):
         """Run command shows help."""
-        result = runner.invoke(app, ["exec", "run", "--help"])
+        result = runner.invoke(app, ["run", "--help"])
         assert result.exit_code == 0
         assert "Compile and execute" in result.stdout
 
@@ -174,7 +173,6 @@ class TestRunCommand:
         result = runner.invoke(
             app,
             [
-                "exec",
                 "run",
                 "aip-1",
                 str(aip_file),
@@ -189,7 +187,7 @@ class TestRunCommand:
 
     def test_run_missing_aip(self, tmp_path):
         """Run fails with missing AIP file."""
-        result = runner.invoke(app, ["exec", "run", "aip-1", "/nonexistent/aip.yaml"])
+        result = runner.invoke(app, ["run", "aip-1", "/nonexistent/aip.yaml"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
@@ -202,7 +200,6 @@ class TestRunCommand:
         result = runner.invoke(
             app,
             [
-                "exec",
                 "run",
                 "test-simple",
                 str(aip_file),
@@ -216,16 +213,16 @@ class TestRunCommand:
 
 
 # =============================================================================
-# spec exec status Tests
+# spec status Tests
 # =============================================================================
 
 
 class TestStatusCommand:
-    """Tests for spec exec status."""
+    """Tests for spec status."""
 
     def test_status_help(self):
         """Status command shows help."""
-        result = runner.invoke(app, ["exec", "status", "--help"])
+        result = runner.invoke(app, ["status", "--help"])
         assert result.exit_code == 0
         assert "Show run status" in result.stdout
 
@@ -234,7 +231,7 @@ class TestStatusCommand:
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
 
-        result = runner.invoke(app, ["exec", "status"])
+        result = runner.invoke(app, ["status"])
         assert result.exit_code == 0
         assert "No runs found" in result.stdout
 
@@ -243,22 +240,22 @@ class TestStatusCommand:
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
 
-        result = runner.invoke(app, ["exec", "status", "unknown-run-id"])
+        result = runner.invoke(app, ["status", "unknown-run-id"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
 
 # =============================================================================
-# spec exec logs Tests
+# spec logs Tests
 # =============================================================================
 
 
 class TestLogsCommand:
-    """Tests for spec exec logs."""
+    """Tests for spec logs."""
 
     def test_logs_help(self):
         """Logs command shows help."""
-        result = runner.invoke(app, ["exec", "logs", "--help"])
+        result = runner.invoke(app, ["logs", "--help"])
         assert result.exit_code == 0
         assert "Show run logs" in result.stdout
 
@@ -267,7 +264,7 @@ class TestLogsCommand:
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
 
-        result = runner.invoke(app, ["exec", "logs", "unknown-run-id"])
+        result = runner.invoke(app, ["logs", "unknown-run-id"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
@@ -313,7 +310,6 @@ class TestIntegration:
         result = runner.invoke(
             app,
             [
-                "exec",
                 "compile",
                 "test-workflow",
                 str(aip_file),
@@ -330,7 +326,6 @@ class TestIntegration:
         result = runner.invoke(
             app,
             [
-                "exec",
                 "run",
                 "test-workflow",
                 str(aip_file),
@@ -342,6 +337,6 @@ class TestIntegration:
         # The point is the CLI works
 
         # 3. Status - list runs
-        result = runner.invoke(app, ["exec", "status"])
+        result = runner.invoke(app, ["status"])
         # Should show at least one run or "No runs"
         assert result.exit_code == 0

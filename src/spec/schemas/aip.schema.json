@@ -822,26 +822,12 @@
             "additionalProperties": false,
             "description": "Gate review checklist and approval metadata"
           },
-          "allowed_paths": {
+          "suggested_paths": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Glob patterns for paths the agent may modify"
-          },
-          "forbidden_paths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Glob patterns for paths the agent must not touch"
-          },
-          "verification_commands": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Commands to verify step success (must all exit 0)"
+            "description": "Glob patterns for suggested focus areas (soft guidance, not enforced)"
           },
           "objective": {
             "type": "string",

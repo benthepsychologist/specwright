@@ -17,6 +17,7 @@ from spec.executor.engine import (
     VariableError,
     compile_job,
     execute,
+    execute_instance,
     get_job_def,
     list_job_defs,
     register_job_def,
@@ -50,6 +51,7 @@ __all__ = [
     # Engine
     "compile_job",
     "execute",
+    "execute_instance",
     "register_job_def",
     "get_job_def",
     "list_job_defs",

@@ -46,7 +46,7 @@ autogov:
 
 ### Governance
 
-> Governance Guidance (autogov, non-enforced in v1)
+> Governance Guidance (autogov)
 
 **Policy:** {{ autogov_policy_name }} v{{ autogov_policy_version }}
 **Architecture:** {{ autogov_arch_name }} v{{ autogov_arch_version }}
@@ -66,11 +66,11 @@ autogov:
 
 {% endfor %}
 {% endif %}
-{% if autogov_forbidden_paths %}
+{% if autogov_frozen_paths %}
 
-#### Forbidden Paths
-{% for fp in autogov_forbidden_paths %}
-- `{{ fp.path }}` - {{ fp.reason }}
+#### Frozen Paths
+{% for path in autogov_frozen_paths %}
+- `{{ path }}`
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -144,27 +144,11 @@ Generate domain-specific prompts with moderate guardrails:
 
 Implement feature per plan with standard best practices.
 
-**Allowed Paths:**
+**Suggested Paths:**
 
 - `src/**`
 - `tests/**`
 - `docs/**`
-
-**Forbidden Paths:**
-
-- `.git/**`
-- `*.lock`
-- `.env*`
-- `secrets/**`
-- `infra/**`
-
-**Verification Commands:**
-
-```bash
-ruff check .
-mypy .
-pytest -q
-```
 
 **Outputs:**
 

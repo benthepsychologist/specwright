@@ -1,21 +1,21 @@
-# Spec-Run Agent Executor
+# Spec-Run Agent Executor (v2)
 
-The executor orchestrates agentic step execution with strict scope enforcement, verification gating, and full audit trails.
+The v2 executor uses a job-based architecture: `compile(JobDef, envelope) → JobInstance → execute()`. This document describes the execution model and artifact structure.
 
 ## Lifecycle
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         spec run --step N                               │
+│                    spec run aip-1 ./my-feature.aip.yaml                 │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  EXTRACT PHASE                                                          │
-│  ├── Load AIP, build StepContract                                       │
-│  ├── Check worktree clean (or --allow-dirty)                            │
-│  ├── Record baseline SHA                                                │
-│  └── Write input bundle: contract.yaml, prompt.md, repo_state.json      │
+│  COMPILE PHASE                                                          │
+│  ├── Load JobDef template (e.g., "aip-1")                               │
+│  ├── Build envelope from AIP file                                       │
+│  ├── Resolve @aip.* and @run.* variable references                      │
+│  └── Produce JobInstance with materialized steps                        │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                      ┌──────────────┴──────────────┐
@@ -23,38 +23,31 @@ The executor orchestrates agentic step execution with strict scope enforcement, 
                      └──────────────┬──────────────┘
                             yes │         │ no
                                 ▼         ▼
-                          EXIT(0)    ENTER LOOP
+                          EXIT(0)    ENTER EXECUTION
                                           │
 ┌─────────────────────────────────────────┴───────────────────────────────┐
-│  ITERATION LOOP (max_iterations times)                                  │
+│  STEP EXECUTION (for each step in JobInstance)                          │
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  1. RESET to baseline (git reset --hard)                        │    │
-│  │  2. INVOKE adapter → patch.diff, agent.json, cmdlog.txt         │    │
-│  │  3. APPLY patch (git apply)                                     │    │
-│  │  4. SCOPE CHECK                                                 │    │
-│  │     └── touched = git diff --name-only ∪ git ls-files --others  │    │
-│  │     └── filter out artifact root (runs/)                        │    │
-│  │     └── check against allowed_paths, forbidden_paths            │    │
-│  │  5. VERIFY (run verification_commands)                          │    │
-│  │  6. DECIDE termination                                          │    │
+│  │  1. BUILD StepManifest (step_n, backend, payload, common)       │    │
+│  │  2. DISPATCH to backend (cmd, claude-code, codex, llm)          │    │
+│  │  3. CAPTURE results (git state, stdout/stderr, exit code)       │    │
+│  │  4. RECORD StepOutcome + StepCapture                            │    │
+│  │  5. CHECK continue_on_failure policy                            │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                         │
-│  Termination:                                                           │
-│  ├── PASS                    → exit loop, finalize                      │
-│  ├── FAIL_SCOPE              → exit immediately (no retry)              │
-│  ├── FAIL_PATCH_APPLY        → exit immediately (no retry)              │
-│  ├── FAIL_ADAPTER_PROTOCOL   → exit immediately (no retry)              │
-│  ├── ESCALATE_NEEDS_HUMAN    → exit immediately (no retry)              │
-│  └── FAIL_VERIFY_RETRYABLE   → retry (or exhaust iterations)            │
+│  Step Outcomes:                                                         │
+│  ├── success    → continue to next step                                 │
+│  ├── failed     → stop (unless continue_on_failure)                     │
+│  └── skipped    → continue to next step                                 │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  GATE PHASE                                                             │
-│  ├── Write result.json (machine-readable outcome)                       │
-│  ├── Write gate.md (human-readable summary)                             │
-│  └── Exit with code: 0=PASS, 1=FAIL_*, 2=ESCALATE_*                     │
+│  FINALIZE PHASE                                                         │
+│  ├── Write RunRecord to store                                           │
+│  ├── Set run status (completed, failed, partial)                        │
+│  └── Exit with code: 0=completed, 1=failed, 2=partial                   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -62,52 +55,34 @@ The executor orchestrates agentic step execution with strict scope enforcement, 
 
 These are non-negotiable. Violations are bugs.
 
-### 1. Runner Owns the Working Tree
+### 1. Executor Never Mutates Step List
 
-The runner exclusively controls `git reset`, `git apply`, and working tree state. The agent **must not**:
-- Run `git commit`, `git push`, `git checkout`
-- Modify `.git/` directly
-- Run destructive commands (`rm -rf`, etc.)
+The executor runs exactly what `compile_job()` produced. It does not add, remove, or reorder steps.
 
-### 2. Agent Outputs Patch Only
+### 2. Git Capture After Each Step
 
-The agent produces exactly three files:
-- `patch.diff` — unified diff to apply
-- `agent.json` — status, needs_human flag, notes
-- `cmdlog.txt` — commands executed (for audit/tripwire)
+After each step completes, the executor captures:
+- Git diff from base commit
+- List of changed files
+- Patch file (for reproducibility)
 
-The agent does **not** apply the patch. The runner applies it.
+### 3. Artifacts Stored Outside Target Repo
 
-### 3. Scope Check Before Verify
+Run artifacts are stored under `~/.local/local-governor/runs/`, never inside the target repository.
 
-Scope enforcement happens **after** patch apply, **before** verification:
-```
-apply patch → scope check → verify
-```
-If scope fails, verification never runs. No retry on scope violations.
+### 4. Backend Dispatches Are Isolated
 
-### 4. Baseline Reset Every Iteration
+Each backend (cmd, claude-code, codex, llm) is responsible for:
+- Executing its payload
+- Capturing stdout/stderr
+- Returning exit code and any agent-specific data
 
-At the **start** of each iteration (including iter-0), the runner resets to baseline:
-```
-git reset --hard <baseline_sha>
-```
-This ensures each iteration starts from a clean, known state.
+### 5. Policy Enforcement via Tool Allowlist
 
-### 5. Touched Files = Tracked Diff ∪ Untracked, Minus Artifact Root
-
-```python
-touched = git_diff_name_only(baseline) ∪ git_ls_files_others()
-touched = touched - artifact_root_prefix  # exact configured path
-```
-
-- **Tracked diff**: Files modified/deleted since baseline
-- **Untracked**: New files created by patch (not in index)
-- **Artifact exclusion**: Uses exact `runs_dir` path, not glob pattern
-
-This prevents:
-- Agents bypassing scope by "adding" files (untracked detection)
-- False positives from executor artifacts (exact prefix exclusion)
+The `claude-code` backend uses a tool allowlist to prevent dangerous operations:
+- Blocks `git push`, `git merge` by default
+- Allows `git commit` only if `policy.allow_commit` is true
+- Note: This is defense-in-depth, not a hard sandbox
 
 ## Artifact Storage Location
 
@@ -170,36 +145,20 @@ Note: `gate.md`, `policy_report.json`, and `verification_report.json` are no lon
 | `GATE_REJECTED` | Human rejected at gate | No |
 | `GATE_DEFERRED` | Human deferred decision | No |
 
-## Troubleshooting by Termination Reason
+## Troubleshooting
 
-**FAIL_SCOPE** — Check `step_summary.yaml` scope section:
-- Look at `scope.violations[].file_path` to see what was touched
-- Compare against `input/contract.yaml` `allowed_paths`
-- Agent likely created/modified a file outside scope
+**Step failed with non-zero exit code**:
+- Check `stdout.txt` and `stderr.txt` in the step artifacts directory
+- Look at `StepOutcome.error` in the run record
 
-**FAIL_PATCH_APPLY** — Check `patch.diff`:
-- Malformed diff syntax (missing headers, bad line counts)
-- Patch conflicts with current file state
-- Try `git apply --check patch.diff` manually
+**Git capture shows unexpected changes**:
+- Verify `base_commit` in JobInstance matches expected state
+- Check if prior steps modified files unexpectedly
 
-**FAIL_VERIFY_RETRYABLE** — Check `step_summary.yaml` verification section:
-- See which command failed
-- Check error output in the summary
-- Ran `max_iterations` times without passing
-
-**FAIL_ADAPTER_PROTOCOL** — Check adapter output in the run directory:
-- Agent ran forbidden command (rm -rf, git commit, pip install)
-- Missing required output files (patch.diff, agent.json)
-- Check error message in `result.json`
-
-**ESCALATE_NEEDS_HUMAN** — Check agent output:
-- Agent set `needs_human: true`
-- Read `notes` field for what's blocking
-- Human decision required before retry
-
-**FAIL_DIRTY_WORKTREE** — Run `git status`:
-- Uncommitted changes present at step start
-- Either commit/stash changes or use `--allow-dirty`
+**Backend dispatch error**:
+- Verify backend is available (`claude` CLI for claude-code)
+- Check payload format matches backend expectations
+- Look at stderr for specific error messages
 
 ## Step Summary Format
 

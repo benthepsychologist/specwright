@@ -20,18 +20,14 @@ class RepoTarget:
 
     name: str
     path: Path
-    allowed_paths: list[str] = field(default_factory=list)
-    forbidden_paths: list[str] = field(default_factory=list)
-    verification_commands: list[str] = field(default_factory=list)
+    suggested_paths: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "name": self.name,
             "path": str(self.path),
-            "allowed_paths": self.allowed_paths,
-            "forbidden_paths": self.forbidden_paths,
-            "verification_commands": self.verification_commands,
+            "suggested_paths": self.suggested_paths,
         }
 
     @classmethod
@@ -40,9 +36,7 @@ class RepoTarget:
         return cls(
             name=data["name"],
             path=Path(data["path"]),
-            allowed_paths=data.get("allowed_paths", []),
-            forbidden_paths=data.get("forbidden_paths", []),
-            verification_commands=data.get("verification_commands", []),
+            suggested_paths=data.get("suggested_paths", []),
         )
 
 
@@ -100,9 +94,7 @@ class TargetResolver:
                 RepoTarget(
                     name=name,
                     path=path,
-                    allowed_paths=target.get("allowed_paths", ["**/*"]),
-                    forbidden_paths=target.get("forbidden_paths", [".git/**"]),
-                    verification_commands=target.get("verification_commands", []),
+                    suggested_paths=target.get("suggested_paths", ["**/*"]),
                 )
             )
 
@@ -120,7 +112,7 @@ class TargetResolver:
         warnings = []
 
         for target in targets:
-            for pattern in target.allowed_paths:
+            for pattern in target.suggested_paths:
                 # Skip glob patterns - can't validate without expansion
                 if "*" in pattern:
                     continue
@@ -128,7 +120,7 @@ class TargetResolver:
                 check_path = target.path / pattern
                 if not check_path.exists():
                     warnings.append(
-                        f"Target '{target.name}': allowed_path '{pattern}' does not exist"
+                        f"Target '{target.name}': suggested_path '{pattern}' does not exist"
                     )
 
         return warnings

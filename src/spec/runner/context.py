@@ -53,45 +53,45 @@ def render_task_md(aip: AIPv3) -> str:
             lines.append(f"- {constraint}")
         lines.append("")
 
-    # Steps
-    if aip.steps:
-        lines.append("## Implementation Steps")
+    # Phases (implementation steps)
+    if aip.phases:
+        lines.append("## Implementation Phases")
         lines.append("")
-        for step in aip.steps:
-            lines.append(f"### {step.id}: {step.title}")
+        for phase in aip.phases:
+            lines.append(f"### {phase.id}: {phase.title}")
             lines.append("")
-            lines.append(step.objective)
+            lines.append(phase.objective)
             lines.append("")
 
-            if step.guidance:
-                if step.guidance.likely_files:
+            if phase.guidance:
+                if phase.guidance.likely_files:
                     lines.append("**Likely files:**")
-                    for f in step.guidance.likely_files:
+                    for f in phase.guidance.likely_files:
                         lines.append(f"- `{f}`")
                     lines.append("")
 
-                if step.guidance.patterns_to_follow:
+                if phase.guidance.patterns_to_follow:
                     lines.append("**Patterns to follow:**")
-                    for p in step.guidance.patterns_to_follow:
+                    for p in phase.guidance.patterns_to_follow:
                         note = f" - {p.note}" if p.note else ""
                         lines.append(f"- `{p.file}`{note}")
                     lines.append("")
 
-                if step.guidance.approach:
+                if phase.guidance.approach:
                     lines.append("**Approach:**")
                     lines.append("")
-                    lines.append(step.guidance.approach)
+                    lines.append(phase.guidance.approach)
                     lines.append("")
 
-                if step.guidance.watch_out_for:
+                if phase.guidance.watch_out_for:
                     lines.append("**Watch out for:**")
-                    for w in step.guidance.watch_out_for:
+                    for w in phase.guidance.watch_out_for:
                         lines.append(f"- {w}")
                     lines.append("")
 
-            if step.verification:
+            if phase.verification:
                 lines.append("**Verification:**")
-                for v in step.verification:
+                for v in phase.verification:
                     lines.append(f"- `{v.cmd}`")
                 lines.append("")
 

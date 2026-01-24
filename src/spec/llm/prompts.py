@@ -39,8 +39,7 @@ Generate a YAML SEP with the following structure:
 - objective: Clear statement of what this step accomplishes
 - files_to_touch: List of files with path, action (create|modify|delete), and description
 - verification_steps: List of commands to verify success with expected outcomes
-- allowed_paths: Glob patterns for files this step may modify
-- forbidden_paths: Glob patterns for files this step must not modify
+- suggested_paths: Glob patterns for files likely to be modified (soft guidance)
 - estimated_complexity: low|medium|high
 - requires_human_review: boolean
 
@@ -63,10 +62,9 @@ You are a code review assistant. Verify that the patch aligns with the SEP const
 
 ## Instructions
 Analyze whether the patch:
-1. Modifies only files listed in allowed_paths
-2. Does not modify any files in forbidden_paths
-3. Achieves the stated objective
-4. Makes changes consistent with files_to_touch descriptions
+1. Achieves the stated objective
+2. Makes changes consistent with files_to_touch descriptions
+3. Stays within suggested_paths scope (advisory, not blocking)
 
 Respond with JSON only:
 {{"status": "pass" | "fail", "rationale": "explanation"}}

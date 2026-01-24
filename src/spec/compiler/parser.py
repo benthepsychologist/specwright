@@ -126,9 +126,7 @@ class SpecParser:
                 "outputs": self._extract_outputs(step_body),
                 "gate_review": self._extract_gate_review(step_body),
                 "role": self._extract_role(step_body),
-                "allowed_paths": self._extract_path_list(step_body, "Allowed Paths"),
-                "forbidden_paths": self._extract_path_list(step_body, "Forbidden Paths"),
-                "verification_commands": self._extract_verification_commands(step_body),
+                "suggested_paths": self._extract_path_list(step_body, "Suggested Paths"),
             }
 
             steps.append(step)
@@ -149,8 +147,7 @@ class SpecParser:
 
         # Section markers that terminate prompt extraction
         section_markers = (
-            '**Commands:**', '**Outputs:**', '**Allowed Paths:**',
-            '**Forbidden Paths:**', '**Verification Commands:**'
+            '**Commands:**', '**Outputs:**', '**Suggested Paths:**',
         )
 
         for line in text.split('\n'):
@@ -264,41 +261,6 @@ class SpecParser:
             if p not in seen:
                 seen.add(p)
                 result.append(p)
-        return result
-
-    def _extract_verification_commands(self, text: str) -> list[str]:
-        """Extract verification commands from **Verification Commands:** section."""
-        commands: list[str] = []
-
-        # Support inline legacy form: **Verification:** `python -c "..."`
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("**Verification:**"):
-                inline = re.findall(r"`([^`]+)`", stripped)
-                for cmd in inline:
-                    cmd = cmd.strip()
-                    if cmd:
-                        commands.append(cmd)
-        pattern = r'\*\*Verification Commands:\*\*(.*?)(?=\n\*\*[A-Z]|\n###|$)'
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            section_text = match.group(1)
-            # Extract commands from code blocks
-            code_block_pattern = re.compile(r'```(?:\w+)?\n(.*?)```', re.DOTALL)
-            for block_match in code_block_pattern.finditer(section_text):
-                code = block_match.group(1).strip()
-                # Split by newlines to get individual commands
-                for line in code.split('\n'):
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        commands.append(line)
-        # Deduplicate while preserving order
-        seen: set[str] = set()
-        result: list[str] = []
-        for c in commands:
-            if c not in seen:
-                seen.add(c)
-                result.append(c)
         return result
 
     def _extract_gate_review(self, text: str) -> dict[str, Any] | None:
@@ -500,15 +462,9 @@ class SpecParser:
             if step.get("gate_ref"):
                 schema_step["gate_ref"] = step["gate_ref"]
 
-            # Add executor fields if present (for agentic steps)
-            if step.get("allowed_paths"):
-                schema_step["allowed_paths"] = step["allowed_paths"]
-
-            if step.get("forbidden_paths"):
-                schema_step["forbidden_paths"] = step["forbidden_paths"]
-
-            if step.get("verification_commands"):
-                schema_step["verification_commands"] = step["verification_commands"]
+            # Add soft guidance fields if present
+            if step.get("suggested_paths"):
+                schema_step["suggested_paths"] = step["suggested_paths"]
 
             # ========================================
             # AIP v2.0: Embedded SEP fields
@@ -516,9 +472,9 @@ class SpecParser:
             # objective: derived from prompt or description
             schema_step["objective"] = prompt_text if prompt_text else description
 
-            # files_to_touch: derived from allowed_paths (stub - will be enriched by LLM)
+            # files_to_touch: derived from suggested_paths (stub - will be enriched by LLM)
             files_to_touch = []
-            for path in step.get("allowed_paths", []):
+            for path in step.get("suggested_paths", []):
                 files_to_touch.append({
                     "path": path,
                     "action": "modify",
@@ -526,15 +482,8 @@ class SpecParser:
                 })
             schema_step["files_to_touch"] = files_to_touch
 
-            # verification_steps: derived from verification_commands
-            verification_steps = []
-            for cmd in step.get("verification_commands", []):
-                verification_steps.append({
-                    "command": cmd,
-                    "expected_outcome": "Command exits successfully with code 0",
-                    "required": True
-                })
-            schema_step["verification_steps"] = verification_steps
+            # verification_steps: empty by default (v2 doesn't use enforced verification)
+            schema_step["verification_steps"] = []
 
             schema_steps.append(schema_step)
 

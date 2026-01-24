@@ -112,8 +112,8 @@ class LlmBackend(BackendBase):
             step_n=manifest.step_n,
             step_id=manifest.step_id,
             agent=AgentCapture(
-                stdout_file=str(stdout_path),
-                stderr_file=str(stderr_path),
+                stdout_file=stdout_path.name,
+                stderr_file=stderr_path.name,
                 exit_code=exit_code,
             ),
         )

@@ -42,7 +42,7 @@ class AIPSplitter:
     Each generated AIP:
     - Has a unique ID derived from parent spec + target
     - References the parent spec
-    - Has isolated allowed_paths for the target repo
+    - Has suggested_paths for soft guidance to the target repo
     - Contains only relevant plan steps
     """
 
@@ -116,11 +116,11 @@ class AIPSplitter:
         aip: dict[str, Any],
         target: RepoTarget,
     ) -> dict[str, Any]:
-        """Apply target-specific scope constraints to AIP plan steps.
+        """Apply target-specific scope guidance to AIP plan steps.
 
         Args:
             aip: AIP data to modify
-            target: Target with scope constraints
+            target: Target with scope guidance
 
         Returns:
             Modified AIP data
@@ -131,26 +131,12 @@ class AIPSplitter:
             if "scope" not in step:
                 step["scope"] = {}
 
-            # Merge target scope with step scope
-            # Target scope takes precedence for security
+            # Merge target scope with step scope (soft guidance only)
             step_scope = step["scope"]
 
-            # Intersect allowed_paths (target restricts step)
-            if target.allowed_paths:
-                # Use target's allowed_paths, filtered by step's
-                step_scope["allowed_paths"] = target.allowed_paths
-
-            # Union forbidden_paths (both apply)
-            step_forbidden = step_scope.get("forbidden_paths", [])
-            combined_forbidden = list(set(step_forbidden + target.forbidden_paths))
-            step_scope["forbidden_paths"] = combined_forbidden
-
-            # Append target verification commands
-            step_verify = step_scope.get("verification_commands", [])
-            if target.verification_commands:
-                step_scope["verification_commands"] = (
-                    step_verify + target.verification_commands
-                )
+            # Set suggested_paths from target (soft guidance, not enforced)
+            if target.suggested_paths:
+                step_scope["suggested_paths"] = target.suggested_paths
 
         return aip
 

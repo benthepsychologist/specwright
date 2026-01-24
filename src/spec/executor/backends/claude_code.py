@@ -1,7 +1,15 @@
 """
 claude-code backend: Spawn Claude Code agent sessions.
 
-Runs Claude Code CLI in dangerous mode with sandbox enforcement.
+Runs Claude Code CLI in dangerous mode with a tool allowlist.
+
+SECURITY NOTE:
+    This backend uses a tool allowlist approach rather than the SandboxEnforcer
+    used by the cmd backend. The allowlist blocks direct git push/merge commands,
+    but indirect execution (e.g., via Python subprocess) is not blocked.
+
+    For high-security scenarios, use the cmd backend with explicit commands.
+    The allowlist provides defense-in-depth but is not a hard sandbox.
 """
 
 from __future__ import annotations
@@ -166,10 +174,10 @@ class ClaudeCodeBackend(BackendBase):
             step_id=manifest.step_id,
             git=git_capture,
             agent=AgentCapture(
-                stdout_file=str(stdout_path),
-                stderr_file=str(stderr_path),
+                stdout_file=stdout_path.name,
+                stderr_file=stderr_path.name,
                 exit_code=exit_code,
-                transcript_file=str(transcript_path) if transcript_path.exists() else None,
+                transcript_file=transcript_path.name if transcript_path.exists() else None,
             ),
         )
 

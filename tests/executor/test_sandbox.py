@@ -921,4 +921,4 @@ class TestCaptureGitState:
         capture = capture_git_state(tmp_path, base_commit, patch_output_path=patch_path)
 
         assert patch_path.exists()
-        assert capture.patch_file == str(patch_path)
+        assert capture.patch_file == patch_path.name  # Relative filename

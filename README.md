@@ -88,22 +88,39 @@ Jinja2 renders tier-b-template.md with governance context
 
 **Step Execution:**
 ```
-spec run aips/my-aip.yaml --step 1
+spec run aip-1 ./my-feature.aip.yaml
     ↓
-StepExecutor loads AIP + creates StepContract
+compile_job(JobDef, envelope) → JobInstance
     ↓
-Adapter.execute(contract, workspace) → runs agent
+execute(JobInstance) → runs steps via backends
     ↓
-PolicyChecker validates scope (allowed_paths, forbidden_paths)
+StepCapture records git state, agent output
     ↓
-Verification commands run (ruff, mypy, pytest)
-    ↓
-AdapterResult (PASS/FAIL_SCOPE/FAIL_VERIFY/...)
+RunRecord (completed/failed/...)
 ```
 
-### Key Types
+### Key Types (v2 Executor)
 
 ```python
+# src/spec/executor/schemas.py
+@dataclass
+class JobDef:
+    job_id: str               # e.g., "aip-1"
+    steps: list[StepTemplate] # Step templates with variable refs
+
+@dataclass
+class JobInstance:
+    job_id: str
+    steps: list[Step]         # Materialized steps with resolved values
+    common: Common            # Shared context (repo_path, branch, etc.)
+
+@dataclass
+class StepCapture:
+    step_n: int
+    step_id: str
+    git: GitCapture | None    # Patch, changed files
+    agent: AgentCapture       # stdout/stderr files (relative paths)
+
 # src/spec/autogov/loader.py
 @dataclass
 class GovernanceBundle:
@@ -117,26 +134,6 @@ class GovernanceBundle:
     patterns: list[AppliedPattern]  # From applies.patterns
     invariants: list[str]     # Kernel invariants
     frozen_paths: list[str]   # Files that shouldn't be modified
-
-# src/spec/executor/contract.py
-@dataclass
-class StepContract:
-    aip_id: str
-    step_id: str
-    step_index: int
-    allowed_paths: list[str]
-    forbidden_paths: list[str]
-    verification_commands: list[str]
-    adapter: AdapterConfig
-    max_iterations: int
-    governance: GovernanceContext | None
-
-# src/spec/executor/adapters/base.py
-@dataclass
-class AdapterResult:
-    status: str  # PASS, FAIL_SCOPE, FAIL_VERIFY, FAIL_ADAPTER, etc.
-    iterations: int
-    changed_files: list[str]
     verification_output: str
     error: str | None
 ```

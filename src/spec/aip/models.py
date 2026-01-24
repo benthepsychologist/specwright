@@ -94,7 +94,7 @@ class AIPWorkspace:
     repo_path: str
     branch: str
     base_branch: str
-    allowed_paths: list[str] = field(default_factory=list)
+    suggested_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -211,8 +211,8 @@ def _workspace_to_dict(workspace: AIPWorkspace) -> dict[str, Any]:
         "branch": workspace.branch,
         "base_branch": workspace.base_branch,
     }
-    if workspace.allowed_paths:
-        result["allowed_paths"] = workspace.allowed_paths
+    if workspace.suggested_paths:
+        result["suggested_paths"] = workspace.suggested_paths
     return result
 
 

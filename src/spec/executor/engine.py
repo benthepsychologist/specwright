@@ -526,10 +526,12 @@ def execute(
     # Get repo info from payload
     repo_path = Path(payload.get("repo_path", ".")).resolve()
 
-    # Resolve base_commit if not provided
+    # Resolve base_commit to SHA if not provided (determinism)
     base_commit = payload.get("base_commit")
     if not base_commit or base_commit == "HEAD":
         base_commit = _get_current_commit(repo_path)
+        # Update envelope so compile_job sees the resolved SHA
+        payload["base_commit"] = base_commit
 
     # Resolve branch
     branch = payload.get("feature_branch", payload.get("branch"))
@@ -539,7 +541,7 @@ def execute(
     # Get JobDef
     job_def = get_job_def(job_id)
 
-    # Compile to JobInstance
+    # Compile to JobInstance (uses resolved base_commit from payload)
     job_instance = compile_job(job_def, envelope)
 
     # Build policy from ctx
@@ -580,6 +582,144 @@ def execute(
     )
 
     try:
+        # Run step dispatch loop
+        final_status, outcomes = _run_steps(
+            job_instance=job_instance,
+            run_record=run_record,
+            store=store,
+            ctx=ctx,
+            payload=payload,
+        )
+
+        # Update attempt
+        attempt = AttemptRecord(
+            attempt_n=attempt.attempt_n,
+            started_at=attempt.started_at,
+            ended_at=datetime.now(UTC),
+            status=AttemptStatus.completed if final_status == RunStatus.completed else AttemptStatus.failed,
+            step_outcomes=outcomes,
+            final_step_n=outcomes[-1].step_n if outcomes else None,
+        )
+
+        # Update run record
+        run_record = RunRecord(
+            run_id=run_record.run_id,
+            job_id=run_record.job_id,
+            job_hash=run_record.job_hash,
+            repo=run_record.repo,
+            policy=run_record.policy,
+            status=final_status,
+            created_at=run_record.created_at,
+            updated_at=datetime.now(UTC),
+            envelope=run_record.envelope,
+        )
+
+    except Exception as e:
+        # Handle unexpected errors
+        attempt = AttemptRecord(
+            attempt_n=attempt.attempt_n,
+            started_at=attempt.started_at,
+            ended_at=datetime.now(UTC),
+            status=AttemptStatus.failed,
+            step_outcomes=attempt.step_outcomes,
+            final_step_n=attempt.final_step_n,
+            error=str(e),
+        )
+
+        run_record = RunRecord(
+            run_id=run_record.run_id,
+            job_id=run_record.job_id,
+            job_hash=run_record.job_hash,
+            repo=run_record.repo,
+            policy=run_record.policy,
+            status=RunStatus.failed,
+            created_at=run_record.created_at,
+            updated_at=datetime.now(UTC),
+            envelope=run_record.envelope,
+            error=str(e),
+        )
+
+    # Write final state
+    store.write_attempt(run_id, attempt)
+    store.write_run_record(run_id, run_record)
+
+    return run_record
+
+
+def execute_instance(
+    job_instance: JobInstance,
+    *,
+    store: RunStore | None = None,
+    run_id: str | None = None,
+    policy: Policy | None = None,
+) -> RunRecord:
+    """
+    Execute a pre-compiled JobInstance directly without recompiling.
+
+    Use this when you have a JobInstance from compile_job() or loaded from disk.
+
+    Args:
+        job_instance: The pre-compiled JobInstance to execute
+        store: Optional RunStore (defaults to standard location)
+        run_id: Optional run_id (defaults to generated)
+        policy: Optional execution policy (defaults to standard policy)
+
+    Returns:
+        The final RunRecord
+
+    Raises:
+        ExecutorError: If execution fails
+    """
+    store = store or RunStore()
+    run_id = run_id or generate_run_id()
+    policy = policy or Policy()
+
+    # Get repo info from first step
+    if not job_instance.steps:
+        raise ExecutorError("JobInstance has no steps", run_id=run_id)
+
+    first_step = job_instance.steps[0]
+    repo_path = first_step.common.repo_path
+    branch = first_step.common.branch
+    base_commit = first_step.common.base_commit
+
+    # Create RunRecord
+    run_record = RunRecord(
+        run_id=run_id,
+        job_id=job_instance.job_id,
+        job_hash=job_instance.job_hash,
+        repo=RepoScope(
+            repo_path=repo_path,
+            branch=branch,
+            base_commit=base_commit,
+        ),
+        policy=policy,
+        status=RunStatus.running,
+        envelope={},  # No envelope for direct instance execution
+    )
+
+    # Create run directory and write initial artifacts
+    store.create_run(run_id)
+    store.write_run_record(run_id, run_record)
+    store.write_job_instance(run_id, job_instance)
+
+    # Execute with attempt tracking
+    attempt_n = 1
+    attempt = AttemptRecord(
+        attempt_n=attempt_n,
+        started_at=datetime.now(UTC),
+        status=AttemptStatus.running,
+    )
+
+    try:
+        # Build ctx/payload from common block for variable resolution
+        ctx: dict[str, Any] = {}
+        payload: dict[str, Any] = {
+            "repo_path": str(repo_path),
+            "branch": branch,
+            "base_commit": base_commit,
+        }
+
         # Run step dispatch loop
         final_status, outcomes = _run_steps(
             job_instance=job_instance,

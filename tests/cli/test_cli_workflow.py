@@ -414,7 +414,8 @@ def test_compile_converts_md_to_yaml(temp_project):
         ])
 
         # Compile it - should now succeed with fixed templates
-        result = runner.invoke(app, ["compile", ".specwright/specs/compile-test.md"])
+        # Note: v1 compile was renamed to spec-compile in v2
+        result = runner.invoke(app, ["spec-compile", ".specwright/specs/compile-test.md"])
 
         # Compilation and validation should both succeed
         assert result.exit_code == 0
@@ -459,7 +460,8 @@ def test_compile_creates_output_directory(temp_project):
             shutil.rmtree(aips_dir)
 
         # Compile should create the directory and succeed
-        result = runner.invoke(app, ["compile", ".specwright/specs/dir-test.md"])
+        # Note: v1 compile was renamed to spec-compile in v2
+        result = runner.invoke(app, ["spec-compile", ".specwright/specs/dir-test.md"])
 
         # Should succeed and create directory
         assert result.exit_code == 0
@@ -521,7 +523,8 @@ Second step must still be detected.
             encoding="utf-8",
         )
 
-        result = runner.invoke(app, ["compile", str(spec_path)])
+        # Note: v1 compile was renamed to spec-compile in v2
+        result = runner.invoke(app, ["spec-compile", str(spec_path)])
         assert result.exit_code == 0
 
         aip_path = temp_project / ".specwright" / "aips" / "fenced-h2.yaml"
@@ -576,7 +579,8 @@ def test_validate_yaml_aip(temp_project):
             "--owner", "frank",
             "--goal", "Test YAML validation"
         ])
-        runner.invoke(app, ["compile", ".specwright/specs/yaml-validate.md"])
+        # Note: v1 compile was renamed to spec-compile in v2
+        runner.invoke(app, ["spec-compile", ".specwright/specs/yaml-validate.md"])
 
         # Validate compiled YAML
         result = runner.invoke(app, ["validate", ".specwright/aips/yaml-validate.yaml"])

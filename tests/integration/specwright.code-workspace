@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../.."
+		},
+		{
+			"path": "../../../../home/developer"
+		},
+		{
+			"path": "../../.."
+		}
+	],
+	"settings": {}
+}

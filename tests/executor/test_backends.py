@@ -197,8 +197,8 @@ class TestCmdBackend:
         assert capture.agent is not None
         assert capture.agent.exit_code == 0
 
-        # Check stdout was captured
-        stdout_path = Path(capture.agent.stdout_file)
+        # Check stdout was captured (relative path in capture, resolve against artifacts_dir)
+        stdout_path = artifacts_dir / capture.agent.stdout_file
         assert stdout_path.exists()
         assert "hello" in stdout_path.read_text()
 
@@ -219,7 +219,7 @@ class TestCmdBackend:
         capture = backend.dispatch(manifest, artifacts_dir, policy)
 
         assert capture.agent.exit_code == 126
-        stderr_path = Path(capture.agent.stderr_file)
+        stderr_path = artifacts_dir / capture.agent.stderr_file
         assert "Policy violation" in stderr_path.read_text()
 
     def test_dispatch_timeout(self, backend, manifest, policy, tmp_path):
@@ -236,7 +236,7 @@ class TestCmdBackend:
         capture = backend.dispatch(manifest, artifacts_dir, policy)
 
         assert capture.agent.exit_code == 124
-        stderr_path = Path(capture.agent.stderr_file)
+        stderr_path = artifacts_dir / capture.agent.stderr_file
         assert "timed out" in stderr_path.read_text()
 
     def test_dispatch_captures_git_state(self, backend, manifest, policy, tmp_path):
@@ -309,7 +309,7 @@ class TestLlmBackend:
         capture = backend.dispatch(manifest, artifacts_dir, policy)
 
         assert capture.agent.exit_code == 0
-        stdout_path = Path(capture.agent.stdout_file)
+        stdout_path = artifacts_dir / capture.agent.stdout_file
         assert "Hello!" in stdout_path.read_text()
 
     @patch("spec.executor.backends.llm.LlmBackend._call_llm")
@@ -321,7 +321,7 @@ class TestLlmBackend:
         capture = backend.dispatch(manifest, artifacts_dir, policy)
 
         assert capture.agent.exit_code == 1
-        stderr_path = Path(capture.agent.stderr_file)
+        stderr_path = artifacts_dir / capture.agent.stderr_file
         assert "API rate limit" in stderr_path.read_text()
 
 
@@ -513,7 +513,7 @@ class TestCodexBackend:
         capture = backend.dispatch(manifest, artifacts_dir, policy)
 
         assert capture.agent.exit_code == 127
-        stderr_path = Path(capture.agent.stderr_file)
+        stderr_path = artifacts_dir / capture.agent.stderr_file
         assert "codex CLI not found" in stderr_path.read_text()
 
     @patch("shutil.which")

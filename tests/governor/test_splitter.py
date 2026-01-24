@@ -14,7 +14,7 @@ class TestSplitAIP:
         target = RepoTarget(
             name="my-repo",
             path=tmp_path,
-            allowed_paths=["src/**"],
+            suggested_paths=["src/**"],
         )
         split_aip = SplitAIP(
             aip_id="AIP-001-my-repo-001",
@@ -39,8 +39,7 @@ class TestAIPSplitter:
         target = RepoTarget(
             name="my-repo",
             path=tmp_path,
-            allowed_paths=["src/**"],
-            forbidden_paths=[".git/**"],
+            suggested_paths=["src/**"],
         )
         aip_data = {
             "aip_id": "AIP-001",
@@ -109,22 +108,18 @@ class TestAIPSplitter:
         assert "split_date" in aip["meta"]
 
     def test_split_applies_target_scope(self, tmp_path: Path) -> None:
-        """Test that target scope is applied to plan steps."""
+        """Test that target scope is applied to plan steps (soft guidance only)."""
         target = RepoTarget(
             name="my-repo",
             path=tmp_path,
-            allowed_paths=["src/**"],
-            forbidden_paths=[".git/**", "secrets/**"],
-            verification_commands=["pytest"],
+            suggested_paths=["src/**"],
         )
         aip_data = {
             "aip_id": "AIP-001",
             "plan": [
                 {
                     "step": 1,
-                    "scope": {
-                        "forbidden_paths": ["node_modules/**"],
-                    },
+                    "scope": {},
                 }
             ],
         }
@@ -133,12 +128,8 @@ class TestAIPSplitter:
         result = splitter.split(aip_data, [target])
 
         step = result[0].aip_data["plan"][0]
-        assert step["scope"]["allowed_paths"] == ["src/**"]
-        # Should combine forbidden paths
-        assert ".git/**" in step["scope"]["forbidden_paths"]
-        assert "secrets/**" in step["scope"]["forbidden_paths"]
-        assert "node_modules/**" in step["scope"]["forbidden_paths"]
-        assert "pytest" in step["scope"]["verification_commands"]
+        # v2: only suggested_paths (soft guidance), no enforced scope
+        assert step["scope"]["suggested_paths"] == ["src/**"]
 
     def test_split_does_not_mutate_original(self, tmp_path: Path) -> None:
         """Test that splitting doesn't mutate original AIP data."""

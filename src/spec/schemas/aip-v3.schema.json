@@ -72,10 +72,10 @@
           "pattern": "^[a-zA-Z0-9/_-]+$",
           "description": "Base branch to diff against"
         },
-        "allowed_paths": {
+        "suggested_paths": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "Glob patterns for allowed modifications"
+          "description": "Glob patterns for suggested focus areas (soft guidance, not enforced)"
         }
       }
     },

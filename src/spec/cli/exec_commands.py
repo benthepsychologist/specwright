@@ -1,7 +1,7 @@
 """
 CLI commands for the v2 executor engine.
 
-Commands:
+Commands (registered at top-level of spec CLI per e008-05):
 - spec compile: Compile JobDef + AIP to JobInstance
 - spec execute: Execute a pre-compiled JobInstance
 - spec run: Compile and execute in one step
@@ -22,6 +22,7 @@ from spec.executor.engine import (
     ExecutorError,
     compile_job,
     execute,
+    execute_instance,
     generate_run_id,
     get_job_def,
     list_job_defs,
@@ -32,9 +33,6 @@ from spec.executor.schemas import (
     RunStatus,
 )
 from spec.executor.store import RunStore
-
-# Create the typer app for exec commands
-exec_app = typer.Typer(help="Executor commands for v2 job-based execution")
 
 
 def _echo_error(message: str) -> None:
@@ -82,7 +80,6 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 # =============================================================================
 
 
-@exec_app.command("compile")
 def compile_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
     aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
@@ -175,7 +172,6 @@ def compile_command(
 # =============================================================================
 
 
-@exec_app.command("execute")
 def execute_command(
     job_instance_path: Path = typer.Argument(..., help="Path to JobInstance YAML file"),
     run_id: str = typer.Option(
@@ -213,22 +209,11 @@ def execute_command(
     typer.echo(f"  Steps:    {len(job_instance.steps)}")
     typer.echo("")
 
-    # Execute steps directly (bypass compile)
+    # Execute directly from JobInstance (no recompilation)
     store = RunStore()
 
-    # Build minimal envelope from JobInstance
-    first_step = job_instance.steps[0]
-    envelope = {
-        "job_id": job_instance.job_id,
-        "payload": {
-            "repo_path": str(first_step.common.repo_path),
-            "feature_branch": first_step.common.branch,
-        },
-        "ctx": {},
-    }
-
     try:
-        result = execute(envelope, store=store, run_id=run_id)
+        result = execute_instance(job_instance, store=store, run_id=run_id)
     except ExecutorError as e:
         _echo_error(f"Execution failed: {e}")
         raise typer.Exit(1)
@@ -248,7 +233,6 @@ def execute_command(
 # =============================================================================
 
 
-@exec_app.command("run")
 def run_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
     aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
@@ -367,7 +351,6 @@ def run_command(
 # =============================================================================
 
 
-@exec_app.command("status")
 def status_command(
     run_id: str = typer.Argument(None, help="Run ID to show status for (optional)"),
     limit: int = typer.Option(10, "--limit", "-l", help="Number of recent runs to show"),
@@ -423,7 +406,6 @@ def status_command(
 # =============================================================================
 
 
-@exec_app.command("logs")
 def logs_command(
     run_id: str = typer.Argument(..., help="Run ID to show logs for"),
     step_n: int = typer.Argument(None, help="Step number to show logs for (optional)"),

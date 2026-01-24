@@ -323,20 +323,6 @@ class TestNoSourceCLIFlag:
                 # This would mean --source is an option for create
                 pytest.fail("--source should not be an option for spec create")
 
-    def test_run_has_no_source_flag(self) -> None:
-        """spec run should not have a --source flag."""
-        result = runner.invoke(app, ["run", "--help"])
-        assert result.exit_code == 0
-        help_text = result.output
-        assert "--autogov" in help_text
-        # Ensure --source is not listed for run
-        lines = help_text.split("\n")
-        in_run_options = False
-        for line in lines:
-            if "--autogov" in line:
-                in_run_options = True
-            if in_run_options and "--source" in line:
-                pytest.fail("--source should not be an option for spec run")
 
 
 class TestBackwardCompatibility:
@@ -376,32 +362,3 @@ class TestBackwardCompatibility:
         finally:
             os.chdir(original_dir)
 
-    def test_old_contracts_deserialize(self, tmp_path: Path) -> None:
-        """Old step contracts without governance field deserialize correctly."""
-        from spec.executor.contract import load_contract
-
-        # Create old-style contract without governance
-        old_contract = """
-aip_id: legacy-aip
-step_id: step-001
-step_index: 0
-allowed_paths:
-  - src/**
-forbidden_paths:
-  - .git/**
-verification_commands:
-  - pytest
-adapter:
-  name: claude
-  mode: interactive
-max_iterations: 3
-created_at: "2024-01-01T00:00:00+00:00"
-baseline_commit: abc123
-"""
-        contract_path = tmp_path / "legacy_contract.yaml"
-        contract_path.write_text(old_contract)
-
-        contract = load_contract(contract_path)
-
-        assert contract.aip_id == "legacy-aip"
-        assert contract.governance is None  # Old contracts have no governance

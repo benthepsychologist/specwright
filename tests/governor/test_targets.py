@@ -15,34 +15,28 @@ class TestRepoTarget:
         target = RepoTarget(
             name="my-repo",
             path=tmp_path,
-            allowed_paths=["src/**"],
-            forbidden_paths=[".git/**"],
-            verification_commands=["pytest"],
+            suggested_paths=["src/**"],
         )
 
         result = target.to_dict()
 
         assert result["name"] == "my-repo"
         assert result["path"] == str(tmp_path)
-        assert result["allowed_paths"] == ["src/**"]
-        assert result["forbidden_paths"] == [".git/**"]
-        assert result["verification_commands"] == ["pytest"]
+        assert result["suggested_paths"] == ["src/**"]
 
     def test_from_dict(self, tmp_path: Path) -> None:
         """Test RepoTarget deserialization."""
         data = {
             "name": "my-repo",
             "path": str(tmp_path),
-            "allowed_paths": ["src/**"],
-            "forbidden_paths": [".git/**"],
-            "verification_commands": ["pytest"],
+            "suggested_paths": ["src/**"],
         }
 
         target = RepoTarget.from_dict(data)
 
         assert target.name == "my-repo"
         assert target.path == tmp_path
-        assert target.allowed_paths == ["src/**"]
+        assert target.suggested_paths == ["src/**"]
 
 
 class TestTargetResolver:
@@ -57,7 +51,7 @@ class TestTargetResolver:
             {
                 "repo": "my-repo",
                 "path": str(repo_path),
-                "allowed_paths": ["src/**"],
+                "suggested_paths": ["src/**"],
             }
         ]
 
@@ -67,7 +61,7 @@ class TestTargetResolver:
         assert len(resolved) == 1
         assert resolved[0].name == "my-repo"
         assert resolved[0].path == repo_path
-        assert resolved[0].allowed_paths == ["src/**"]
+        assert resolved[0].suggested_paths == ["src/**"]
 
     def test_resolve_from_registry(self, tmp_path: Path) -> None:
         """Test resolving target from registry."""
@@ -144,8 +138,7 @@ class TestTargetResolver:
         resolver = TargetResolver()
         resolved = resolver.resolve(targets_block)
 
-        assert resolved[0].allowed_paths == ["**/*"]
-        assert resolved[0].forbidden_paths == [".git/**"]
+        assert resolved[0].suggested_paths == ["**/*"]
 
     def test_validate_scopes_existing_paths(self, tmp_path: Path) -> None:
         """Test scope validation with existing paths."""
@@ -155,7 +148,7 @@ class TestTargetResolver:
         target = RepoTarget(
             name="repo",
             path=repo_path,
-            allowed_paths=["src"],
+            suggested_paths=["src"],
         )
 
         resolver = TargetResolver()
@@ -171,7 +164,7 @@ class TestTargetResolver:
         target = RepoTarget(
             name="repo",
             path=repo_path,
-            allowed_paths=["nonexistent"],
+            suggested_paths=["nonexistent"],
         )
 
         resolver = TargetResolver()
@@ -188,7 +181,7 @@ class TestTargetResolver:
         target = RepoTarget(
             name="repo",
             path=repo_path,
-            allowed_paths=["src/**/*.py"],  # Glob pattern
+            suggested_paths=["src/**/*.py"],  # Glob pattern
         )
 
         resolver = TargetResolver()

@@ -226,9 +226,15 @@ class TestEpicCheck:
 
     def test_check_returns_4_when_llm_not_enabled(self, runner: CliRunner, temp_governor: Path):
         """Check returns exit 4 when LLM is not enabled."""
-        result = runner.invoke(app, ["epic", "check", "test-epic"])
-        assert result.exit_code == 4
-        assert "not enabled" in result.output.lower() or "llm" in result.output.lower()
+        from unittest.mock import patch
+
+        from spec.llm.config import LLMConfig
+
+        # Mock load_llm_config to return disabled config
+        with patch("spec.llm.config.load_llm_config", return_value=LLMConfig(enabled=False)):
+            result = runner.invoke(app, ["epic", "check", "test-epic"])
+            assert result.exit_code == 4
+            assert "not enabled" in result.output.lower() or "llm" in result.output.lower()
 
 
 class TestEpicCreate:

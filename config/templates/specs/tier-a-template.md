@@ -50,7 +50,7 @@ autogov:
 
 ### Governance
 
-> Governance Guidance (autogov, non-enforced in v1)
+> Governance Guidance (autogov)
 
 **Policy:** {{ autogov_policy_name }} v{{ autogov_policy_version }}
 **Architecture:** {{ autogov_arch_name }} v{{ autogov_arch_version }}
@@ -70,11 +70,11 @@ autogov:
 
 {% endfor %}
 {% endif %}
-{% if autogov_forbidden_paths %}
+{% if autogov_frozen_paths %}
 
-#### Forbidden Paths
-{% for fp in autogov_forbidden_paths %}
-- `{{ fp.path }}` - {{ fp.reason }}
+#### Frozen Paths
+{% for path in autogov_frozen_paths %}
+- `{{ path }}`
 {% endfor %}
 {% endif %}
 {% endif %}
@@ -166,29 +166,11 @@ Create comprehensive prompts with security, privacy, and safety guardrails:
 
 Implement with security best practices and strict validation.
 
-**Allowed Paths:**
+**Suggested Paths:**
 
 - `src/**`
 - `tests/**`
 - `docs/**`
-
-**Forbidden Paths:**
-
-- `.git/**`
-- `*.lock`
-- `.env*`
-- `secrets/**`
-- `infra/**`
-- `src/core/**`
-
-**Verification Commands:**
-
-```bash
-ruff check .
-mypy .
-bandit -r src/
-pytest -q
-```
 
 **Outputs:**
 

@@ -37,10 +37,20 @@ from spec.cli.epic import epic_app
 
 app.add_typer(epic_app, name="epic")
 
-# Register v2 executor commands
-from spec.cli.exec_commands import exec_app
+# Register v2 executor commands at top level (per e008-05 spec)
+from spec.cli.exec_commands import (
+    compile_command,
+    execute_command,
+    run_command,
+    status_command,
+    logs_command,
+)
 
-app.add_typer(exec_app, name="exec")
+app.command("compile")(compile_command)
+app.command("execute")(execute_command)
+app.command("run")(run_command)
+app.command("status")(status_command)
+app.command("logs")(logs_command)
 
 
 class RiskTier(str, Enum):
@@ -741,16 +751,16 @@ def create(
             typer.echo("    3. Run: spec validate <compiled-yaml>")
 
 
-@app.command()
-def compile(
+@app.command("spec-compile")
+def spec_compile(
     spec_path: Path | None = typer.Argument(None, help="Path to Markdown spec file (uses current spec if omitted)"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output YAML path (default: aips/<stem>.yaml)"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite existing compiled file"),
 ):
-    """Compile Markdown spec to validated YAML AIP.
+    """Compile Markdown spec to validated YAML AIP (v1 authoring command).
 
     This converts a Markdown spec file to a validated YAML AIP format.
-    Use 'spec exec compile' to create a JobInstance for execution.
+    For v2 executor JobInstance compilation, use 'spec compile'.
     """
     from spec.compiler import compile_spec as do_compile
 

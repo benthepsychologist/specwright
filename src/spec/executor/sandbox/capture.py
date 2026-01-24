@@ -466,8 +466,15 @@ def capture_git_state(
         for f in changed
     ]
 
-    # Determine patch_file relative path
-    patch_file = str(patch_output_path) if patch_output_path and patch else None
+    # Determine patch_file as relative filename
+    # Always create the patch file (even if empty) for consistency
+    if patch_output_path:
+        if not patch:
+            # Write empty patch file
+            patch_output_path.write_text("")
+        patch_file = patch_output_path.name
+    else:
+        patch_file = None
 
     return GitCapture(
         base_commit=base_commit,
