@@ -502,8 +502,11 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.llm,
                 description="Assess AIP acceptance criteria",
                 payload={
-                    "prompt": "Review the changes and assess against acceptance criteria.",
-                    "context": "AIP path: @payload.aip_path",
+                    "prompt_type": "acceptance_review",
+                    "aip": "@payload.aip",
+                    "epic_spec": "@payload.epic_spec",
+                    "repo_path": "@payload.repo_path",
+                    "model": "gemini-3-pro-preview",
                 },
                 continue_on_failure=True,  # Best effort
             ),
@@ -1215,7 +1218,7 @@ def _generate_run_report(
     run_dir: Path,
 ) -> None:
     """Generate an LLM-interpreted run report."""
-    from spec.executor.backends.llm import LLMBackend
+    from spec.executor.backends.llm import LlmBackend
 
     # Build summary of step outcomes
     outcomes_summary = []
@@ -1262,7 +1265,7 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
 """
 
     # Use LLM backend to generate report
-    backend = LLMBackend()
+    backend = LlmBackend()
     try:
         # Create a minimal manifest for the LLM call
         manifest = StepManifest(

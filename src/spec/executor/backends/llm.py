@@ -58,12 +58,23 @@ class LlmBackend(BackendBase):
         from spec.executor.schemas import AgentCapture, StepCapture
 
         payload = manifest.payload
+        common = manifest.common
 
-        # Extract payload fields
+        # Handle prompt_type for dynamic prompt building
+        prompt_type = payload.get("prompt_type")
         prompt = payload.get("prompt")
+
+        if prompt_type and not prompt:
+            prompt = self._build_prompt_for_type(
+                prompt_type=prompt_type,
+                aip_data=payload.get("aip"),
+                epic_spec=payload.get("epic_spec"),
+                repo_path=common.repo_path if common else None,
+            )
+
         if not prompt:
             raise BackendError(
-                "llm backend requires 'prompt' in payload",
+                "llm backend requires 'prompt' or 'prompt_type' in payload",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
@@ -180,3 +191,112 @@ class LlmBackend(BackendBase):
                 return response_text
 
         return response_text
+
+    def _build_prompt_for_type(
+        self,
+        prompt_type: str,
+        aip_data: dict | None,
+        epic_spec: dict | None,
+        repo_path: Path | None,
+    ) -> str:
+        """Build a prompt based on type.
+
+        Args:
+            prompt_type: The type of prompt to build
+            aip_data: Optional AIP data
+            epic_spec: Optional epic spec expectations
+            repo_path: Optional repo path for reading the diff
+
+        Returns:
+            Built prompt string
+        """
+        if prompt_type == "acceptance_review":
+            return self._build_acceptance_review_prompt(aip_data, epic_spec, repo_path)
+        else:
+            raise BackendError(
+                f"Unknown prompt_type: {prompt_type}",
+                backend=self.name,
+            )
+
+    def _build_acceptance_review_prompt(
+        self,
+        aip_data: dict | None,
+        epic_spec: dict | None,
+        repo_path: Path | None,
+    ) -> str:
+        """Build the acceptance review prompt with diff and expectations."""
+        import subprocess
+
+        parts = ["# Acceptance Criteria Review\n"]
+
+        # Add expectations from AIP
+        if aip_data:
+            expectations = aip_data.get("expectations", [])
+            if expectations:
+                parts.append("## Acceptance Criteria (from AIP)\n")
+                for i, exp in enumerate(expectations, 1):
+                    parts.append(f"{i}. {exp}")
+                parts.append("")
+
+        # Add expectations from epic spec
+        if epic_spec:
+            epic_expectations = epic_spec.get("expectations", [])
+            if epic_expectations:
+                parts.append("## Epic Expectations (ground truth)\n")
+                for i, exp in enumerate(epic_expectations, 1):
+                    parts.append(f"{i}. {exp}")
+                parts.append("")
+
+        # Get the diff from the repo
+        if repo_path and repo_path.exists():
+            try:
+                # Get diff from base branch
+                result = subprocess.run(
+                    ["git", "diff", "main...HEAD", "--stat"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    parts.append("## Changed Files\n```")
+                    parts.append(result.stdout.strip())
+                    parts.append("```\n")
+
+                # Get the actual diff (truncated)
+                result = subprocess.run(
+                    ["git", "diff", "main...HEAD"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    diff = result.stdout.strip()
+                    if len(diff) > 30000:
+                        diff = diff[:30000] + "\n... (truncated)"
+                    parts.append("## Code Changes (diff)\n```diff")
+                    parts.append(diff)
+                    parts.append("```\n")
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                parts.append("## Code Changes\n(Unable to retrieve diff)\n")
+
+        # Add the review instructions
+        parts.append("""## Instructions
+
+Review the code changes against the acceptance criteria and provide:
+
+1. **Criteria Checklist**: For each acceptance criterion, mark as:
+   - [x] MET - criterion is fully satisfied
+   - [ ] NOT MET - criterion is not satisfied (explain why)
+   - [~] PARTIAL - criterion is partially met (explain gaps)
+
+2. **Summary**: Brief assessment (2-3 sentences) of overall implementation quality
+
+3. **Critical Issues**: Any blocking problems that must be fixed
+
+4. **Recommendations**: Suggested improvements (non-blocking)
+
+Be specific and reference file paths/line numbers where relevant.""")
+
+        return "\n".join(parts)
