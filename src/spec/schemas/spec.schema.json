@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://specplatform.org/schemas/spec-v1.schema.json",
   "title": "Spec Markdown File",
-  "description": "Schema for .md spec files. Describes both YAML frontmatter and required markdown sections.",
+  "description": "Schema for .md spec files. Describes YAML frontmatter and required markdown sections with phases.",
   "type": "object",
   "required": ["frontmatter", "sections"],
   "properties": {
@@ -47,35 +47,17 @@
           "items": { "type": "string" },
           "description": "Labels/tags for categorization"
         },
-        "project_slug": {
+        "epic": {
           "type": "string",
-          "pattern": "^[a-z0-9-]+$",
-          "description": "Project identifier (lowercase alphanumeric with hyphens)"
-        },
-        "spec_version": {
-          "type": "string",
-          "pattern": "^\\d+\\.\\d+\\.\\d+$",
-          "default": "1.0.0",
-          "description": "Semantic version of this spec"
-        },
-        "created": {
-          "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp when spec was created"
-        },
-        "updated": {
-          "type": "string",
-          "format": "date-time",
-          "description": "ISO 8601 timestamp when spec was last updated"
-        },
-        "orchestrator_contract": {
-          "type": "string",
-          "default": "standard",
-          "description": "Orchestrator contract type"
+          "description": "Epic ID this spec belongs to"
         },
         "repo": {
           "type": "object",
           "properties": {
+            "name": {
+              "type": "string",
+              "description": "Repository name"
+            },
             "url": {
               "type": "string",
               "description": "Git repository URL"
@@ -90,151 +72,132 @@
             }
           }
         },
-        "autogov": {
-          "type": "object",
-          "description": "Auto-governance metadata (populated by spec create --autogov)",
-          "properties": {
-            "project": { "type": "string" },
-            "source": { "type": "string" },
-            "captured_at": { "type": "string", "format": "date-time" }
-          }
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when spec was created"
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when spec was last updated"
         }
       }
     },
     "sections": {
       "type": "object",
       "description": "Required and optional markdown sections (H2 headings)",
-      "required": ["objective", "plan"],
+      "required": ["objective", "acceptance_criteria", "phases"],
       "properties": {
-        "objective": {
+        "header": {
           "type": "object",
-          "description": "## Objective section - describes what the spec achieves",
-          "required": ["goal", "acceptance_criteria"],
+          "description": "H1 title and metadata block at top of spec body",
           "properties": {
-            "goal": {
+            "title": {
               "type": "string",
-              "description": "Main goal statement, typically in a blockquote"
+              "description": "# Spec Title (e.g., '# e005b-01: Executor Dispatch')"
             },
-            "acceptance_criteria": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "text": { "type": "string" },
-                  "status": { "enum": ["pending", "done"] }
-                }
-              },
-              "description": "Checkbox list of acceptance criteria: - [ ] item or - [x] item"
+            "epic": {
+              "type": "string",
+              "description": "**Epic:** epic-id"
+            },
+            "repo": {
+              "type": "string",
+              "description": "**Repo:** repository-name"
+            },
+            "branch": {
+              "type": "string",
+              "description": "**Branch:** `feat/branch-name`"
+            },
+            "tier": {
+              "type": "string",
+              "description": "**Tier:** A|B|C"
             }
           }
+        },
+        "objective": {
+          "type": "string",
+          "description": "## Objective section - describes what the spec achieves and the approach"
+        },
+        "prior_work": {
+          "type": "string",
+          "description": "## Prior Work section - what already exists that this builds on (optional)"
+        },
+        "what_this_spec_changes": {
+          "type": "string",
+          "description": "## What This Spec Changes - summary of changes (optional)"
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "status": { "enum": ["pending", "done"] }
+            }
+          },
+          "description": "## Acceptance Criteria - checkbox list: - [ ] item or - [x] item"
         },
         "context": {
           "type": "object",
-          "description": "## Context section - background and constraints",
+          "description": "## Context section - schemas, examples, background info",
           "properties": {
-            "background": {
+            "content": {
               "type": "string",
-              "description": "### Background subsection - why this work is needed"
-            },
-            "constraints": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "### Constraints subsection - bullet list of limitations"
-            },
-            "governance": {
-              "type": "string",
-              "description": "### Governance subsection - policy and architecture guidance"
+              "description": "Free-form markdown with code examples, JSON schemas, etc."
             }
           }
         },
-        "plan": {
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "## Constraints section - bullet list of limitations and rules"
+        },
+        "phases": {
           "type": "array",
           "minItems": 1,
-          "description": "## Plan section - implementation steps",
+          "description": "## Phase N: Title sections - implementation breakdown",
           "items": {
             "type": "object",
-            "required": ["step_number", "title"],
+            "required": ["phase_number", "title", "objective"],
             "properties": {
-              "step_number": {
+              "phase_number": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "Step number (### Step N: Title)"
+                "description": "Phase number (## Phase N: Title)"
               },
               "title": {
                 "type": "string",
-                "description": "Step title"
+                "description": "Phase title"
               },
-              "gate_ref": {
+              "objective": {
                 "type": "string",
-                "pattern": "^G[0-4]:\\s*.+$",
-                "description": "Gate reference in brackets [G0: Plan Approval]"
+                "description": "### Objective - what this phase accomplishes"
               },
-              "role": {
-                "enum": ["agentic", "planning_agent", "prompting_agent", "coding_agent", "testing_agent"],
-                "default": "agentic",
-                "description": "**Role:** field - who executes this step"
-              },
-              "prompt": {
-                "type": "string",
-                "description": "**Prompt:** field - instructions for the agent"
-              },
-              "suggested_paths": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "**Suggested Paths:** - glob patterns for files to focus on"
-              },
-              "outputs": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "**Outputs:** - expected file outputs"
-              },
-              "commands": {
+              "files_to_touch": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "lang": { "type": "string", "default": "bash" },
-                    "code": { "type": "string" }
+                    "path": { "type": "string" },
+                    "action": {
+                      "enum": ["create", "modify", "delete"],
+                      "default": "modify"
+                    }
                   }
                 },
-                "description": "**Commands:** - code blocks with commands to run"
+                "description": "### Files to Touch - list of files with action (create/modify)"
+              },
+              "implementation_notes": {
+                "type": "string",
+                "description": "### Implementation Notes - code examples, patterns, details"
+              },
+              "verification": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "### Verification - commands or checks to verify phase completion"
               }
-            }
-          }
-        },
-        "models_tools": {
-          "type": "object",
-          "description": "## Models & Tools section",
-          "properties": {
-            "tools": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "**Tools:** comma-separated list"
-            },
-            "models": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "**Models:** comma-separated list"
-            }
-          }
-        },
-        "repository": {
-          "type": "object",
-          "description": "## Repository section",
-          "properties": {
-            "branch": {
-              "type": "string",
-              "description": "**Branch:** `branch-name`"
-            },
-            "merge_strategy": {
-              "enum": ["squash", "merge", "rebase"],
-              "description": "**Merge Strategy:** squash|merge|rebase"
-            },
-            "block_paths": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "**Block Paths:** paths that cannot be modified"
             }
           }
         }
@@ -244,32 +207,63 @@
   "examples": [
     {
       "frontmatter": {
-        "tier": "C",
-        "title": "Add User Authentication",
+        "tier": "B",
+        "title": "Executor Dispatch",
         "owner": "dev@example.com",
-        "goal": "Implement JWT-based authentication for the API",
+        "goal": "Refactor executor to use JSON-RPC boundaries for all callable dispatch",
+        "epic": "e005b-command-plane-and-performance",
         "repo": {
-          "working_branch": "feat/auth"
+          "name": "lorchestra",
+          "working_branch": "feat/executor-dispatch"
         }
       },
       "sections": {
-        "objective": {
-          "goal": "Implement JWT-based authentication for the API",
-          "acceptance_criteria": [
-            { "text": "Login endpoint returns JWT token", "status": "pending" },
-            { "text": "Protected routes require valid token", "status": "pending" },
-            { "text": "Tests cover auth flow", "status": "pending" }
-          ]
+        "header": {
+          "title": "# e005b-01: Executor Dispatch (JSON-RPC Boundaries)",
+          "epic": "e005b-command-plane-and-performance",
+          "repo": "lorchestra",
+          "branch": "feat/executor-dispatch",
+          "tier": "B"
         },
-        "plan": [
+        "objective": "Refactor lorchestra executor to use JSON-RPC boundaries for ALL callable dispatch.",
+        "acceptance_criteria": [
+          { "text": "lorchestra/schemas/ops.py updated: only call.*, compute.llm, job.run ops", "status": "pending" },
+          { "text": "lorchestra/rpc/ module created with envelope, adapter, hashing, registry", "status": "pending" },
+          { "text": "pytest tests/ -v passes", "status": "pending" },
+          { "text": "ruff check lorchestra/ passes", "status": "pending" }
+        ],
+        "constraints": [
+          "Job language (JobInstance, StepManifest) must NOT contain JSON-RPC keys",
+          "All hashes use canonical JSON (sorted keys, no whitespace)",
+          "Error classification REQUIRED: transient or permanent"
+        ],
+        "phases": [
           {
-            "step_number": 1,
-            "title": "Implement Auth",
-            "gate_ref": "G1: Code Readiness",
-            "role": "agentic",
-            "prompt": "Implement JWT authentication with login and token validation.",
-            "suggested_paths": ["src/auth/**", "tests/auth/**"],
-            "outputs": ["src/auth/jwt.py", "tests/auth/test_jwt.py"]
+            "phase_number": 1,
+            "title": "Update Op Enum",
+            "objective": "Slim down the Op enum to the thin orchestrator model.",
+            "files_to_touch": [
+              { "path": "lorchestra/schemas/ops.py", "action": "modify" },
+              { "path": "lorchestra/schemas/ops.schema.json", "action": "modify" }
+            ],
+            "implementation_notes": "Remove query.*, write.*, assert.* ops. Keep only call.*, compute.llm, job.run",
+            "verification": [
+              "from lorchestra.schemas.ops import Op works",
+              "Op.QUERY_RAW_OBJECTS raises AttributeError"
+            ]
+          },
+          {
+            "phase_number": 2,
+            "title": "JSON-RPC Adapter",
+            "objective": "Create the RPC module for envelope handling.",
+            "files_to_touch": [
+              { "path": "lorchestra/rpc/__init__.py", "action": "create" },
+              { "path": "lorchestra/rpc/envelope.py", "action": "create" },
+              { "path": "lorchestra/rpc/adapter.py", "action": "create" }
+            ],
+            "verification": [
+              "from lorchestra.rpc import RpcAdapter, RpcRequest, RpcResponse"
+            ]
           }
         ]
       }
