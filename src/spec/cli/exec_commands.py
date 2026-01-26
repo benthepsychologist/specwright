@@ -788,14 +788,20 @@ def validate_command(
 ) -> None:
     """Validate a spec file and mark it as validated.
 
-    Checks that the spec has valid YAML frontmatter with required fields
-    (tier, title, owner, goal) and writes 'validated: true' to the frontmatter.
+    Validates the full spec structure:
+    - YAML frontmatter with required fields (tier, title, owner, goal)
+    - Plan section with at least one step
+    - Proper markdown structure
+
+    If valid, writes 'validated: true' to the frontmatter.
 
     Examples:
         spec validate ./my-feature.md
         spec validate ./my-feature.md --check
         spec validate  # uses current spec from config
     """
+    from spec.compiler.parser import SpecParser
+
     # Resolve spec path from config if not provided
     if spec_path is None:
         from spec.cli.spec import find_config
@@ -816,18 +822,21 @@ def validate_command(
         _echo_error(f"Spec must be a .md file (got {spec_path.suffix})")
         raise typer.Exit(1)
 
+    # Full validation using SpecParser
     try:
         content = spec_path.read_text()
-        frontmatter = _parse_spec_frontmatter(content)
+        parser = SpecParser(content, source_path=spec_path)
+        parser.parse()  # This validates frontmatter, sections, and plan
+        typer.secho("✓ Spec structure valid", fg=typer.colors.GREEN)
     except ValueError as e:
         _echo_error(f"Invalid spec: {e}")
         raise typer.Exit(1)
     except Exception as e:
-        _echo_error(f"Failed to load spec: {e}")
+        _echo_error(f"Failed to validate spec: {e}")
         raise typer.Exit(1)
 
     # Check if already validated
-    if frontmatter.get("validated"):
+    if parser.frontmatter.get("validated"):
         _echo_success(f"Spec already validated: {spec_path}")
         return
 

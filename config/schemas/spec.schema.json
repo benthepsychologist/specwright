@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specplatform.org/schemas/spec-v1.schema.json",
+  "title": "Spec Markdown File",
+  "description": "Schema for .md spec files. Describes both YAML frontmatter and required markdown sections.",
+  "type": "object",
+  "required": ["frontmatter", "sections"],
+  "properties": {
+    "frontmatter": {
+      "type": "object",
+      "description": "YAML frontmatter between --- delimiters at the start of the file",
+      "required": ["tier", "title", "owner", "goal"],
+      "properties": {
+        "tier": {
+          "enum": ["A", "B", "C"],
+          "description": "Risk tier: A=high-risk (core systems, security), B=moderate (features, integrations), C=low-risk (docs, tests, config)"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 100,
+          "description": "Human-readable task/feature name"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Email or identifier of the spec owner"
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 5,
+          "description": "Brief description of what this spec aims to achieve"
+        },
+        "validated": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set to true by 'spec validate' after passing validation"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$",
+          "default": "0.1",
+          "description": "Spec schema version"
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels/tags for categorization"
+        },
+        "project_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Project identifier (lowercase alphanumeric with hyphens)"
+        },
+        "spec_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "default": "1.0.0",
+          "description": "Semantic version of this spec"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when spec was created"
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when spec was last updated"
+        },
+        "orchestrator_contract": {
+          "type": "string",
+          "default": "standard",
+          "description": "Orchestrator contract type"
+        },
+        "repo": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "Git repository URL"
+            },
+            "default_branch": {
+              "type": "string",
+              "default": "main"
+            },
+            "working_branch": {
+              "type": "string",
+              "description": "Feature branch for this spec (e.g., feat/my-feature)"
+            }
+          }
+        },
+        "autogov": {
+          "type": "object",
+          "description": "Auto-governance metadata (populated by spec create --autogov)",
+          "properties": {
+            "project": { "type": "string" },
+            "source": { "type": "string" },
+            "captured_at": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "description": "Required and optional markdown sections (H2 headings)",
+      "required": ["objective", "plan"],
+      "properties": {
+        "objective": {
+          "type": "object",
+          "description": "## Objective section - describes what the spec achieves",
+          "required": ["goal", "acceptance_criteria"],
+          "properties": {
+            "goal": {
+              "type": "string",
+              "description": "Main goal statement, typically in a blockquote"
+            },
+            "acceptance_criteria": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": { "type": "string" },
+                  "status": { "enum": ["pending", "done"] }
+                }
+              },
+              "description": "Checkbox list of acceptance criteria: - [ ] item or - [x] item"
+            }
+          }
+        },
+        "context": {
+          "type": "object",
+          "description": "## Context section - background and constraints",
+          "properties": {
+            "background": {
+              "type": "string",
+              "description": "### Background subsection - why this work is needed"
+            },
+            "constraints": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "### Constraints subsection - bullet list of limitations"
+            },
+            "governance": {
+              "type": "string",
+              "description": "### Governance subsection - policy and architecture guidance"
+            }
+          }
+        },
+        "plan": {
+          "type": "array",
+          "minItems": 1,
+          "description": "## Plan section - implementation steps",
+          "items": {
+            "type": "object",
+            "required": ["step_number", "title"],
+            "properties": {
+              "step_number": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Step number (### Step N: Title)"
+              },
+              "title": {
+                "type": "string",
+                "description": "Step title"
+              },
+              "gate_ref": {
+                "type": "string",
+                "pattern": "^G[0-4]:\\s*.+$",
+                "description": "Gate reference in brackets [G0: Plan Approval]"
+              },
+              "role": {
+                "enum": ["agentic", "planning_agent", "prompting_agent", "coding_agent", "testing_agent"],
+                "default": "agentic",
+                "description": "**Role:** field - who executes this step"
+              },
+              "prompt": {
+                "type": "string",
+                "description": "**Prompt:** field - instructions for the agent"
+              },
+              "suggested_paths": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "**Suggested Paths:** - glob patterns for files to focus on"
+              },
+              "outputs": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "**Outputs:** - expected file outputs"
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "lang": { "type": "string", "default": "bash" },
+                    "code": { "type": "string" }
+                  }
+                },
+                "description": "**Commands:** - code blocks with commands to run"
+              }
+            }
+          }
+        },
+        "models_tools": {
+          "type": "object",
+          "description": "## Models & Tools section",
+          "properties": {
+            "tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "**Tools:** comma-separated list"
+            },
+            "models": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "**Models:** comma-separated list"
+            }
+          }
+        },
+        "repository": {
+          "type": "object",
+          "description": "## Repository section",
+          "properties": {
+            "branch": {
+              "type": "string",
+              "description": "**Branch:** `branch-name`"
+            },
+            "merge_strategy": {
+              "enum": ["squash", "merge", "rebase"],
+              "description": "**Merge Strategy:** squash|merge|rebase"
+            },
+            "block_paths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "**Block Paths:** paths that cannot be modified"
+            }
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "frontmatter": {
+        "tier": "C",
+        "title": "Add User Authentication",
+        "owner": "dev@example.com",
+        "goal": "Implement JWT-based authentication for the API",
+        "repo": {
+          "working_branch": "feat/auth"
+        }
+      },
+      "sections": {
+        "objective": {
+          "goal": "Implement JWT-based authentication for the API",
+          "acceptance_criteria": [
+            { "text": "Login endpoint returns JWT token", "status": "pending" },
+            { "text": "Protected routes require valid token", "status": "pending" },
+            { "text": "Tests cover auth flow", "status": "pending" }
+          ]
+        },
+        "plan": [
+          {
+            "step_number": 1,
+            "title": "Implement Auth",
+            "gate_ref": "G1: Code Readiness",
+            "role": "agentic",
+            "prompt": "Implement JWT authentication with login and token validation.",
+            "suggested_paths": ["src/auth/**", "tests/auth/**"],
+            "outputs": ["src/auth/jwt.py", "tests/auth/test_jwt.py"]
+          }
+        ]
+      }
+    }
+  ]
+}
