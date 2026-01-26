@@ -1,4 +1,4 @@
-"""Spec compiler - converts Markdown specs to YAML AIPs."""
+"""Spec compiler - parses and validates Markdown specs."""
 
 from .compiler import compile_spec
 from .parser import SpecParser

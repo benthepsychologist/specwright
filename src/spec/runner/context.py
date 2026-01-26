@@ -1,6 +1,6 @@
-"""AIP v3 Context Rendering - Generate TASK.md for Claude.
+"""Spec Context Rendering - Generate TASK.md for Claude.
 
-This module renders an AIP v3 into a .claude/TASK.md file that Claude
+This module renders a spec into a .claude/TASK.md file that Claude
 will follow during execution.
 """
 
@@ -11,10 +11,10 @@ from typing import Any
 
 
 def render_task_md(aip: Any) -> str:
-    """Render an AIP v3 as a TASK.md file for Claude.
+    """Render a spec as a TASK.md file for Claude.
 
     Args:
-        aip: The AIP to render
+        aip: The spec to render
 
     Returns:
         Markdown content for TASK.md
@@ -111,7 +111,7 @@ def write_task_md(aip: Any, repo_path: Path) -> Path:
     """Write TASK.md to the repository.
 
     Args:
-        aip: The AIP to render
+        aip: The spec to render
         repo_path: Path to the repository root
 
     Returns:

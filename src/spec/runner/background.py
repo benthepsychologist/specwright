@@ -1,4 +1,4 @@
-"""AIP v3 Background Runner - Claude Code subprocess execution.
+"""Spec Background Runner - Claude Code subprocess execution.
 
 This module invokes Claude Code as a background subprocess using
 --dangerously-skip-permissions --print --output-format stream-json
@@ -88,8 +88,8 @@ def run_background(
     Invokes: claude --dangerously-skip-permissions --print --output-format stream-json
 
     Args:
-        aip: The AIP to execute
-        timeout: Timeout in seconds (default: from aip.execution or 1800)
+        aip: The spec to execute
+        timeout: Timeout in seconds (default: from spec.execution or 1800)
         transcript_path: Path to save transcript (default: temp file)
         print_output: Also print output to stdout
 

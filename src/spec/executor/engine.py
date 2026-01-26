@@ -378,7 +378,7 @@ def _create_aip1_job_def() -> JobDef:
     """Create the aip-1 JobDef template.
 
     3-pass Claude execution model:
-    - Run 1 (agent.run_aip): Execute the AIP
+    - Run 1 (agent.run_spec): Execute the spec
     - Run 2 (agent.drift_fix): Check for drift, make a plan, execute fixes
     - Run 3 (agent.drift_verify): Final verification pass
 
@@ -392,13 +392,13 @@ def _create_aip1_job_def() -> JobDef:
     return JobDef(
         job_id="aip-1",
         version="0.2",
-        description="Execute an AIP with 3-pass agent verification",
+        description="Execute a spec with 3-pass agent verification",
         steps=[
             # Step 1: Create feature branch - must succeed
             StepTemplate(
                 step_id="branch.create",
                 backend=Backend.cmd,
-                description="Create feature branch for AIP execution",
+                description="Create feature branch for spec execution",
                 payload={
                     "command": "git checkout -b @payload.feature_branch",
                     "capture_git": True,
@@ -425,7 +425,7 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.cmd,
                 description="Commit changes from run 1",
                 payload={
-                    "command": "git add -A && git commit -m 'aip: revision 1' || true",
+                    "command": "git add -A && git commit -m 'spec: revision 1' || true",
                     "capture_git": True,
                 },
                 continue_on_failure=True,  # Best effort
@@ -451,7 +451,7 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.cmd,
                 description="Commit changes from run 2",
                 payload={
-                    "command": "git add -A && git commit -m 'aip: revision 2 - drift fix' || true",
+                    "command": "git add -A && git commit -m 'spec: revision 2 - drift fix' || true",
                     "capture_git": True,
                 },
                 continue_on_failure=True,  # Best effort
@@ -477,7 +477,7 @@ def _create_aip1_job_def() -> JobDef:
                 backend=Backend.cmd,
                 description="Commit changes from run 3",
                 payload={
-                    "command": "git add -A && git commit -m 'aip: revision 3 - verification' || true",
+                    "command": "git add -A && git commit -m 'spec: revision 3 - verification' || true",
                     "capture_git": True,
                 },
                 continue_on_failure=True,  # Best effort
@@ -530,13 +530,13 @@ def _build_drift_fix_prompt(epic_spec: dict | None = None) -> str:
     """
     prompt = """# Drift Inspection and Fix
 
-You are reviewing the code changes from the previous AIP implementation run.
+You are reviewing the code changes from the previous spec implementation run.
 
 ## Your Task
 
 1. **Inspect Changes**: Review all code changes made so far (use `git diff` from base commit)
 
-2. **Check for Drift**: Compare the implementation against the AIP requirements:
+2. **Check for Drift**: Compare the implementation against the spec requirements:
    - Are all acceptance criteria being addressed?
    - Is the implementation aligned with the spec's intent?
    - Are there any missing pieces or incomplete implementations?
@@ -546,11 +546,11 @@ You are reviewing the code changes from the previous AIP implementation run.
    - Document what needs to be fixed
    - Prioritize the fixes
 
-4. **Execute Fixes**: Implement any necessary corrections to bring the code back in alignment with the AIP.
+4. **Execute Fixes**: Implement any necessary corrections to bring the code back in alignment with the spec.
 
 ## Context
 
-The AIP data is provided to you. The repository is the working directory.
+The spec data is provided to you. The repository is the working directory.
 Check `git log` and `git diff` to see what was implemented.
 
 Focus on correctness and spec adherence, not on style or refactoring.
@@ -571,13 +571,13 @@ def _build_drift_verify_prompt(epic_spec: dict | None = None) -> str:
     """
     prompt = """# Final Drift Verification
 
-You are performing a final verification pass on the AIP implementation.
+You are performing a final verification pass on the spec implementation.
 
 ## Your Task
 
 1. **Final Review**: Review ALL changes made across previous runs (use `git diff` from base commit)
 
-2. **Acceptance Criteria Check**: Go through each acceptance criterion in the AIP:
+2. **Acceptance Criteria Check**: Go through each acceptance criterion in the spec:
    - Is it fully implemented?
    - Does it work as expected?
    - Are there any edge cases missed?
@@ -586,11 +586,11 @@ You are performing a final verification pass on the AIP implementation.
    - Fix them directly
    - Focus on correctness over completeness
 
-4. **Verification**: Run any verification commands specified in the AIP.
+4. **Verification**: Run any verification commands specified in the spec.
 
 ## Context
 
-The AIP data is provided to you. The repository is the working directory.
+The spec data is provided to you. The repository is the working directory.
 This is the FINAL pass - focus on making sure everything is correct and complete.
 
 Do not make unnecessary changes. Only fix actual issues.
@@ -613,7 +613,7 @@ def _format_epic_expectations(epic_spec: dict) -> str:
         Formatted string to append to prompts
     """
     lines = ["\n\n## Epic Expectations (Ground Truth)"]
-    lines.append("The following expectations come from the epic definition and take precedence over AIP details:")
+    lines.append("The following expectations come from the epic definition and take precedence over spec details:")
 
     if expectations := epic_spec.get("expectations"):
         lines.append("\n### Expected Outcomes")
@@ -630,7 +630,7 @@ def _format_epic_expectations(epic_spec: dict) -> str:
         for path in check_paths:
             lines.append(f"- {path}")
 
-    lines.append("\n**Important**: If the AIP suggests different file paths than the epic expectations, the epic expectations are authoritative.")
+    lines.append("\n**Important**: If the spec suggests different file paths than the epic expectations, the epic expectations are authoritative.")
 
     return "\n".join(lines)
 

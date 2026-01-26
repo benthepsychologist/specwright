@@ -1,7 +1,7 @@
-"""AIP v3 Runner - Claude Code invocation for spec execution.
+"""Spec Runner - Claude Code invocation for spec execution.
 
 This package provides the runner that invokes Claude Code as a subprocess
-(background mode) or TUI (interactive mode) to execute AIP v3 specs.
+(background mode) or TUI (interactive mode) to execute specs.
 """
 
 from spec.runner.background import RunResult, run_background

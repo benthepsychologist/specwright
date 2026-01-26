@@ -1,7 +1,7 @@
-"""AIP v3 Interactive Runner - Claude Code TUI execution.
+"""Spec Interactive Runner - Claude Code TUI execution.
 
 This module invokes Claude Code in interactive TUI mode for human-guided
-execution of AIP v3 specs.
+execution of specs.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def run_interactive(
     so artifact capture is different (relies on git diff after).
 
     Args:
-        aip: The AIP to execute
+        aip: The spec to execute
         resume: Whether to resume a previous session
 
     Returns:
