@@ -405,14 +405,13 @@ def _create_aip1_job_def() -> JobDef:
                 },
                 continue_on_failure=False,  # Must succeed to proceed
             ),
-            # Step 2: Run 1 - Execute AIP
+            # Step 2: Run 1 - Execute spec
             StepTemplate(
-                step_id="agent.run_aip",
+                step_id="agent.run_spec",
                 backend=Backend.claude_code,
-                description="Run 1: Execute AIP with agent",
+                description="Run 1: Execute spec with agent",
                 payload={
-                    "aip": "@payload.aip",  # Direct AIP dict (preferred)
-                    "aip_path": "@payload.aip_path",  # File path (fallback)
+                    "spec_md": "@payload.spec_md",  # Markdown spec content
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
                 },
@@ -438,7 +437,6 @@ def _create_aip1_job_def() -> JobDef:
                 description="Run 2: Inspect for drift and fix",
                 payload={
                     "prompt_type": "drift_fix",  # Tells backend which prompt to build
-                    "aip": "@payload.aip",
                     "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
@@ -465,7 +463,6 @@ def _create_aip1_job_def() -> JobDef:
                 description="Run 3: Final drift verification",
                 payload={
                     "prompt_type": "drift_verify",  # Tells backend which prompt to build
-                    "aip": "@payload.aip",
                     "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
                     "repo_path": "@payload.repo_path",
                     "capture_git": True,
@@ -500,10 +497,10 @@ def _create_aip1_job_def() -> JobDef:
             StepTemplate(
                 step_id="assess.acceptance",
                 backend=Backend.llm,
-                description="Assess AIP acceptance criteria",
+                description="Assess spec acceptance criteria",
                 payload={
                     "prompt_type": "acceptance_review",
-                    "aip": "@payload.aip",
+                    "spec_md": "@payload.spec_md",
                     "epic_spec": "@payload.epic_spec",
                     "repo_path": "@payload.repo_path",
                     "model": "gemini-3-pro-preview",

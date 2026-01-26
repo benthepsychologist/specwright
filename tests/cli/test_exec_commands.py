@@ -50,22 +50,37 @@ def git_repo(tmp_path):
 
 
 @pytest.fixture
-def aip_file(tmp_path):
-    """Create a test AIP file."""
-    aip_path = tmp_path / "test.aip.yaml"
-    aip_data = {
-        "aip_id": "test-aip",
-        "title": "Test AIP",
-        "workspace": {
-            "branch": "feat/test-feature",
-        },
-        "phases": [
-            {"title": "Phase 1", "tasks": ["Task 1"]},
-        ],
-    }
-    with open(aip_path, "w") as f:
-        yaml.dump(aip_data, f)
-    return aip_path
+def spec_file(tmp_path):
+    """Create a test spec .md file."""
+    spec_path = tmp_path / "test-spec.md"
+    spec_content = """---
+tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+repo:
+  working_branch: feat/test-feature
+---
+
+# Test Spec
+
+## Objective
+
+Test the executor CLI commands.
+
+## Acceptance Criteria
+
+- [ ] CLI commands work correctly
+- [ ] Tests pass
+
+## Plan
+
+### Step 1: Setup [G1: Code Readiness]
+
+Do some setup work.
+"""
+    spec_path.write_text(spec_content)
+    return spec_path
 
 
 @pytest.fixture
@@ -103,32 +118,32 @@ class TestCompileCommand:
         """Compile command shows help."""
         result = runner.invoke(app, ["compile", "--help"])
         assert result.exit_code == 0
-        assert "Compile a JobDef + AIP" in result.stdout
+        assert "Compile a JobDef + spec" in result.stdout
 
-    def test_compile_missing_aip(self, tmp_path):
-        """Compile fails with missing AIP file."""
-        result = runner.invoke(app, ["compile", "aip-1", "/nonexistent/aip.yaml"])
+    def test_compile_missing_spec(self, tmp_path):
+        """Compile fails with missing spec file."""
+        result = runner.invoke(app, ["compile", "aip-1", "/nonexistent/spec.md"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
-    def test_compile_unknown_job_id(self, aip_file):
+    def test_compile_unknown_job_id(self, spec_file):
         """Compile fails with unknown job_id."""
-        result = runner.invoke(app, ["compile", "unknown-job", str(aip_file)])
+        result = runner.invoke(app, ["compile", "unknown-job", str(spec_file)])
         assert result.exit_code == 1
         assert "Unknown job_id" in result.output
 
-    def test_compile_success_stdout(self, aip_file, git_repo):
+    def test_compile_success_stdout(self, spec_file, git_repo):
         """Compile outputs JobInstance to stdout."""
         result = runner.invoke(
             app,
-            ["compile", "aip-1", str(aip_file), "--repo", str(git_repo)],
+            ["compile", "aip-1", str(spec_file), "--repo", str(git_repo)],
         )
         assert result.exit_code == 0
         # Should output YAML
         assert "job_id: aip-1" in result.stdout
         assert "steps:" in result.stdout
 
-    def test_compile_success_file(self, aip_file, git_repo, tmp_path):
+    def test_compile_success_file(self, spec_file, git_repo, tmp_path):
         """Compile writes JobInstance to file."""
         output_file = tmp_path / "job_instance.yaml"
         result = runner.invoke(
@@ -136,7 +151,7 @@ class TestCompileCommand:
             [
                 "compile",
                 "aip-1",
-                str(aip_file),
+                str(spec_file),
                 "--repo",
                 str(git_repo),
                 "--output",
@@ -168,14 +183,14 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "Compile and execute" in result.stdout
 
-    def test_run_dry_run(self, aip_file, git_repo):
+    def test_run_dry_run(self, spec_file, git_repo):
         """Run with --dry-run prints JobInstance without executing."""
         result = runner.invoke(
             app,
             [
                 "run",
                 "aip-1",
-                str(aip_file),
+                str(spec_file),
                 "--repo",
                 str(git_repo),
                 "--dry-run",
@@ -185,13 +200,13 @@ class TestRunCommand:
         assert "Dry run" in result.stdout
         assert "job_id: aip-1" in result.stdout
 
-    def test_run_missing_aip(self, tmp_path):
-        """Run fails with missing AIP file."""
-        result = runner.invoke(app, ["run", "aip-1", "/nonexistent/aip.yaml"])
+    def test_run_missing_spec(self, tmp_path):
+        """Run fails with missing spec file."""
+        result = runner.invoke(app, ["run", "aip-1", "/nonexistent/spec.md"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
-    def test_run_simple_job(self, aip_file, git_repo, simple_job, tmp_path, monkeypatch):
+    def test_run_simple_job(self, spec_file, git_repo, simple_job, tmp_path, monkeypatch):
         """Run executes a simple job successfully."""
         # Use custom store location
         store_path = tmp_path / "runs"
@@ -202,7 +217,7 @@ class TestRunCommand:
             [
                 "run",
                 "test-simple",
-                str(aip_file),
+                str(spec_file),
                 "--repo",
                 str(git_repo),
             ],
@@ -277,7 +292,7 @@ class TestLogsCommand:
 class TestIntegration:
     """Integration tests for the full compile-run-status-logs flow."""
 
-    def test_full_workflow(self, git_repo, aip_file, tmp_path, monkeypatch):
+    def test_full_workflow(self, git_repo, spec_file, tmp_path, monkeypatch):
         """Test full workflow: compile -> run -> status -> logs."""
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
@@ -312,7 +327,7 @@ class TestIntegration:
             [
                 "compile",
                 "test-workflow",
-                str(aip_file),
+                str(spec_file),
                 "--repo",
                 str(git_repo),
                 "--output",
@@ -328,7 +343,7 @@ class TestIntegration:
             [
                 "run",
                 "test-workflow",
-                str(aip_file),
+                str(spec_file),
                 "--repo",
                 str(git_repo),
             ],

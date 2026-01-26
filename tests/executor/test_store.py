@@ -79,9 +79,9 @@ def sample_job_def() -> JobDef:
                 payload={"command": "git checkout -b feat/test"},
             ),
             StepTemplate(
-                step_id="agent.run_aip",
+                step_id="agent.run_spec",
                 backend=Backend.claude_code,
-                payload={"aip": "@payload.aip"},
+                payload={"spec_md": "@payload.spec_md"},
             ),
         ],
     )
@@ -103,10 +103,10 @@ def sample_job_instance(sample_common: Common) -> JobInstance:
             ),
             Step(
                 step_n=2,
-                step_id="agent.run_aip",
+                step_id="agent.run_spec",
                 backend=Backend.claude_code,
                 common=sample_common,
-                payload={"aip": {"title": "Test AIP"}},
+                payload={"spec_md": "# Test Spec\n\nContent here"},
             ),
         ],
     )
@@ -186,10 +186,10 @@ class TestStepManifestPersistence:
 
         manifest = StepManifest(
             step_n=1,
-            step_id="agent.run_aip",
+            step_id="agent.run_spec",
             backend=Backend.claude_code,
             common=sample_common,
-            payload={"aip": {"title": "Test"}},
+            payload={"spec_md": "# Test Spec"},
         )
         store.write_step_manifest(run_id, 1, manifest)
 
@@ -230,7 +230,7 @@ class TestStepCapturePersistence:
 
         capture = StepCapture(
             step_n=1,
-            step_id="agent.run_aip",
+            step_id="agent.run_spec",
             git=GitCapture(
                 base_commit="abc123",
                 pre_status="",

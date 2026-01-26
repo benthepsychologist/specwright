@@ -16,13 +16,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from spec.autogov.exceptions import SpecwrightError
 from spec.runner.context import render_task_md, write_task_md
-
-if TYPE_CHECKING:
-    from spec.aip.models import AIPv3
 
 
 class RunnerError(SpecwrightError):
@@ -81,7 +78,7 @@ def find_claude_binary() -> str:
 
 
 def run_background(
-    aip: AIPv3,
+    aip: Any,
     timeout: int | None = None,
     transcript_path: Path | None = None,
     print_output: bool = False,

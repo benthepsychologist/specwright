@@ -392,7 +392,7 @@ class TestJobDefRegistry:
         step_ids = [s.step_id for s in job_def.steps]
         assert step_ids == [
             "branch.create",
-            "agent.run_aip",
+            "agent.run_spec",
             "commit.run1",
             "agent.drift_fix",
             "commit.run2",
@@ -404,9 +404,9 @@ class TestJobDefRegistry:
         ]
 
     def test_aip1_on_failure_skip_to(self):
-        """agent.run_aip has on_failure_skip_to set to capture.bundle."""
+        """agent.run_spec has on_failure_skip_to set to capture.bundle."""
         job_def = get_job_def("aip-1")
-        run_aip = next(s for s in job_def.steps if s.step_id == "agent.run_aip")
+        run_aip = next(s for s in job_def.steps if s.step_id == "agent.run_spec")
         assert run_aip.on_failure_skip_to == "capture.bundle"
 
     def test_register_custom_job_def(self):

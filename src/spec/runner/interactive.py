@@ -10,14 +10,11 @@ import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from spec.autogov.exceptions import SpecwrightError
 from spec.runner.background import find_claude_binary
 from spec.runner.context import write_task_md
-
-if TYPE_CHECKING:
-    from spec.aip.models import AIPv3
 
 
 class InteractiveRunnerError(SpecwrightError):
@@ -36,7 +33,7 @@ class InteractiveResult:
 
 
 def run_interactive(
-    aip: AIPv3,
+    aip: Any,
     resume: bool = False,
 ) -> InteractiveResult:
     """Run Claude Code in interactive TUI mode.

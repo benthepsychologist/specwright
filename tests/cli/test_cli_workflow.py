@@ -558,20 +558,20 @@ def test_validate_md_spec(temp_project):
         result = runner.invoke(app, ["validate", ".specwright/specs/validate-test.md"])
 
         assert result.exit_code == 0
-        assert "is valid" in result.stdout or "✓" in result.stdout
+        assert "validated" in result.stdout.lower() or "✓" in result.stdout
     finally:
         os.chdir(old_cwd)
 
 
-def test_validate_yaml_aip(temp_project):
-    """Test spec validate works on compiled .yaml AIPs."""
+def test_validate_rejects_yaml(temp_project):
+    """Test spec validate rejects .yaml files (YAML AIPs deprecated)."""
     import os
     old_cwd = os.getcwd()
     try:
         os.chdir(temp_project)
         runner.invoke(app, ["init", "--legacy-mode"])
 
-        # Create and compile
+        # Create and compile to YAML using legacy command
         runner.invoke(app, [
             "create",
             "YAML Validate",
@@ -579,14 +579,13 @@ def test_validate_yaml_aip(temp_project):
             "--owner", "frank",
             "--goal", "Test YAML validation"
         ])
-        # Note: v1 compile was renamed to spec-compile in v2
         runner.invoke(app, ["spec-compile", ".specwright/specs/yaml-validate.md"])
 
-        # Validate compiled YAML
+        # Validate should reject YAML files
         result = runner.invoke(app, ["validate", ".specwright/aips/yaml-validate.yaml"])
 
-        assert result.exit_code == 0
-        assert "is valid" in result.stdout or "✓" in result.stdout
+        assert result.exit_code == 1
+        assert "must be a .md file" in result.stdout or "must be a .md file" in result.output
     finally:
         os.chdir(old_cwd)
 
@@ -613,7 +612,7 @@ def test_validate_uses_current_spec(temp_project):
         result = runner.invoke(app, ["validate"])
 
         assert result.exit_code == 0
-        assert "Using current spec" in result.stdout or "is valid" in result.stdout
+        assert "Using current spec" in result.stdout or "validated" in result.stdout.lower()
     finally:
         os.chdir(old_cwd)
 

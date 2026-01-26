@@ -73,27 +73,23 @@ class ClaudeCodeBackend(BackendBase):
         # Extract payload fields
         prompt = payload.get("prompt")
         prompt_type = payload.get("prompt_type")  # drift_fix, drift_verify, etc.
-        aip_path = payload.get("aip_path")
-        aip_data = payload.get("aip")  # Direct AIP dict from envelope
+        spec_md = payload.get("spec_md")  # Markdown spec content
         epic_spec = payload.get("epic_spec")  # Epic expectations for ground truth
 
         # Handle prompt_type for drift steps - build prompt dynamically
         if prompt_type and not prompt:
-            prompt = self._build_prompt_for_type(prompt_type, aip_data, epic_spec)
+            prompt = self._build_prompt_for_type(prompt_type, epic_spec)
 
-        if not prompt and not aip_path and not aip_data:
+        # Use spec_md directly as prompt if no explicit prompt
+        if spec_md and not prompt:
+            prompt = spec_md
+
+        if not prompt:
             raise BackendError(
-                "claude-code backend requires 'prompt', 'prompt_type', 'aip_path', or 'aip' in payload",
+                "claude-code backend requires 'prompt', 'prompt_type', or 'spec_md' in payload",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
-
-        # If we have AIP data directly, build prompt from it
-        if aip_data and not prompt:
-            prompt = self._build_prompt_from_aip_data(aip_data, epic_spec)
-        # If we have an AIP path, build prompt from it
-        elif aip_path and not prompt:
-            prompt = self._build_prompt_from_aip(Path(aip_path))
 
         # At this point prompt must be set
         assert prompt is not None
@@ -193,32 +189,15 @@ class ClaudeCodeBackend(BackendBase):
             ),
         )
 
-    def _build_prompt_from_aip(self, aip_path: Path) -> str:
-        """Build a prompt from an AIP YAML file."""
-        import yaml
-
-        if not aip_path.exists():
-            raise BackendError(
-                f"AIP file not found: {aip_path}",
-                backend=self.name,
-            )
-
-        with open(aip_path) as f:
-            aip = yaml.safe_load(f)
-
-        return self._build_prompt_from_aip_data(aip)
-
     def _build_prompt_for_type(
         self,
         prompt_type: str,
-        aip_data: dict | None,
         epic_spec: dict | None,
     ) -> str:
         """Build a prompt based on type (drift_fix, drift_verify, etc.).
 
         Args:
             prompt_type: The type of prompt to build
-            aip_data: Optional AIP data to include
             epic_spec: Optional epic spec expectations
 
         Returns:
@@ -227,74 +206,14 @@ class ClaudeCodeBackend(BackendBase):
         from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
 
         if prompt_type == "drift_fix":
-            prompt = _build_drift_fix_prompt(epic_spec)
+            return _build_drift_fix_prompt(epic_spec)
         elif prompt_type == "drift_verify":
-            prompt = _build_drift_verify_prompt(epic_spec)
+            return _build_drift_verify_prompt(epic_spec)
         else:
             raise BackendError(
                 f"Unknown prompt_type: {prompt_type}",
                 backend=self.name,
             )
-
-        # Append AIP context if available
-        if aip_data:
-            prompt += "\n\n## AIP Context\n"
-            prompt += self._build_prompt_from_aip_data(aip_data, epic_spec)
-
-        return prompt
-
-    def _build_prompt_from_aip_data(self, aip: dict, epic_spec: dict | None = None) -> str:
-        """Build a prompt from an AIP dict.
-
-        Args:
-            aip: The AIP dict to build prompt from
-            epic_spec: Optional epic spec expectations (currently unused, for future expansion)
-        """
-        parts = []
-
-        # Handle AIPv3 structure (metadata.title, goal) or legacy (title, description)
-        title = aip.get("title")
-        if not title and "metadata" in aip:
-            title = aip["metadata"].get("title") or aip["metadata"].get("spec_id")
-        if title:
-            parts.append(f"# {title}")
-
-        # Goal (AIPv3) or description (legacy)
-        goal = aip.get("goal") or aip.get("description")
-        if goal:
-            parts.append(f"\n{goal}")
-
-        # Acceptance criteria
-        if "acceptance_criteria" in aip:
-            parts.append("\n## Acceptance Criteria")
-            for criterion in aip["acceptance_criteria"]:
-                parts.append(f"- {criterion}")
-
-        # Final verification (AIPv3)
-        if "final_verification" in aip:
-            parts.append("\n## Verification Commands")
-            for v in aip["final_verification"]:
-                if isinstance(v, dict):
-                    parts.append(f"- `{v.get('cmd', v)}`")
-                else:
-                    parts.append(f"- `{v}`")
-
-        # Phases (AIPv3) or legacy phases
-        if "phases" in aip:
-            parts.append("\n## Implementation Phases")
-            for i, phase in enumerate(aip["phases"], 1):
-                phase_title = phase.get("title", f"Phase {i}")
-                parts.append(f"\n### {phase_title}")
-                if "description" in phase:
-                    parts.append(phase["description"])
-                if "tasks" in phase:
-                    for task in phase["tasks"]:
-                        if isinstance(task, dict):
-                            parts.append(f"- {task.get('description', task)}")
-                        else:
-                            parts.append(f"- {task}")
-
-        return "\n".join(parts)
 
     def _build_command(
         self,

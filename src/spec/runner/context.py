@@ -7,13 +7,10 @@ will follow during execution.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from spec.aip.models import AIPv3
+from typing import Any
 
 
-def render_task_md(aip: AIPv3) -> str:
+def render_task_md(aip: Any) -> str:
     """Render an AIP v3 as a TASK.md file for Claude.
 
     Args:
@@ -110,7 +107,7 @@ def render_task_md(aip: AIPv3) -> str:
     return "\n".join(lines)
 
 
-def write_task_md(aip: AIPv3, repo_path: Path) -> Path:
+def write_task_md(aip: Any, repo_path: Path) -> Path:
     """Write TASK.md to the repository.
 
     Args:

@@ -2,7 +2,7 @@
 CLI commands for the v2 executor engine.
 
 Commands (registered at top-level of spec CLI per e008-05):
-- spec compile: Compile JobDef + AIP to JobInstance
+- spec compile: Compile JobDef + spec to JobInstance
 - spec execute: Execute a pre-compiled JobInstance
 - spec run: Compile and execute in one step
 - spec status: Show run status
@@ -34,6 +34,10 @@ from spec.executor.schemas import (
 )
 from spec.executor.store import RunStore
 
+# Required frontmatter fields for .md specs
+REQUIRED_FRONTMATTER = {"tier", "title", "owner", "goal"}
+VALID_TIERS = {"A", "B", "C"}
+
 
 def _echo_error(message: str) -> None:
     """Print error message in red."""
@@ -48,6 +52,102 @@ def _echo_success(message: str) -> None:
 def _echo_warning(message: str) -> None:
     """Print warning message in yellow."""
     typer.secho(message, fg=typer.colors.YELLOW)
+
+
+def _parse_spec_frontmatter(content: str) -> dict[str, Any]:
+    """Parse and validate YAML frontmatter from .md spec.
+
+    Args:
+        content: Full markdown content of spec file
+
+    Returns:
+        Parsed and validated frontmatter dict
+
+    Raises:
+        ValueError: If frontmatter is missing, malformed, or invalid
+    """
+    if not content.startswith("---\n"):
+        raise ValueError("Spec must start with YAML frontmatter (---)")
+
+    end = content.find("\n---\n", 4)
+    if end == -1:
+        raise ValueError("Frontmatter not closed (missing ---)")
+
+    frontmatter_text = content[4:end]
+    frontmatter = yaml.safe_load(frontmatter_text) or {}
+
+    # Validate required fields
+    missing = REQUIRED_FRONTMATTER - set(frontmatter.keys())
+    if missing:
+        raise ValueError(f"Missing required frontmatter fields: {missing}")
+
+    # Validate tier
+    tier = str(frontmatter.get("tier", "")).upper()
+    if tier not in VALID_TIERS:
+        raise ValueError(f"Invalid tier '{frontmatter.get('tier')}'. Must be one of {VALID_TIERS}")
+    frontmatter["tier"] = tier  # Normalize to uppercase
+
+    # Validate non-empty strings for required fields
+    for key in REQUIRED_FRONTMATTER:
+        val = frontmatter[key]
+        if key == "tier":
+            continue  # Already validated
+        if not isinstance(val, str) or not val.strip():
+            raise ValueError(f"Frontmatter field '{key}' must be a non-empty string")
+
+    return frontmatter
+
+
+def _update_frontmatter(content: str, updates: dict[str, Any]) -> str:
+    """Update frontmatter fields in spec content.
+
+    Args:
+        content: Full markdown content
+        updates: Dict of fields to add/update in frontmatter
+
+    Returns:
+        Updated content with modified frontmatter
+    """
+    if not content.startswith("---\n"):
+        raise ValueError("Spec must start with YAML frontmatter (---)")
+
+    end = content.find("\n---\n", 4)
+    if end == -1:
+        raise ValueError("Frontmatter not closed (missing ---)")
+
+    frontmatter_text = content[4:end]
+    frontmatter = yaml.safe_load(frontmatter_text) or {}
+
+    # Apply updates
+    frontmatter.update(updates)
+
+    # Rebuild content
+    new_frontmatter = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    body = content[end + 5:]  # After closing ---
+
+    return f"---\n{new_frontmatter}---\n{body}"
+
+
+def _get_spec_path(epic_id: str, spec_id: str) -> Path:
+    """Get path to .md spec file from governor storage.
+
+    Looks in: ~/.local/local-governor/projects/*/specs/{epic_id}/{spec_id}.md
+    """
+    governor_root = Path.home() / ".local/local-governor/projects"
+    if not governor_root.exists():
+        raise FileNotFoundError(f"Governor root not found: {governor_root}")
+
+    # Search all projects for the spec
+    for project_dir in governor_root.iterdir():
+        if not project_dir.is_dir():
+            continue
+        specs_dir = project_dir / "specs" / epic_id
+        if specs_dir.exists():
+            spec_file = specs_dir / f"{spec_id}.md"
+            if spec_file.exists():
+                return spec_file
+
+    raise FileNotFoundError(f"Spec not found: {epic_id}/{spec_id}.md")
 
 
 def _extract_check_paths(epic: Any, spec_id: str) -> list[str]:
@@ -110,7 +210,7 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 def compile_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
-    aip_path: Path = typer.Argument(..., help="Path to AIP YAML file"),
+    spec_path: Path = typer.Argument(..., help="Path to spec .md file"),
     output: Path = typer.Option(
         None, "--output", "-o", help="Output path for JobInstance (default: stdout)"
     ),
@@ -118,22 +218,22 @@ def compile_command(
         None, "--repo", "-r", help="Repository path (default: current directory)"
     ),
     branch: str = typer.Option(
-        None, "--branch", "-b", help="Feature branch name (default: from AIP or auto-generated)"
+        None, "--branch", "-b", help="Feature branch name (default: from spec or auto-generated)"
     ),
 ) -> None:
-    """Compile a JobDef + AIP into a JobInstance.
+    """Compile a JobDef + spec into a JobInstance.
 
-    Builds an envelope from the AIP file and compiles it into a JobInstance
+    Builds an envelope from the spec file and compiles it into a JobInstance
     that can be executed with 'spec execute'.
 
     Examples:
-        spec compile aip-1 ./my-feature.aip.yaml
-        spec compile aip-1 ./my-feature.aip.yaml --output job.yaml
-        spec compile aip-1 ./my-feature.aip.yaml --repo /workspace/target
+        spec compile aip-1 ./my-feature.md
+        spec compile aip-1 ./my-feature.md --output job.yaml
+        spec compile aip-1 ./my-feature.md --repo /workspace/target
     """
     # Validate inputs
-    if not aip_path.exists():
-        _echo_error(f"AIP file not found: {aip_path}")
+    if not spec_path.exists():
+        _echo_error(f"Spec file not found: {spec_path}")
         raise typer.Exit(1)
 
     if job_id not in list_job_defs():
@@ -141,11 +241,15 @@ def compile_command(
         typer.echo(f"Available job IDs: {', '.join(list_job_defs())}")
         raise typer.Exit(1)
 
-    # Load AIP
+    # Load spec markdown
     try:
-        aip_data = _load_yaml(aip_path)
+        spec_md = spec_path.read_text()
+        frontmatter = _parse_spec_frontmatter(spec_md)
+    except ValueError as e:
+        _echo_error(f"Invalid spec: {e}")
+        raise typer.Exit(1)
     except Exception as e:
-        _echo_error(f"Failed to load AIP: {e}")
+        _echo_error(f"Failed to load spec: {e}")
         raise typer.Exit(1)
 
     # Resolve repo path
@@ -153,25 +257,25 @@ def compile_command(
         repo_path = Path.cwd()
     repo_path = repo_path.resolve()
 
-    # Resolve branch
+    # Resolve branch from frontmatter or generate from title
     if branch is None:
-        branch = aip_data.get("workspace", {}).get("branch")
+        branch = frontmatter.get("repo", {}).get("working_branch")
         if not branch:
-            aip_id = aip_data.get("aip_id", aip_path.stem)
-            branch = f"feat/{aip_id}"
+            title_slug = frontmatter["title"].lower().replace(" ", "-")
+            branch = f"feat/{title_slug}"
 
     # Build envelope
     envelope = {
         "job_id": job_id,
         "payload": {
-            "aip": aip_data,  # Include full AIP data
-            "aip_path": str(aip_path.resolve()),
+            "spec_md": spec_md,  # Full markdown content
+            "spec_path": str(spec_path.resolve()),
             "repo_path": str(repo_path),
             "feature_branch": branch,
             "epic_spec": None,  # No epic context when compiling from file
         },
         "ctx": {
-            "aip_id": aip_data.get("aip_id", aip_path.stem),
+            "spec_id": spec_path.stem,
         },
     }
 
@@ -265,12 +369,12 @@ def execute_command(
 
 def run_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
-    aip_path: Path = typer.Argument(None, help="Path to AIP YAML file (optional if --epic/--spec used)"),
+    spec_path: Path = typer.Argument(None, help="Path to spec .md file (optional if --epic/--spec used)"),
     repo_path: Path = typer.Option(
         None, "--repo", "-r", help="Repository path (default: current directory)"
     ),
     branch: str = typer.Option(
-        None, "--branch", "-b", help="Feature branch name (default: from AIP or auto-generated)"
+        None, "--branch", "-b", help="Feature branch name (default: from spec or auto-generated)"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Compile and print JobInstance without executing"
@@ -279,30 +383,30 @@ def run_command(
         None, "--run-id", help="Custom run ID (default: auto-generated)"
     ),
     epic_id: str = typer.Option(
-        None, "--epic", "-e", help="Epic ID to load AIP from (use with --spec)"
+        None, "--epic", "-e", help="Epic ID to load spec from (use with --spec)"
     ),
     spec_id: str = typer.Option(
-        None, "--spec", "-s", help="Spec ID to load AIP from (use with --epic)"
+        None, "--spec", "-s", help="Spec ID to load from (use with --epic)"
     ),
 ) -> None:
     """Compile and execute a job in one step.
 
-    Builds an envelope from the AIP file, compiles it to a JobInstance,
+    Builds an envelope from the spec file, compiles it to a JobInstance,
     and executes the steps.
 
     Examples:
-        spec run aip-1 ./my-feature.aip.yaml
-        spec run aip-1 ./my-feature.aip.yaml --repo /workspace/target
-        spec run aip-1 ./my-feature.aip.yaml --dry-run
+        spec run aip-1 ./my-feature.md
+        spec run aip-1 ./my-feature.md --repo /workspace/target
+        spec run aip-1 ./my-feature.md --dry-run
         spec run aip-1 --epic e005-command-plane --spec e005-01-schemas
     """
-    # Validate inputs - must have either aip_path or epic/spec
-    if aip_path is None and (epic_id is None or spec_id is None):
-        _echo_error("Must provide either AIP_PATH or both --epic and --spec")
+    # Validate inputs - must have either spec_path or epic/spec
+    if spec_path is None and (epic_id is None or spec_id is None):
+        _echo_error("Must provide either SPEC_PATH or both --epic and --spec")
         raise typer.Exit(1)
 
-    if aip_path is not None and (epic_id is not None or spec_id is not None):
-        _echo_error("Cannot use both AIP_PATH and --epic/--spec")
+    if spec_path is not None and (epic_id is not None or spec_id is not None):
+        _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
         raise typer.Exit(1)
 
     if job_id not in list_job_defs():
@@ -310,17 +414,18 @@ def run_command(
         typer.echo(f"Available job IDs: {', '.join(list_job_defs())}")
         raise typer.Exit(1)
 
-    # Load AIP - either from file or from epic/spec
+    # Load spec - either from file or from epic/spec
     epic_spec = None  # Will be populated for epic/spec mode
+    resolved_spec_id = spec_id  # For ctx
+
     if epic_id and spec_id:
-        # Load from governor
-        from spec.aip.compiler import load_compiled_aip
+        # Load .md from governor
         from spec.epic.loader import load_epic
 
         try:
-            aip = load_compiled_aip(epic_id, spec_id)
-        except Exception as e:
-            _echo_error(f"Failed to load AIP from epic/spec: {e}")
+            spec_path = _get_spec_path(epic_id, spec_id)
+        except FileNotFoundError as e:
+            _echo_error(f"Failed to load spec from epic/spec: {e}")
             raise typer.Exit(1)
 
         # Load epic to get spec expectations for drift checking
@@ -333,58 +438,58 @@ def run_command(
                     "constraints": spec_ref.constraints,
                     "check_paths": _extract_check_paths(epic, spec_id),
                 }
+                # Get repo path from epic spec if available
+                if repo_path is None and hasattr(spec_ref, "repo_path") and spec_ref.repo_path:
+                    repo_path = Path(spec_ref.repo_path)
         except Exception as e:
             # Non-fatal - epic_spec is optional enhancement
             typer.secho(f"Warning: Could not load epic context: {e}", fg=typer.colors.YELLOW, err=True)
 
-        aip_data = aip.to_dict()
+    # Load spec markdown
+    if not spec_path.exists():
+        _echo_error(f"Spec file not found: {spec_path}")
+        raise typer.Exit(1)
 
-        # Resolve repo path from AIP
-        if repo_path is None:
-            repo_path = Path(aip.workspace.repo_path)
-        repo_path = repo_path.resolve()
+    try:
+        spec_md = spec_path.read_text()
+        frontmatter = _parse_spec_frontmatter(spec_md)
+    except ValueError as e:
+        _echo_error(f"Invalid spec: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        _echo_error(f"Failed to load spec: {e}")
+        raise typer.Exit(1)
 
-        # Resolve branch from AIP
-        if branch is None:
-            branch = aip.workspace.branch
-    else:
-        # Load from file
-        if not aip_path.exists():
-            _echo_error(f"AIP file not found: {aip_path}")
-            raise typer.Exit(1)
+    # Use filename as spec_id if not from epic mode
+    if resolved_spec_id is None:
+        resolved_spec_id = spec_path.stem
 
-        try:
-            aip_data = _load_yaml(aip_path)
-        except Exception as e:
-            _echo_error(f"Failed to load AIP: {e}")
-            raise typer.Exit(1)
+    # Resolve repo path
+    if repo_path is None:
+        repo_path = Path.cwd()
+    repo_path = repo_path.resolve()
 
-        # Resolve repo path
-        if repo_path is None:
-            repo_path = Path.cwd()
-        repo_path = repo_path.resolve()
-
-        # Resolve branch
-        if branch is None:
-            branch = aip_data.get("workspace", {}).get("branch")
-            if not branch:
-                aip_id = aip_data.get("aip_id", aip_path.stem)
-                branch = f"feat/{aip_id}"
+    # Resolve branch from frontmatter or generate from title
+    if branch is None:
+        branch = frontmatter.get("repo", {}).get("working_branch")
+        if not branch:
+            title_slug = frontmatter["title"].lower().replace(" ", "-")
+            branch = f"feat/{title_slug}"
 
     # Build envelope
     envelope = {
         "job_id": job_id,
         "payload": {
-            "aip": aip_data,  # Include full AIP data
-            "aip_path": str(aip_path.resolve()) if aip_path else None,
+            "spec_md": spec_md,  # Full markdown content
+            "spec_path": str(spec_path.resolve()),
             "repo_path": str(repo_path),
             "feature_branch": branch,
             "epic_id": epic_id,
-            "spec_id": spec_id,
+            "spec_id": resolved_spec_id,
             "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         },
         "ctx": {
-            "aip_id": aip_data.get("metadata", {}).get("spec_id") or aip_data.get("aip_id", spec_id or (aip_path.stem if aip_path else "unknown")),
+            "spec_id": resolved_spec_id,
             "epic_id": epic_id,
         },
     }
@@ -406,15 +511,15 @@ def run_command(
 
     # Generate run_id if not provided
     if run_id is None:
-        run_id = generate_run_id(spec_id=spec_id)
+        run_id = generate_run_id(spec_id=resolved_spec_id)
 
     typer.echo(f"Running job: {job_id}")
     typer.echo(f"  Run ID:   {run_id}")
     if epic_id and spec_id:
         typer.echo(f"  Epic:     {epic_id}")
-        typer.echo(f"  Spec:     {spec_id}")
+        typer.echo(f"  Spec:     {resolved_spec_id}")
     else:
-        typer.echo(f"  AIP:      {aip_path}")
+        typer.echo(f"  Spec:     {spec_path}")
     typer.echo(f"  Repo:     {repo_path}")
     typer.echo(f"  Branch:   {branch}")
     typer.echo("")
@@ -668,3 +773,75 @@ def _show_run_details(record, store: RunStore) -> None:
     if attempts:
         typer.echo("")
         typer.echo(f"Attempts: {len(attempts)}")
+
+
+# =============================================================================
+# spec validate
+# =============================================================================
+
+
+def validate_command(
+    spec_path: Path = typer.Argument(None, help="Path to spec .md file (uses current if omitted)"),
+    check_only: bool = typer.Option(
+        False, "--check", "-c", help="Check only, don't write validated flag"
+    ),
+) -> None:
+    """Validate a spec file and mark it as validated.
+
+    Checks that the spec has valid YAML frontmatter with required fields
+    (tier, title, owner, goal) and writes 'validated: true' to the frontmatter.
+
+    Examples:
+        spec validate ./my-feature.md
+        spec validate ./my-feature.md --check
+        spec validate  # uses current spec from config
+    """
+    # Resolve spec path from config if not provided
+    if spec_path is None:
+        from spec.cli.spec import find_config
+        _, cfg = find_config()
+        current_spec = cfg.get("current", {}).get("spec")
+        if not current_spec:
+            _echo_error("No spec path provided and no current spec set.")
+            typer.echo("  Run: spec config current.spec <path-to-spec.md>")
+            raise typer.Exit(1)
+        spec_path = Path(current_spec)
+        typer.echo(f"Using current spec: {spec_path}")
+
+    if not spec_path.exists():
+        _echo_error(f"Spec file not found: {spec_path}")
+        raise typer.Exit(1)
+
+    if spec_path.suffix != ".md":
+        _echo_error(f"Spec must be a .md file (got {spec_path.suffix})")
+        raise typer.Exit(1)
+
+    try:
+        content = spec_path.read_text()
+        frontmatter = _parse_spec_frontmatter(content)
+    except ValueError as e:
+        _echo_error(f"Invalid spec: {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        _echo_error(f"Failed to load spec: {e}")
+        raise typer.Exit(1)
+
+    # Check if already validated
+    if frontmatter.get("validated"):
+        _echo_success(f"Spec already validated: {spec_path}")
+        return
+
+    if check_only:
+        _echo_success(f"Spec is valid: {spec_path}")
+        typer.echo("  (use without --check to write 'validated: true')")
+        return
+
+    # Write validated flag
+    try:
+        updated_content = _update_frontmatter(content, {"validated": True})
+        spec_path.write_text(updated_content)
+        _echo_success(f"Spec validated: {spec_path}")
+        typer.echo("  Added 'validated: true' to frontmatter")
+    except Exception as e:
+        _echo_error(f"Failed to update spec: {e}")
+        raise typer.Exit(1)

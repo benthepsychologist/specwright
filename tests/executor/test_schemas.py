@@ -187,9 +187,9 @@ class TestJobDef:
                     payload={"command": "git checkout -b feat/test"},
                 ),
                 StepTemplate(
-                    step_id="agent.run_aip",
+                    step_id="agent.run_spec",
                     backend=Backend.claude_code,
-                    payload={"aip": "@payload.aip"},
+                    payload={"spec_md": "@payload.spec_md"},
                 ),
             ],
         )
@@ -312,14 +312,14 @@ class TestStepManifest:
     def test_valid_step_manifest(self):
         manifest = StepManifest(
             step_n=1,
-            step_id="agent.run_aip",
+            step_id="agent.run_spec",
             backend=Backend.claude_code,
             common=Common(
                 repo_path=Path("/workspace/repo"),
                 branch="main",
                 base_commit="abc123",
             ),
-            payload={"aip": {"title": "Test AIP"}},
+            payload={"spec_md": "# Test Spec\n\nContent here"},
         )
         assert manifest.step_n == 1
         assert manifest.backend == Backend.claude_code
@@ -427,7 +427,7 @@ class TestStepCapture:
     def test_full_step_capture(self):
         capture = StepCapture(
             step_n=1,
-            step_id="agent.run_aip",
+            step_id="agent.run_spec",
             git=GitCapture(
                 base_commit="abc123",
                 pre_status="",
