@@ -438,9 +438,19 @@ def run_command(
                     "constraints": spec_ref.constraints,
                     "check_paths": _extract_check_paths(epic, spec_id),
                 }
-                # Get repo path from epic spec if available
-                if repo_path is None and hasattr(spec_ref, "repo_path") and spec_ref.repo_path:
-                    repo_path = Path(spec_ref.repo_path)
+                # Get repo path from epic target (spec_ref.repo is target ID)
+                if repo_path is None and spec_ref.repo:
+                    target = epic.get_target(spec_ref.repo)
+                    if target and target.repo_path:
+                        repo_path = Path(target.repo_path)
+                    else:
+                        _echo_error(
+                            f"Spec '{spec_id}' references repo '{spec_ref.repo}' "
+                            f"but no matching target found in epic '{epic_id}'"
+                        )
+                        raise typer.Exit(1)
+        except typer.Exit:
+            raise  # Re-raise Exit exceptions
         except Exception as e:
             # Non-fatal - epic_spec is optional enhancement
             typer.secho(f"Warning: Could not load epic context: {e}", fg=typer.colors.YELLOW, err=True)
@@ -464,10 +474,22 @@ def run_command(
     if resolved_spec_id is None:
         resolved_spec_id = spec_path.stem
 
-    # Resolve repo path
+    # Resolve repo path - MUST be explicit, no fallback to cwd
     if repo_path is None:
-        repo_path = Path.cwd()
+        _echo_error(
+            "No repo_path resolved. For epic/spec mode, ensure the epic has a matching "
+            "target with repo_path. For file mode, use --repo to specify the target repo."
+        )
+        raise typer.Exit(1)
     repo_path = repo_path.resolve()
+
+    # Verify repo exists
+    if not repo_path.exists():
+        _echo_error(f"Target repo does not exist: {repo_path}")
+        raise typer.Exit(1)
+    if not (repo_path / ".git").exists():
+        _echo_error(f"Target repo is not a git repository: {repo_path}")
+        raise typer.Exit(1)
 
     # Resolve branch from frontmatter or generate from title
     if branch is None:
