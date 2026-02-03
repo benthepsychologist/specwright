@@ -1,7 +1,6 @@
 """Tests for epic loader - load and validate from YAML."""
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,6 @@ from spec.epic.loader import (
     load_epic,
     load_epic_from_path,
 )
-from spec.epic.schema import SpecStatus
 
 
 @pytest.fixture

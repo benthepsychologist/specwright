@@ -15,7 +15,7 @@ except ImportError:
 
 import functools
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 
 def _specwright_exception_handler(func):
@@ -33,18 +33,17 @@ def _specwright_exception_handler(func):
 app = typer.Typer(help="Specwright CLI for managing Agentic Implementation Plans")
 
 # Register epic subcommands
-from spec.cli.epic import epic_app
+from spec.cli.epic import epic_app  # noqa: E402
 
 app.add_typer(epic_app, name="epic")
 
 # Register v2 executor commands at top level (per e008-05 spec)
-from spec.cli.exec_commands import (
+from spec.cli.exec_commands import (  # noqa: E402
     compile_command,
     execute_command,
     logs_command,
     run_command,
     status_command,
-    validate_command,
 )
 
 app.command("compile")(compile_command)
@@ -52,7 +51,22 @@ app.command("execute")(execute_command)
 app.command("run")(run_command)
 app.command("status")(status_command)
 app.command("logs")(logs_command)
-app.command("validate")(validate_command)
+
+# Register validate as a Typer subgroup (supports subcommands: build, epic, contracts)
+# The callback handles the existing `spec validate <file.md>` behavior
+from spec.cli.governance import validate_app  # noqa: E402
+
+app.add_typer(validate_app, name="validate")
+
+# Register spec finish as a top-level command (lifecycle, not validation)
+from spec.cli.finish import finish_command  # noqa: E402
+
+app.command("finish")(finish_command)
+
+# Register spec delta subcommand group (build delta management)
+from spec.cli.delta import delta_app  # noqa: E402
+
+app.add_typer(delta_app, name="delta")
 
 
 class RiskTier(str, Enum):
@@ -229,10 +243,6 @@ def _get_project_name(cfg: dict, project_root: Path) -> str:
     project = cfg.get("project_slug")
     if project:
         return project
-    # Try autogov source
-    autogov = cfg.get("autogov", {})
-    if autogov.get("source"):
-        return autogov["source"]
     # Default to directory name
     return project_root.name
 
@@ -288,7 +298,6 @@ def get_user_default(cfg: dict, key: str) -> str | None:
 def init(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
     claude: bool = typer.Option(True, "--claude/--no-claude", help="Install Claude Code slash commands"),
-    autogov: bool = typer.Option(False, "--autogov", help="Enable autogov governance integration"),
     legacy_mode: bool = typer.Option(False, "--legacy-mode", help="Use legacy v0.1 repo-local config (deprecated)"),
     governor_path: str | None = typer.Option(None, "--governor", help="Custom local-governor path"),
 ):
@@ -296,7 +305,6 @@ def init(
 
     Examples:
         spec init                    # v0.6 minimal config (governor-based)
-        spec init --autogov          # Enable autogov (prompts for registry source)
         spec init --legacy-mode      # v0.1 repo-local specs (deprecated)
         spec init --governor /path   # Custom governor location
     """
@@ -316,21 +324,6 @@ def init(
     # Set custom governor path if provided
     if governor_path and not legacy_mode:
         config["governor"]["path"] = governor_path
-
-    # Add autogov section if enabled (prompt for source interactively)
-    if autogov:
-        import click
-        typer.echo("Autogov governance enabled.")
-        source = typer.prompt(
-            "Registry source (org/patterns)",
-            type=click.Choice(["org", "patterns"]),
-            default="org",
-        )
-        config["autogov"] = {
-            "enabled": True,
-            "source": source,
-        }
-        typer.echo(f"✓ Autogov enabled with source: {source}")
 
     with open(config_path, "w") as f:
         yaml.dump(config, f, sort_keys=False, default_flow_style=False)
@@ -426,6 +419,25 @@ def init(
         except Exception as e:
             typer.echo(f"  Warning: Could not install Claude Code commands: {e}", err=True)
             typer.echo("  You can manually copy them from the specwright repo's .claude/commands/", err=True)
+
+    # Install default JobDefs to local-governor
+    if not legacy_mode:
+        try:
+            from spec.executor.jobdefs import get_jobdefs_dir, install_default_jobdefs
+
+            gov_path = Path(governor_path).expanduser() if governor_path else None
+            installed = install_default_jobdefs(gov_path, overwrite=force)
+            jobdefs_dir = get_jobdefs_dir(gov_path)
+
+            if installed:
+                typer.echo(f"✓ Installed {len(installed)} JobDefs to {jobdefs_dir}")
+                for path in installed:
+                    typer.echo(f"    - {path.name}")
+            else:
+                typer.echo(f"✓ JobDefs already installed at {jobdefs_dir}")
+                typer.echo("    Use --force to overwrite")
+        except Exception as e:
+            typer.echo(f"  Warning: Could not install JobDefs: {e}", err=True)
 
     typer.echo(f"✓ Created {config_path}")
     typer.echo("  You can now use spec commands from anywhere in this project")
@@ -527,7 +539,6 @@ def create(
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
     set_current: bool = typer.Option(False, "--set-current", help="Set as current working spec"),
     yaml_mode: bool = typer.Option(False, "--yaml", help="Generate YAML directly (legacy mode)"),
-    autogov_project: str | None = typer.Option(None, "--autogov", help="Autogov project name (required when autogov.enabled: true)"),
 ):
     """Create a new spec from template (Markdown by default, YAML with --yaml flag).
 
@@ -535,35 +546,9 @@ def create(
         spec create "Add User Avatars"                                   # Uses defaults
         spec create "Add User Avatars" --tier C --goal "Allow profile pictures"
         spec create "Refactor Auth" --set-current
-        spec create "Add OAuth" --autogov myproject --tier B             # With governance
     """
-    from spec.autogov.exceptions import CLIUsageError, RegistryConfigError
-
     # Get config
     config_path, cfg = find_config()
-
-    # Check autogov configuration
-    autogov_cfg = cfg.get("autogov", {})
-    autogov_enabled = autogov_cfg.get("enabled", False)
-    governance_bundle = None
-
-    if autogov_enabled:
-        # Validate config has source
-        if "source" not in autogov_cfg:
-            raise RegistryConfigError(
-                "Missing autogov.source in .specwright.yaml. "
-                "Add 'autogov.source: org' or 'autogov.source: patterns' to your config."
-            )
-        # Require --autogov flag when enabled
-        if not autogov_project:
-            raise CLIUsageError(
-                "--autogov is required when autogov.enabled: true in .specwright.yaml. "
-                "Use: spec create <title> --autogov <project-name>"
-            )
-        # Load governance (lazy import)
-        from spec.autogov.loader import GovernanceLoader
-        loader = GovernanceLoader()
-        governance_bundle = loader.load_all(autogov_project, autogov_cfg["source"])
     project_root = config_path.parent if config_path else Path.cwd()
 
     # Get tier from config if not provided
@@ -690,18 +675,7 @@ def create(
             "updated": now,
         }
 
-        # Merge governance context if available
-        if governance_bundle is not None:
-            from spec.autogov.context_builder import SpecContextBuilder
-            context_builder = SpecContextBuilder()
-            template_context = context_builder.merge_with_template_context(
-                bundle=governance_bundle,
-                base_context=base_context,
-                project=autogov_project,  # type: ignore[arg-type]
-                source=autogov_cfg["source"],
-            )
-        else:
-            template_context = base_context
+        template_context = base_context
 
         # Use Jinja2 to render template
         from jinja2 import BaseLoader, Environment
@@ -1161,9 +1135,6 @@ def migrate(
                 "path": str(paths.root),
             },
         }
-        if cfg.get("autogov", {}).get("enabled"):
-            new_config["autogov"] = cfg["autogov"]
-
         save_config(config_path, new_config)
         typer.secho("✓ Updated .specwright.yaml to v0.6 format", fg=typer.colors.GREEN)
 

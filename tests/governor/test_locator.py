@@ -47,8 +47,8 @@ class TestGovernorLocator:
     def test_find_from_env_var(
         self, mock_governor: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SPECWRIGHT_GOVERNOR env var takes precedence."""
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(mock_governor))
+        """SPECWRIGHT_GOVERNOR_ROOT env var takes precedence."""
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(mock_governor))
 
         locator = GovernorLocator(project="test-project")
         paths = locator.find()
@@ -88,7 +88,7 @@ class TestGovernorLocator:
     ) -> None:
         """Raises GovernorNotFoundError when not found."""
         # Clear env var and set DEFAULT_PATH to non-existent location
-        monkeypatch.delenv("SPECWRIGHT_GOVERNOR", raising=False)
+        monkeypatch.delenv("SPECWRIGHT_GOVERNOR_ROOT", raising=False)
         fake_governor = tmp_path / "nonexistent" / "local-governor"
 
         # Patch the class attribute
@@ -112,7 +112,7 @@ class TestGovernorLocator:
         governor.mkdir()
         # Missing: projects/
 
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(governor))
 
         locator = GovernorLocator(project="test-project")
 
@@ -129,7 +129,7 @@ class TestGovernorLocator:
         governor = tmp_path / "local-governor"
         (governor / "projects").mkdir(parents=True)
 
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(governor))
 
         locator = GovernorLocator(project="nonexistent-project")
 
@@ -145,7 +145,7 @@ class TestGovernorLocator:
         governor = tmp_path / "local-governor"
         (governor / "projects").mkdir(parents=True)
 
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(governor))
 
         locator = GovernorLocator(project="new-project")
         paths = locator.find(ensure_dirs=True)
@@ -159,7 +159,7 @@ class TestGovernorLocator:
         self, mock_governor: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """exists() returns True when valid governor found."""
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(mock_governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(mock_governor))
 
         locator = GovernorLocator(project="test-project")
         assert locator.exists() is True
@@ -168,7 +168,7 @@ class TestGovernorLocator:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """exists() returns False when governor not found."""
-        monkeypatch.delenv("SPECWRIGHT_GOVERNOR", raising=False)
+        monkeypatch.delenv("SPECWRIGHT_GOVERNOR_ROOT", raising=False)
         monkeypatch.setattr(
             GovernorLocator, "DEFAULT_PATH", tmp_path / "nonexistent"
         )
@@ -194,7 +194,7 @@ class TestGovernorLocator:
             for d in ["specs", "aips", "errors", "runs"]:
                 (project / d).mkdir(parents=True)
 
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(env_governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(env_governor))
 
         config = {"governor": {"path": str(config_governor)}}
         locator = GovernorLocator(config, project="test-project")
@@ -212,7 +212,7 @@ class TestGovernorLocator:
         for d in ["specs", "aips", "errors", "runs"]:
             (project / d).mkdir(parents=True)
 
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(mock_governor))
+        monkeypatch.setenv("SPECWRIGHT_GOVERNOR_ROOT", str(mock_governor))
 
         config = {"project_slug": "config-project"}
         locator = GovernorLocator(config)
@@ -220,19 +220,3 @@ class TestGovernorLocator:
 
         assert paths.project == "config-project"
 
-    def test_resolve_project_from_autogov_source(
-        self, mock_governor: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Project is resolved from autogov.source if no project_slug."""
-        # Create a project directory for the autogov source
-        project = mock_governor / "projects" / "autogov-project"
-        for d in ["specs", "aips", "errors", "runs"]:
-            (project / d).mkdir(parents=True)
-
-        monkeypatch.setenv("SPECWRIGHT_GOVERNOR", str(mock_governor))
-
-        config = {"autogov": {"source": "autogov-project"}}
-        locator = GovernorLocator(config)
-        paths = locator.find()
-
-        assert paths.project == "autogov-project"

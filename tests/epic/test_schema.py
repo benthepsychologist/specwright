@@ -1,6 +1,6 @@
 """Tests for epic schema dataclasses and validation."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,15 +9,12 @@ from spec.epic.schema import (
     Check,
     CheckInput,
     CheckScope,
-    Defaults,
     Epic,
     EpicState,
     EventType,
-    GovernanceConfig,
     HistoryEvent,
     Intent,
     ResponseContract,
-    RunContext,
     SpecRef,
     SpecStatus,
     Target,
@@ -73,7 +70,7 @@ def sample_check() -> Check:
 @pytest.fixture
 def sample_epic(sample_target: Target, sample_spec: SpecRef, sample_check: Check) -> Epic:
     """Create a sample epic for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Epic(
         version="0.1",
         kind="epic",
@@ -162,7 +159,7 @@ class TestDataclasses:
 
     def test_history_event_creation(self):
         """HistoryEvent creates with correct fields."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         event = HistoryEvent(
             id="EVT-0001",
             at=now,
@@ -202,7 +199,7 @@ class TestEpicValidation:
 
     def test_validate_dag_cycle(self):
         """DAG cycle is detected."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         epic = Epic(
             version="0.1",
             kind="epic",
@@ -288,7 +285,7 @@ class TestEpicHelpers:
 
     def test_topological_order_chain(self):
         """topological_order returns correct order for chain."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         epic = Epic(
             version="0.1",
             kind="epic",

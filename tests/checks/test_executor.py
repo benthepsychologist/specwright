@@ -1,13 +1,13 @@
 """Tests for check executor."""
 
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from spec.checks.executor import CheckExecutor, LLMClient
+from spec.checks.executor import CheckExecutor
 from spec.checks.inputs import InputGatherError
 from spec.epic.schema import (
     Check,
@@ -16,13 +16,11 @@ from spec.epic.schema import (
     Defaults,
     Epic,
     EpicState,
-    HistoryEvent,
     Intent,
     RunContext,
     SpecStatus,
     Target,
 )
-from spec.llm.reporter import CheckReport
 
 
 def _make_epic(
@@ -39,8 +37,8 @@ def _make_epic(
         id="e001-test",
         title="Test Epic",
         owner="tester",
-        created=datetime(2025, 1, 1, tzinfo=timezone.utc),
-        updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        created=datetime(2025, 1, 1, tzinfo=UTC),
+        updated=datetime(2025, 1, 1, tzinfo=UTC),
         intent=Intent(goal="Test"),
         targets=targets or [],
         specs=[],

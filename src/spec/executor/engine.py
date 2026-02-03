@@ -13,6 +13,7 @@ The engine:
 
 from __future__ import annotations
 
+import os
 import hashlib
 import re
 import time
@@ -38,7 +39,6 @@ from spec.executor.schemas import (
     StepOutcome,
 )
 from spec.executor.schemas.attempt import AttemptStatus
-from spec.executor.schemas.job_def import StepTemplate
 from spec.executor.store import RunStore
 
 
@@ -65,6 +65,61 @@ class CompileError(ExecutorError):
 
 class VariableError(ExecutorError):
     """Raised when variable resolution fails."""
+
+
+def _is_truthy_env(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _require_llm_preflight(*, run_id: str) -> None:
+    """Hard gate for LLM availability.
+
+    Called before executing any steps for runs that require LLM (LLM steps and/or
+    LLM-backed run report). This prevents partially-executed runs when the LLM
+    backend is misconfigured.
+
+    Escape hatch:
+    - If `SPECWRIGHT_SKIP_LLM_PREFLIGHT` is truthy, this check is skipped.
+
+    Note: Network connectivity checks remain optional and are controlled by the
+    LLM backend itself (e.g. `SPECWRIGHT_LLM_NETWORK_PREFLIGHT`).
+    """
+
+    if _is_truthy_env(os.environ.get("SPECWRIGHT_SKIP_LLM_PREFLIGHT")):
+        return
+
+    from spec.executor.backends.llm import LlmBackend
+
+    # We want preflight to be a *real* preflight: when LLM is required, verify()
+    # should also make a minimal provider call so we fail before step 1.
+    old_network_flag = os.environ.get("SPECWRIGHT_LLM_NETWORK_PREFLIGHT")
+    os.environ["SPECWRIGHT_LLM_NETWORK_PREFLIGHT"] = "1"
+    try:
+        LlmBackend().verify()
+    except Exception as e:
+        raise ExecutorError(f"LLM preflight failed: {e}", run_id=run_id) from e
+    finally:
+        if old_network_flag is None:
+            os.environ.pop("SPECWRIGHT_LLM_NETWORK_PREFLIGHT", None)
+        else:
+            os.environ["SPECWRIGHT_LLM_NETWORK_PREFLIGHT"] = old_network_flag
+
+
+def _job_requires_llm(job_instance: JobInstance) -> bool:
+    return any(step.backend == Backend.llm for step in (job_instance.steps or []))
+
+
+def _use_llm_for_run_report(*, job_instance: JobInstance) -> bool:
+    # interactive-1 should always generate an LLM-backed run report.
+    if job_instance.job_id == "interactive-1":
+        return True
+    # If the job already requires LLM, default to LLM-backed run report.
+    if _job_requires_llm(job_instance):
+        return True
+    # Otherwise, only use LLM if explicitly requested.
+    return _is_truthy_env(os.environ.get("SPECWRIGHT_RUN_REPORT_LLM"))
 
 
 # =============================================================================
@@ -286,6 +341,7 @@ def compile_job(
             continue_on_failure=template.continue_on_failure,
             on_failure_skip_to=template.on_failure_skip_to,
             capture_patch=template.capture_patch,
+            interactive=template.interactive,
         )
         steps.append(step)
 
@@ -343,183 +399,6 @@ def _evaluate_condition(condition: str, ctx: dict[str, Any], payload: dict[str, 
     except VariableError:
         # Missing variables in conditions evaluate to False
         return False
-
-
-# =============================================================================
-# JobDef Registry (minimal for v0)
-# =============================================================================
-
-_JOB_DEFS: dict[str, JobDef] = {}
-
-
-def register_job_def(job_def: JobDef) -> None:
-    """Register a JobDef template."""
-    _JOB_DEFS[job_def.job_id] = job_def
-
-
-def get_job_def(job_id: str) -> JobDef:
-    """Get a registered JobDef by ID."""
-    if job_id not in _JOB_DEFS:
-        raise CompileError(f"Unknown job_id: {job_id}")
-    return _JOB_DEFS[job_id]
-
-
-def list_job_defs() -> list[str]:
-    """List all registered JobDef IDs."""
-    return list(_JOB_DEFS.keys())
-
-
-# =============================================================================
-# aip-1 JobDef
-# =============================================================================
-
-
-def _create_aip1_job_def() -> JobDef:
-    """Create the aip-1 JobDef template.
-
-    3-pass Claude execution model:
-    - Run 1 (agent.run_spec): Execute the spec
-    - Run 2 (agent.drift_fix): Check for drift, make a plan, execute fixes
-    - Run 3 (agent.drift_verify): Final verification pass
-
-    Failure handling:
-    - If Run 1 fails: skip Runs 2 and 3 (via on_failure_skip_to)
-    - If Run 2 fails: still proceed with Run 3 (continue_on_failure=True)
-    - Commits after each successful Claude run
-    """
-    from spec.executor.schemas.shared import Backend
-
-    return JobDef(
-        job_id="aip-1",
-        version="0.2",
-        description="Execute a spec with 3-pass agent verification",
-        steps=[
-            # Step 1: Create feature branch - must succeed
-            StepTemplate(
-                step_id="branch.create",
-                backend=Backend.cmd,
-                description="Create feature branch for spec execution",
-                payload={
-                    "command": "git checkout -b @payload.feature_branch",
-                    "capture_git": True,
-                },
-                continue_on_failure=False,  # Must succeed to proceed
-            ),
-            # Step 2: Run 1 - Execute spec
-            StepTemplate(
-                step_id="agent.run_spec",
-                backend=Backend.claude_code,
-                description="Run 1: Execute spec with agent",
-                payload={
-                    "spec_md": "@payload.spec_md",  # Markdown spec content
-                    "repo_path": "@payload.repo_path",
-                    "capture_git": True,
-                },
-                timeout_s=1800,  # 30 minutes for agent work
-                on_failure_skip_to="capture.bundle",  # Skip runs 2/3 on failure
-                capture_patch=True,
-            ),
-            # Step 3: Commit after Run 1
-            StepTemplate(
-                step_id="commit.run1",
-                backend=Backend.cmd,
-                description="Commit changes from run 1",
-                payload={
-                    "command": "git add -A && git commit -m 'spec: revision 1' || true",
-                    "capture_git": True,
-                },
-                continue_on_failure=True,  # Best effort
-            ),
-            # Step 4: Run 2 - Drift inspection and fix
-            StepTemplate(
-                step_id="agent.drift_fix",
-                backend=Backend.claude_code,
-                description="Run 2: Inspect for drift and fix",
-                payload={
-                    "prompt_type": "drift_fix",  # Tells backend which prompt to build
-                    "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
-                    "repo_path": "@payload.repo_path",
-                    "capture_git": True,
-                },
-                timeout_s=1800,
-                continue_on_failure=True,  # Run 3 proceeds even if this fails
-                capture_patch=True,
-            ),
-            # Step 5: Commit after Run 2
-            StepTemplate(
-                step_id="commit.run2",
-                backend=Backend.cmd,
-                description="Commit changes from run 2",
-                payload={
-                    "command": "git add -A && git commit -m 'spec: revision 2 - drift fix' || true",
-                    "capture_git": True,
-                },
-                continue_on_failure=True,  # Best effort
-            ),
-            # Step 6: Run 3 - Final drift verification
-            StepTemplate(
-                step_id="agent.drift_verify",
-                backend=Backend.claude_code,
-                description="Run 3: Final drift verification",
-                payload={
-                    "prompt_type": "drift_verify",  # Tells backend which prompt to build
-                    "epic_spec": "@payload.epic_spec",  # Epic expectations for ground truth
-                    "repo_path": "@payload.repo_path",
-                    "capture_git": True,
-                },
-                timeout_s=1800,
-                continue_on_failure=True,  # Best effort
-                capture_patch=True,
-            ),
-            # Step 7: Commit after Run 3
-            StepTemplate(
-                step_id="commit.run3",
-                backend=Backend.cmd,
-                description="Commit changes from run 3",
-                payload={
-                    "command": "git add -A && git commit -m 'spec: revision 3 - verification' || true",
-                    "capture_git": True,
-                },
-                continue_on_failure=True,  # Best effort
-            ),
-            # Step 8: Capture bundle - best effort
-            StepTemplate(
-                step_id="capture.bundle",
-                backend=Backend.cmd,
-                description="Bundle execution artifacts",
-                payload={
-                    "command": "git log --oneline -10 || git diff --stat",
-                    "capture_git": True,
-                },
-                continue_on_failure=True,  # Best effort
-            ),
-            # Step 9: Assess acceptance - best effort
-            StepTemplate(
-                step_id="assess.acceptance",
-                backend=Backend.llm,
-                description="Assess spec acceptance criteria",
-                payload={
-                    "prompt_type": "acceptance_review",
-                    "spec_md": "@payload.spec_md",
-                    "epic_spec": "@payload.epic_spec",
-                    "repo_path": "@payload.repo_path",
-                    "model": "gemini-3-pro-preview",
-                },
-                continue_on_failure=True,  # Best effort
-            ),
-            # Step 10: Finalize run - always try
-            StepTemplate(
-                step_id="finalize.run",
-                backend=Backend.cmd,
-                description="Finalize run and write summary",
-                payload={
-                    "command": "echo 'Run finalized'",
-                    "capture_git": False,
-                },
-                continue_on_failure=True,  # Always try to finalize
-            ),
-        ],
-    )
 
 
 def _build_drift_fix_prompt(epic_spec: dict | None = None) -> str:
@@ -635,10 +514,6 @@ def _format_epic_expectations(epic_spec: dict) -> str:
     return "\n".join(lines)
 
 
-# Register aip-1 on module load
-register_job_def(_create_aip1_job_def())
-
-
 # =============================================================================
 # Executor Engine
 # =============================================================================
@@ -708,7 +583,8 @@ def execute(
     This is the main entry point for the executor.
 
     Args:
-        envelope: The envelope containing job_id, ctx, and payload
+        envelope: The envelope containing job_def (or job_def dict), ctx, and payload.
+            The job_def must be a JobDef object or a dict that can be parsed as one.
         store: Optional RunStore (defaults to standard location)
         run_id: Optional run_id (defaults to generated)
 
@@ -722,10 +598,25 @@ def execute(
     run_id = run_id or generate_run_id()
 
     # Extract envelope fields
-    job_id = envelope.get("job_id")
-    if not job_id:
-        raise ExecutorError("Missing job_id in envelope", run_id=run_id)
+    job_def_data = envelope.get("job_def")
+    if not job_def_data:
+        raise ExecutorError("Missing job_def in envelope", run_id=run_id)
 
+    # Parse job_def if it's a dict
+    if isinstance(job_def_data, dict):
+        try:
+            job_def = JobDef.model_validate(job_def_data)
+        except Exception as e:
+            raise ExecutorError(f"Invalid job_def: {e}", run_id=run_id) from e
+    elif isinstance(job_def_data, JobDef):
+        job_def = job_def_data
+    else:
+        raise ExecutorError(
+            f"job_def must be a dict or JobDef, got {type(job_def_data).__name__}",
+            run_id=run_id,
+        )
+
+    job_id = job_def.job_id
     ctx = envelope.get("ctx", {})
     payload = envelope.get("payload", {})
 
@@ -743,9 +634,6 @@ def execute(
     branch = payload.get("feature_branch", payload.get("branch"))
     if not branch:
         branch = _get_current_branch(repo_path)
-
-    # Get JobDef
-    job_def = get_job_def(job_id)
 
     # Compile to JobInstance (uses resolved base_commit from payload)
     job_instance = compile_job(job_def, envelope)
@@ -788,6 +676,12 @@ def execute(
     )
 
     try:
+        job_requires_llm = _job_requires_llm(job_instance)
+        use_llm_report = _use_llm_for_run_report(job_instance=job_instance)
+        if job_requires_llm or use_llm_report:
+            # Hard gate: require successful LLM preflight before any steps.
+            _require_llm_preflight(run_id=run_id)
+
         # Run step dispatch loop
         final_status, outcomes = _run_steps(
             job_instance=job_instance,
@@ -921,6 +815,12 @@ def execute_instance(
     )
 
     try:
+        job_requires_llm = _job_requires_llm(job_instance)
+        use_llm_report = _use_llm_for_run_report(job_instance=job_instance)
+        if job_requires_llm or use_llm_report:
+            # Hard gate: require successful LLM preflight before any steps.
+            _require_llm_preflight(run_id=run_id)
+
         # Build ctx/payload from common block for variable resolution
         ctx: dict[str, Any] = {}
         payload: dict[str, Any] = {
@@ -1125,7 +1025,11 @@ def _run_steps(
 
         # Determine outcome status from capture
         assert capture is not None
-        if capture.agent and capture.agent.exit_code == 124:
+        if step.interactive:
+            # Interactive steps always complete — exit code is telemetry only.
+            # The human was present and knows whether work was done.
+            outcome_status = OutcomeStatus.completed
+        elif capture.agent and capture.agent.exit_code == 124:
             outcome_status = OutcomeStatus.timeout
         elif capture.agent and capture.agent.exit_code != 0:
             outcome_status = OutcomeStatus.failed
@@ -1201,9 +1105,16 @@ def _generate_run_artifacts(
     except Exception as e:
         print(f"Warning: Failed to generate changes_final.patch: {e}", flush=True)
 
-    # Generate run report using LLM
+    # Generate run report (LLM-backed only when requested/required)
     try:
-        _generate_run_report(run_record, attempt, store, run_dir)
+        job_instance = store.read_job_instance(run_record.run_id)
+        _generate_run_report(
+            run_record,
+            attempt,
+            store,
+            run_dir,
+            use_llm=_use_llm_for_run_report(job_instance=job_instance),
+        )
     except Exception as e:
         print(f"Warning: Failed to generate run_report.md: {e}", flush=True)
 
@@ -1213,9 +1124,14 @@ def _generate_run_report(
     attempt: AttemptRecord,
     store: RunStore,
     run_dir: Path,
+    *,
+    use_llm: bool,
 ) -> None:
-    """Generate an LLM-interpreted run report."""
-    from spec.executor.backends.llm import LlmBackend
+    """Generate a run report.
+
+    If `use_llm` is True, uses the LLM backend. Otherwise, writes a plain report
+    based on step outcomes and the final patch.
+    """
 
     # Build summary of step outcomes
     outcomes_summary = []
@@ -1225,6 +1141,12 @@ def _generate_run_report(
             + (f" - {outcome.error}" if outcome.error else "")
         )
 
+    # StepManifest enforces step_n >= 1. This report isn't a real job step, but
+    # we still need a valid, non-colliding step number for backend dispatch.
+    report_step_n = 1
+    if attempt.step_outcomes:
+        report_step_n = max(o.step_n for o in attempt.step_outcomes) + 1
+
     # Read the final patch if it exists
     patch_path = run_dir / "changes_final.patch"
     patch_content = ""
@@ -1233,6 +1155,30 @@ def _generate_run_report(
         # Truncate if too long
         if len(patch_content) > 50000:
             patch_content = patch_content[:50000] + "\n... (truncated)"
+
+    if not use_llm:
+        report_path = run_dir / "run_report.md"
+        report_content = f"""# Run Report: {run_record.run_id}
+
+**Generated**: {datetime.now(UTC).isoformat()}
+**Status**: {run_record.status.value}
+**Job**: {run_record.job_id}
+
+---
+
+## Step Outcomes
+{chr(10).join(outcomes_summary) if outcomes_summary else "(no steps)"}
+
+## Code Changes (diff from baseline)
+```diff
+{patch_content if patch_content else "(no changes)"}
+```
+"""
+        report_path.write_text(report_content)
+        print(f"Generated: {report_path.name}", flush=True)
+        return
+
+    from spec.executor.backends.llm import LlmBackend
 
     prompt = f"""Analyze this automated job run and provide a brief report.
 
@@ -1264,9 +1210,15 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
     # Use LLM backend to generate report
     backend = LlmBackend()
     try:
+        # Preflight (non-network): ensure model resolves and required key exists.
+        # In tests we may monkeypatch LlmBackend with a dummy that doesn't implement verify.
+        verify = getattr(backend, "verify", None)
+        if callable(verify):
+            verify()
+
         # Create a minimal manifest for the LLM call
         manifest = StepManifest(
-            step_n=0,
+            step_n=report_step_n,
             step_id="run_report",
             backend=Backend.llm,
             common=Common(
@@ -1276,7 +1228,6 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
             ),
             payload={
                 "prompt": prompt,
-                "model": "gemini-3-pro-preview",
             },
         )
 
@@ -1286,10 +1237,35 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
             policy=run_record.policy,
         )
 
-        # Extract response and write report
-        if capture.llm and capture.llm.response:
-            report_path = run_dir / "run_report.md"
-            report_content = f"""# Run Report: {run_record.run_id}
+        # Extract response and write report.
+        # LlmBackend writes the model output to the captured stdout file.
+        stdout_text = ""
+        stderr_text = ""
+
+        if capture.agent and capture.agent.stdout_file:
+            stdout_path = run_dir / capture.agent.stdout_file
+            if stdout_path.exists():
+                stdout_text = stdout_path.read_text().strip()
+
+        if capture.agent and capture.agent.stderr_file:
+            stderr_path = run_dir / capture.agent.stderr_file
+            if stderr_path.exists():
+                stderr_text = stderr_path.read_text().strip()
+
+        report_path = run_dir / "run_report.md"
+        if stdout_text:
+            report_body = stdout_text
+        else:
+            # Ensure reviewers still get a useful artifact even if the LLM call fails fast
+            # (e.g., model not configured / missing provider / missing API key).
+            report_body = """LLM report generation produced no output.
+
+This usually means the LLM backend failed immediately (model not available, provider plugin missing, or credentials not configured).
+"""
+            if stderr_text:
+                report_body += f"\n\n## LLM stderr\n\n```\n{stderr_text}\n```\n"
+
+        report_content = f"""# Run Report: {run_record.run_id}
 
 **Generated**: {datetime.now(UTC).isoformat()}
 **Status**: {run_record.status.value}
@@ -1297,14 +1273,33 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
 
 ---
 
-{capture.llm.response}
+{report_body}
 """
-            report_path.write_text(report_content)
-            print(f"Generated: {report_path.name}", flush=True)
+        report_path.write_text(report_content)
+        print(f"Generated: {report_path.name}", flush=True)
 
     except Exception as e:
-        # Log but don't fail the run
+        # Log but don't fail the run; still write a diagnostic report artifact.
         print(f"Warning: LLM report generation failed: {e}", flush=True)
+
+        report_path = run_dir / "run_report.md"
+        report_content = f"""# Run Report: {run_record.run_id}
+
+**Generated**: {datetime.now(UTC).isoformat()}
+**Status**: {run_record.status.value}
+**Job**: {run_record.job_id}
+
+---
+
+LLM report generation failed before producing output.
+
+## Error
+
+```
+{e}
+```
+"""
+        report_path.write_text(report_content)
 
 
 def _create_failed_outcome(

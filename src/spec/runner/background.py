@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 from spec.runner.context import render_task_md, write_task_md
 
 

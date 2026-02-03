@@ -109,12 +109,15 @@ class SpecRef:
     id: str
     repo: str
     branch: str
+    title: str | None = None
     path: str | None = None
     status: SpecStatus = SpecStatus.PLANNED
+    dev_intent: str | None = None
     depends_on: list[str] = field(default_factory=list)
     expectations: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
+    build_delta: dict | None = None
 
 
 @dataclass
@@ -421,8 +424,12 @@ def _spec_to_dict(spec: SpecRef) -> dict[str, Any]:
         "branch": spec.branch,
         "status": spec.status.value,
     }
+    if spec.title:
+        result["title"] = spec.title
     if spec.path:
         result["path"] = spec.path
+    if spec.dev_intent:
+        result["dev_intent"] = spec.dev_intent
     if spec.depends_on:
         result["depends_on"] = spec.depends_on
     if spec.expectations:
@@ -431,6 +438,8 @@ def _spec_to_dict(spec: SpecRef) -> dict[str, Any]:
         result["constraints"] = spec.constraints
     if spec.checks:
         result["checks"] = spec.checks
+    if spec.build_delta:
+        result["build_delta"] = spec.build_delta
     return result
 
 

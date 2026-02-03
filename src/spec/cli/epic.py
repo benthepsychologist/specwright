@@ -7,11 +7,10 @@ implementation plans with dependency tracking and status management.
 from __future__ import annotations
 
 import functools
-from typing import List
 
 import typer
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 epic_app = typer.Typer(help="Epic management commands")
 
@@ -152,8 +151,8 @@ def add_spec(
     repo: str = typer.Option(..., "--repo", help="Target repo ID"),
     branch: str = typer.Option(..., "--branch", help="Working branch"),
     path: str = typer.Option(..., "--path", help="Spec path relative to governor"),
-    depends_on: List[str] = typer.Option([], "--depends-on", help="Dependency spec IDs"),
-    expectation: List[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
+    depends_on: list[str] = typer.Option([], "--depends-on", help="Dependency spec IDs"),
+    expectation: list[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
 ) -> None:
     """Add a spec reference to an epic.
 
@@ -279,7 +278,7 @@ def status(
         state_icon, state_color = status_icons.get(
             epic.state.status, ("?", typer.colors.WHITE)
         )
-        typer.echo(f"Status: ", nl=False)
+        typer.echo("Status: ", nl=False)
         typer.secho(f"{state_icon} {epic.state.status.value}", fg=state_color)
         if epic.state.current_spec:
             typer.echo(f"Current: {epic.state.current_spec}")
@@ -398,7 +397,7 @@ def validate(
     from spec.epic.loader import EpicValidationError, load_epic
 
     try:
-        epic = load_epic(epic_id)
+        load_epic(epic_id)
         typer.secho(f"✓ Epic '{epic_id}' is valid", fg=typer.colors.GREEN)
         raise typer.Exit(0)
     except EpicValidationError as e:
@@ -434,9 +433,9 @@ def check(
         spec epic check e001-auth
         spec epic check e001-auth --check CHECK-e001-core
     """
-    from spec.epic.loader import EpicNotFoundError, get_epic_path, load_epic
-    from spec.llm.client import LLMClient, LLMExecutionError
-    from spec.llm.config import LLMConfigError, require_llm_enabled
+    from spec.epic.loader import get_epic_path, load_epic
+    from spec.llm.client import LLMClient
+    from spec.llm.config import require_llm_enabled
 
     # Load the epic (raises EpicNotFoundError with exit_code=2 if not found)
     epic = load_epic(epic_id)

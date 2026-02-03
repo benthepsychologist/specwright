@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 
 class LLMConfigError(SpecwrightError):

@@ -131,7 +131,6 @@ def test_create_with_v06_governor_config(tmp_path):
     project_aips.mkdir(parents=True)
 
     # Setup: create project directory with v0.6 config
-    # Note: autogov.enabled: false so we don't need --autogov flag or build files
     project_dir = tmp_path / "project"
     project_dir.mkdir()
     config_path = project_dir / ".specwright.yaml"
@@ -141,9 +140,6 @@ def test_create_with_v06_governor_config(tmp_path):
             "path": str(governor_dir)
         },
         "project_slug": "test-project",
-        "autogov": {
-            "enabled": False
-        }
     }
     config_path.write_text(yaml.dump(config))
 
@@ -177,6 +173,42 @@ def test_create_with_v06_governor_config(tmp_path):
         assert not local_spec_path.exists(), "Spec should NOT be in repo-local path"
     finally:
         os.chdir(old_cwd)
+
+
+def test_validate_build_missing_build_yaml_warns(tmp_path):
+    """spec validate build warns (exit 0) when project has no build.yaml."""
+    import os
+
+    # Setup: governor with the project we'll query AND a dummy project
+    # for the cwd (GovernorLocator resolves project from cwd name)
+    governor_dir = tmp_path / "local-governor"
+
+    # Create the project we want to validate (no build.yaml)
+    no_build = governor_dir / "projects" / "no-build-project"
+    (no_build / "specs").mkdir(parents=True)
+    # Deliberately NOT creating no-build-project.build.yaml
+
+    # Create a "workspace" directory to use as cwd so GovernorLocator
+    # can resolve it as a project name
+    workspace = tmp_path / "no-build-project"
+    workspace.mkdir()
+
+    old_cwd = os.getcwd()
+    old_env = os.environ.get("SPECWRIGHT_GOVERNOR_ROOT")
+    try:
+        os.chdir(workspace)
+        os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = str(governor_dir)
+
+        result = runner.invoke(app, ["validate", "build", "no-build-project"])
+
+        assert result.exit_code == 0, f"Expected exit 0 (warn), got {result.exit_code}: {result.output}"
+        assert "warning" in result.output.lower() or "Warning" in result.output
+    finally:
+        os.chdir(old_cwd)
+        if old_env is not None:
+            os.environ["SPECWRIGHT_GOVERNOR_ROOT"] = old_env
+        else:
+            os.environ.pop("SPECWRIGHT_GOVERNOR_ROOT", None)
 
 
 def test_init_prevents_overwrite_without_force(temp_project):
@@ -555,7 +587,7 @@ def test_validate_md_spec(temp_project):
         ])
 
         # Validate MD file directly
-        result = runner.invoke(app, ["validate", ".specwright/specs/validate-test.md"])
+        result = runner.invoke(app, ["validate", "spec", ".specwright/specs/validate-test.md"])
 
         assert result.exit_code == 0
         assert "validated" in result.stdout.lower() or "✓" in result.stdout
@@ -582,7 +614,7 @@ def test_validate_rejects_yaml(temp_project):
         runner.invoke(app, ["spec-compile", ".specwright/specs/yaml-validate.md"])
 
         # Validate should reject YAML files
-        result = runner.invoke(app, ["validate", ".specwright/aips/yaml-validate.yaml"])
+        result = runner.invoke(app, ["validate", "spec", ".specwright/aips/yaml-validate.yaml"])
 
         assert result.exit_code == 1
         assert "must be a .md file" in result.stdout or "must be a .md file" in result.output
@@ -608,8 +640,8 @@ def test_validate_uses_current_spec(temp_project):
         ])
         runner.invoke(app, ["config", "current.spec", ".specwright/specs/current-validate.md"])
 
-        # Validate without arguments
-        result = runner.invoke(app, ["validate"])
+        # Validate without arguments (uses current spec from config)
+        result = runner.invoke(app, ["validate", "spec"])
 
         assert result.exit_code == 0
         assert "Using current spec" in result.stdout or "validated" in result.stdout.lower()
@@ -639,7 +671,7 @@ Missing owner and goal fields.
 """)
 
         # Validate should fail
-        result = runner.invoke(app, ["validate", str(invalid_spec)])
+        result = runner.invoke(app, ["validate", "spec", str(invalid_spec)])
 
         assert result.exit_code == 1
         output = result.stdout + result.stderr if hasattr(result, 'stderr') else result.output

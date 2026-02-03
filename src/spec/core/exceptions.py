@@ -12,12 +12,6 @@ class SpecwrightError(Exception):
             self.exit_code = exit_code
 
 
-class AutogovNotInstalledError(SpecwrightError):
-    """Autogov package is not installed or failed to import."""
-
-    exit_code = 1
-
-
 class GovernanceNotFoundError(SpecwrightError):
     """Governance artifact (policy/arch) not found in registry."""
 

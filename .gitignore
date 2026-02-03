@@ -64,3 +64,5 @@ aips/*.yaml
 *.tmp
 *.bak
 *.pdf
+# Specwright ephemeral artifacts
+.specwright/tmp/

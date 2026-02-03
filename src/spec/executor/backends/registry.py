@@ -6,12 +6,7 @@ Manages registration and lookup of execution backends.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from spec.executor.backends.base import BackendBase, UnknownBackendError
-
-if TYPE_CHECKING:
-    pass
 
 # Registry of backend classes (populated by imports)
 _BACKENDS: dict[str, type[BackendBase]] = {}
@@ -108,11 +103,18 @@ def _auto_register() -> None:
     from spec.executor.backends.cmd import CmdBackend
     from spec.executor.backends.codex import CodexBackend
     from spec.executor.backends.llm import LlmBackend
+    from spec.executor.backends.python import PythonBackend
 
     register_backend("cmd", CmdBackend)
     register_backend("llm", LlmBackend)
     register_backend("claude-code", ClaudeCodeBackend)
     register_backend("codex", CodexBackend)
+    register_backend("python", PythonBackend)
+
+    # Register python callables
+    from spec.governance.callables import register_all as register_governance
+
+    register_governance()
 
 
 _auto_register()

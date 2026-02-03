@@ -9,7 +9,7 @@ and formatting are preserved when updating existing epic.yaml files.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -131,7 +131,7 @@ def create_epic(
     notes_path.write_text(f"# {title}\n\n## Notes\n\n")
 
     # Create epic object
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     epic = Epic(
         version="0.2",
         kind="epic",
@@ -176,7 +176,7 @@ def save_epic(epic: Epic, update_timestamp: bool = True) -> None:
         update_timestamp: If True, update the 'updated' field.
     """
     if update_timestamp:
-        epic.updated = datetime.now(timezone.utc)
+        epic.updated = datetime.now(UTC)
 
     epic_dir = get_epic_path(epic.id)
     epic_file = epic_dir / "epic.yaml"
@@ -333,7 +333,6 @@ def _spec_to_map(spec: SpecRef) -> CommentedMap:
 
 def _check_to_map(check: Any) -> CommentedMap:
     """Convert Check to CommentedMap."""
-    from spec.epic.schema import Check
 
     m = CommentedMap()
     m["id"] = check.id
@@ -498,7 +497,7 @@ def update_spec_status(
 
     event = HistoryEvent(
         id=generate_event_id(epic),
-        at=datetime.now(timezone.utc),
+        at=datetime.now(UTC),
         event=event_type,
         actor=Actor.SPECWRIGHT,
         spec_id=spec_id,
@@ -540,11 +539,11 @@ def set_current_spec(epic: Epic, spec_id: str) -> None:
 
     event = HistoryEvent(
         id=generate_event_id(epic),
-        at=datetime.now(timezone.utc),
+        at=datetime.now(UTC),
         event=EventType.SPEC_ACTIVATED,
         actor=Actor.SPECWRIGHT,
         spec_id=spec_id,
-        note=f"Set as current spec",
+        note="Set as current spec",
     )
 
     append_history(epic, event)
@@ -583,7 +582,7 @@ def mark_spec_done(
 
     event = HistoryEvent(
         id=generate_event_id(epic),
-        at=datetime.now(timezone.utc),
+        at=datetime.now(UTC),
         event=EventType.SPEC_DONE,
         actor=Actor.SPECWRIGHT,
         spec_id=spec_id,

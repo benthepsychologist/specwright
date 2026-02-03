@@ -50,7 +50,7 @@ class TargetResolver:
         """Initialize resolver with optional registry.
 
         Args:
-            registry: Mapping of repo names to paths (e.g., from autogov)
+            registry: Mapping of repo names to paths
         """
         self.registry = registry or {}
 

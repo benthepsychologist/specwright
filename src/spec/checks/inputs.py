@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 if TYPE_CHECKING:
     from spec.epic.schema import Check, CheckInput, Epic, Target
@@ -340,47 +340,9 @@ def _gather_cli_output(input_def: CheckInput, epic: Epic) -> GatheredInput:
 
 
 def _gather_governance_pack(input_def: CheckInput, epic: Epic) -> GatheredInput:
-    """
-    Gather governance context from autogov.
-    Loads governance bundle and exports to markdown.
-    """
-    if not epic.governance or not epic.governance.enabled:
-        return GatheredInput(
-            type="governance_pack",
-            source="autogov (disabled)",
-            content="[Governance not enabled for this epic]"
-        )
-    try:
-        from spec.autogov.loader import GovernanceLoader
-        from spec.autogov.context_builder import SpecContextBuilder
-        loader = GovernanceLoader()
-        bundle = loader.load_all(
-            epic.governance.project,
-            epic.governance.source,
-        )
-        builder = SpecContextBuilder()
-        # Determine include list by precedence:
-        # 1. input_def.include if set
-        # 2. epic.governance.include if set
-        # 3. All available (policy, arch, patterns)
-        if input_def.include:
-            include = input_def.include
-        elif epic.governance.include:
-            include = epic.governance.include
-        else:
-            include = None  # Will default to all in export_to_markdown
-        markdown = builder.export_to_markdown(
-            bundle,
-            include=include,
-        )
-        return GatheredInput(
-            type="governance_pack",
-            source=f"autogov:{epic.governance.project}",
-            content=markdown,
-        )
-    except Exception as e:
-        return GatheredInput(
-            type="governance_pack",
-            source="autogov (error)",
-            content=f"[Failed to load governance: {e}]"
-        )
+    """Gather governance context (currently dormant)."""
+    return GatheredInput(
+        type="governance_pack",
+        source="governance (dormant)",
+        content="[Governance pack not available — autogov is dormant]",
+    )

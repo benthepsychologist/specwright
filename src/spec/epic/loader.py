@@ -9,12 +9,12 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import dacite
 from ruamel.yaml import YAML
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 from spec.epic.schema import (
     Actor,
     CheckScope,

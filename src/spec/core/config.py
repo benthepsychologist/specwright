@@ -59,14 +59,6 @@ class GovernorConfig:
 
 
 @dataclass
-class AutogovConfig:
-    """Autogov governance integration settings."""
-
-    enabled: bool = False
-    source: str | None = None
-
-
-@dataclass
 class LegacyPathsConfig:
     """Legacy paths configuration (v0.1)."""
 
@@ -100,7 +92,6 @@ class SpecwrightConfig:
 
     # v0.6 fields
     governor: GovernorConfig = field(default_factory=GovernorConfig)
-    autogov: AutogovConfig = field(default_factory=AutogovConfig)
 
     # Legacy v0.1 fields (deprecated)
     paths: LegacyPathsConfig | None = None
@@ -210,7 +201,6 @@ def _parse_v05_config(
 ) -> SpecwrightConfig:
     """Parse v0.6 minimal config format."""
     governor_raw = raw.get("governor", {})
-    autogov_raw = raw.get("autogov", {})
 
     return SpecwrightConfig(
         version="0.6",
@@ -218,10 +208,6 @@ def _parse_v05_config(
         project_root=project_root,
         governor=GovernorConfig(
             path=governor_raw.get("path", "~/.local/local-governor"),
-        ),
-        autogov=AutogovConfig(
-            enabled=autogov_raw.get("enabled", False),
-            source=autogov_raw.get("source"),
         ),
     )
 
@@ -235,7 +221,6 @@ def _parse_v01_config(
     paths_raw = raw.get("paths", {})
     user_raw = raw.get("user", {})
     current_raw = raw.get("current", {})
-    autogov_raw = raw.get("autogov", {})
 
     return SpecwrightConfig(
         version="0.1",
@@ -243,10 +228,6 @@ def _parse_v01_config(
         project_root=project_root,
         # Legacy configs don't have governor, use default
         governor=GovernorConfig(),
-        autogov=AutogovConfig(
-            enabled=autogov_raw.get("enabled", False),
-            source=autogov_raw.get("source"),
-        ),
         paths=LegacyPathsConfig(
             specs=paths_raw.get("specs", ".specwright/specs"),
             aips=paths_raw.get("aips", ".specwright/aips"),
@@ -286,13 +267,6 @@ def migrate_legacy_config(config: SpecwrightConfig) -> dict[str, Any]:
     # Keep governor config (may be default)
     result["governor"] = {"path": config.governor.path}
 
-    # Migrate autogov settings
-    if config.autogov.enabled:
-        result["autogov"] = {
-            "enabled": True,
-            "source": config.autogov.source,
-        }
-
     return result
 
 
@@ -306,11 +280,6 @@ def save_config(config: SpecwrightConfig) -> None:
 
     if config.version == "0.6":
         data["governor"] = {"path": config.governor.path}
-        if config.autogov.enabled:
-            data["autogov"] = {
-                "enabled": True,
-                "source": config.autogov.source,
-            }
     else:
         # Legacy format
         if config.paths:
@@ -330,11 +299,5 @@ def save_config(config: SpecwrightConfig) -> None:
                 "spec": config.current.spec,
                 "aip": config.current.aip,
             }
-        if config.autogov.enabled:
-            data["autogov"] = {
-                "enabled": True,
-                "source": config.autogov.source,
-            }
-
     with open(config.config_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, sort_keys=False, default_flow_style=False)

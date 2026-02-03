@@ -3,9 +3,6 @@ Tests for the executor engine.
 """
 
 import subprocess
-from datetime import UTC, datetime
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,27 +12,30 @@ from spec.executor.engine import (
     VariableError,
     _evaluate_condition,
     compile_job,
-    compute_job_hash,
     execute,
     generate_run_id,
-    get_job_def,
     has_unresolved_run_refs,
-    list_job_defs,
-    register_job_def,
     resolve_variables,
+)
+from spec.executor.engine import _generate_run_report
+from spec.executor.jobdefs import (
+    JobDefNotFoundError,
+    list_job_defs,
+    load_job_def,
 )
 from spec.executor.schemas import (
     Backend,
-    Common,
     JobDef,
     JobInstance,
     OutcomeStatus,
     RunStatus,
-    Step,
     StepTemplate,
 )
+from spec.executor.schemas.attempt import AttemptRecord, AttemptStatus
+from spec.executor.schemas.capture import AgentCapture, StepCapture
+from spec.executor.schemas.outcome import StepOutcome
+from spec.executor.schemas.run import Policy, RepoScope, RunRecord
 from spec.executor.store import RunStore
-
 
 # =============================================================================
 # Variable Resolution Tests
@@ -261,6 +261,72 @@ class TestCompileJob:
         assert result.steps[0].step_id == "step1"
         assert result.steps[0].payload["command"] == "echo hello"
 
+
+def test_generate_run_report_reads_llm_stdout(tmp_path, monkeypatch):
+    """Run report generation reads LlmBackend response from StepCapture.agent stdout.
+
+    Regression test for: AttributeError: 'StepCapture' object has no attribute 'llm'.
+    """
+
+    # Create a minimal run directory via RunStore
+    store = RunStore(root=tmp_path / "runs")
+    run_id = "run-test-report"
+    run_dir = store.create_run(run_id)
+
+    # Minimal RunRecord / AttemptRecord
+    run_record = RunRecord(
+        run_id=run_id,
+        job_id="interactive-1",
+        job_hash="sha256:deadbeefdeadbeef",
+        repo=RepoScope(repo_path=tmp_path / "repo", branch="feat/x", base_commit="HEAD"),
+        policy=Policy(),
+        status=RunStatus.completed,
+    )
+
+    from datetime import datetime
+
+    attempt = AttemptRecord(
+        attempt_n=1,
+        started_at=datetime(2025, 1, 1),
+        ended_at=datetime(2025, 1, 1),
+        status=AttemptStatus.completed,
+        step_outcomes=[
+            StepOutcome(
+                step_n=1,
+                step_id="dummy",
+                outcome=OutcomeStatus.completed,
+                duration_ms=1,
+                manifest_ref="steps/step-001/manifest.yaml",
+                capture_ref="steps/step-001/capture.yaml",
+            )
+        ],
+    )
+
+    # Monkeypatch LlmBackend to avoid real provider calls
+    import spec.executor.backends.llm as llm_mod
+
+    class DummyLlmBackend:
+        def dispatch(self, manifest, artifacts_dir, policy, capture_patch=False):  # noqa: ARG002
+            (artifacts_dir / "stdout.txt").write_text("REPORT BODY\n")
+            (artifacts_dir / "stderr.txt").write_text("")
+            return StepCapture(
+                step_n=manifest.step_n,
+                step_id=manifest.step_id,
+                agent=AgentCapture(
+                    stdout_file="stdout.txt",
+                    stderr_file="stderr.txt",
+                    exit_code=0,
+                ),
+            )
+
+    monkeypatch.setattr(llm_mod, "LlmBackend", DummyLlmBackend)
+
+    _generate_run_report(run_record, attempt, store, run_dir, use_llm=True)
+
+    report_path = run_dir / "run_report.md"
+    assert report_path.exists()
+    assert "REPORT BODY" in report_path.read_text()
+
     def test_compile_resolves_payload_refs(self, simple_job_def):
         """Compile resolves @payload.* references."""
         envelope = {
@@ -367,28 +433,61 @@ class TestCompileJob:
 
         assert result1.job_hash == result2.job_hash
 
+    def test_compile_propagates_interactive_flag(self):
+        """Interactive flag is propagated from StepTemplate to Step."""
+        job_def = JobDef(
+            job_id="interactive-compile-test",
+            steps=[
+                StepTemplate(
+                    step_id="headless",
+                    backend=Backend.cmd,
+                    payload={"command": "echo headless"},
+                ),
+                StepTemplate(
+                    step_id="interactive",
+                    backend=Backend.cmd,
+                    payload={"command": "echo interactive"},
+                    interactive=True,
+                ),
+            ],
+        )
+        envelope = {"payload": {"repo_path": "/workspace"}}
+        result = compile_job(job_def, envelope)
+
+        assert result.steps[0].interactive is False
+        assert result.steps[1].interactive is True
+
 
 # =============================================================================
 # JobDef Registry Tests
 # =============================================================================
 
 
-class TestJobDefRegistry:
-    """Tests for JobDef registry."""
+class TestJobDefLoader:
+    """Tests for JobDef loading from YAML files."""
 
-    def test_aip1_registered(self):
-        """aip-1 is registered on module load."""
-        assert "aip-1" in list_job_defs()
+    @pytest.fixture
+    def jobdefs_dir(self, tmp_path):
+        """Set up test jobdefs directory with default jobdefs."""
+        from spec.executor.jobdefs import install_default_jobdefs
 
-    def test_get_aip1(self):
-        """Can get aip-1 JobDef."""
-        job_def = get_job_def("aip-1")
+        gov_path = tmp_path / "local-governor"
+        install_default_jobdefs(gov_path)
+        return gov_path
+
+    def test_aip1_available(self, jobdefs_dir):
+        """aip-1 can be loaded from jobdefs directory."""
+        assert "aip-1" in list_job_defs(jobdefs_dir)
+
+    def test_load_aip1(self, jobdefs_dir):
+        """Can load aip-1 JobDef."""
+        job_def = load_job_def("aip-1", jobdefs_dir)
         assert job_def.job_id == "aip-1"
         assert len(job_def.steps) == 10  # 3-pass model with commits
 
-    def test_aip1_step_ids(self):
+    def test_aip1_step_ids(self, jobdefs_dir):
         """aip-1 has correct step IDs for 3-pass model."""
-        job_def = get_job_def("aip-1")
+        job_def = load_job_def("aip-1", jobdefs_dir)
         step_ids = [s.step_id for s in job_def.steps]
         assert step_ids == [
             "branch.create",
@@ -403,33 +502,64 @@ class TestJobDefRegistry:
             "finalize.run",
         ]
 
-    def test_aip1_on_failure_skip_to(self):
+    def test_aip1_on_failure_skip_to(self, jobdefs_dir):
         """agent.run_spec has on_failure_skip_to set to capture.bundle."""
-        job_def = get_job_def("aip-1")
+        job_def = load_job_def("aip-1", jobdefs_dir)
         run_aip = next(s for s in job_def.steps if s.step_id == "agent.run_spec")
         assert run_aip.on_failure_skip_to == "capture.bundle"
 
-    def test_register_custom_job_def(self):
-        """Can register a custom JobDef."""
-        custom = JobDef(
-            job_id="custom-job",
-            steps=[
-                StepTemplate(
-                    step_id="step1",
-                    backend=Backend.cmd,
-                    payload={"command": "echo custom"},
-                ),
-            ],
-        )
-        register_job_def(custom)
-        assert "custom-job" in list_job_defs()
-        assert get_job_def("custom-job").job_id == "custom-job"
+    def test_load_unknown_raises(self, jobdefs_dir):
+        """Loading unknown job_id raises JobDefNotFoundError."""
+        with pytest.raises(JobDefNotFoundError) as exc_info:
+            load_job_def("nonexistent", jobdefs_dir)
+        assert "nonexistent" in str(exc_info.value)
 
-    def test_get_unknown_raises(self):
-        """Getting unknown job_id raises CompileError."""
-        with pytest.raises(CompileError) as exc_info:
-            get_job_def("nonexistent")
-        assert "Unknown job_id" in str(exc_info.value)
+    def test_interactive1_available(self, jobdefs_dir):
+        """interactive-1 can be loaded from jobdefs directory."""
+        assert "interactive-1" in list_job_defs(jobdefs_dir)
+
+    def test_load_interactive1(self, jobdefs_dir):
+        """Can load interactive-1 JobDef."""
+        job_def = load_job_def("interactive-1", jobdefs_dir)
+        assert job_def.job_id == "interactive-1"
+        assert len(job_def.steps) == 5
+
+    def test_interactive1_step_ids(self, jobdefs_dir):
+        """interactive-1 has correct step IDs."""
+        job_def = load_job_def("interactive-1", jobdefs_dir)
+        step_ids = [s.step_id for s in job_def.steps]
+        assert step_ids == [
+            "branch.create",
+            "agent.interactive",
+            "commit.interactive",
+            "capture.bundle",
+            "finalize.run",
+        ]
+
+    def test_interactive1_agent_step_is_interactive(self, jobdefs_dir):
+        """agent.interactive step has interactive=True."""
+        job_def = load_job_def("interactive-1", jobdefs_dir)
+        agent_step = next(s for s in job_def.steps if s.step_id == "agent.interactive")
+        assert agent_step.interactive is True
+
+    def test_interactive1_agent_payload_has_interactive(self, jobdefs_dir):
+        """agent.interactive payload includes interactive=True."""
+        job_def = load_job_def("interactive-1", jobdefs_dir)
+        agent_step = next(s for s in job_def.steps if s.step_id == "agent.interactive")
+        assert agent_step.payload.get("interactive") is True
+
+    def test_interactive1_non_agent_steps_not_interactive(self, jobdefs_dir):
+        """Non-agent steps in interactive-1 are not interactive."""
+        job_def = load_job_def("interactive-1", jobdefs_dir)
+        for step in job_def.steps:
+            if step.step_id != "agent.interactive":
+                assert step.interactive is False
+
+    def test_aip1_steps_not_interactive(self, jobdefs_dir):
+        """All aip-1 steps have interactive=False (default)."""
+        job_def = load_job_def("aip-1", jobdefs_dir)
+        for step in job_def.steps:
+            assert step.interactive is False
 
 
 # =============================================================================
@@ -499,8 +629,8 @@ class TestExecute:
 
     @pytest.fixture
     def simple_job(self):
-        """Register a simple test job."""
-        job_def = JobDef(
+        """Create a simple test job."""
+        return JobDef(
             job_id="simple-test",
             steps=[
                 StepTemplate(
@@ -510,13 +640,11 @@ class TestExecute:
                 ),
             ],
         )
-        register_job_def(job_def)
-        return job_def
 
     def test_execute_creates_run_directory(self, git_repo, store, simple_job):
         """Execute creates run directory structure."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -533,7 +661,7 @@ class TestExecute:
     def test_execute_writes_run_record(self, git_repo, store, simple_job):
         """Execute writes RunRecord to run.yaml."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -546,7 +674,7 @@ class TestExecute:
     def test_execute_writes_step_artifacts(self, git_repo, store, simple_job):
         """Execute writes step manifest, outcome, capture."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -560,7 +688,7 @@ class TestExecute:
     def test_execute_writes_attempt(self, git_repo, store, simple_job):
         """Execute writes AttemptRecord."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -574,7 +702,7 @@ class TestExecute:
     def test_execute_success_status(self, git_repo, store, simple_job):
         """Successful execution returns completed status."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -595,10 +723,9 @@ class TestExecute:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "failing-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -606,18 +733,18 @@ class TestExecute:
 
         assert result.status == RunStatus.failed
 
-    def test_execute_missing_job_id(self, store):
-        """Missing job_id raises ExecutorError."""
+    def test_execute_missing_job_def(self, store):
+        """Missing job_def raises ExecutorError."""
         envelope = {"payload": {"repo_path": "/workspace"}}
 
         with pytest.raises(ExecutorError) as exc_info:
             execute(envelope, store=store)
-        assert "job_id" in str(exc_info.value)
+        assert "job_def" in str(exc_info.value)
 
     def test_execute_custom_run_id(self, git_repo, store, simple_job):
         """Can specify custom run_id."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -628,7 +755,7 @@ class TestExecute:
     def test_execute_preserves_envelope(self, git_repo, store, simple_job):
         """Execute preserves envelope in RunRecord."""
         envelope = {
-            "job_id": "simple-test",
+            "job_def": simple_job.model_dump(),
             "ctx": {"custom": "value"},
             "payload": {"repo_path": str(git_repo)},
         }
@@ -659,10 +786,9 @@ class TestExecute:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "multi-step-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -697,10 +823,9 @@ class TestExecute:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "abort-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -711,6 +836,42 @@ class TestExecute:
         # Check step 3 was never executed
         step3_path = store.get_step_path(result.run_id, 3) / "outcome.yaml"
         assert not step3_path.exists()
+
+    def test_execute_llm_network_preflight_hard_fails_before_steps(self, git_repo, store, monkeypatch):
+        """For LLM jobs, network preflight aborts the run before step 1."""
+        monkeypatch.delenv("SPECWRIGHT_LLM_NETWORK_PREFLIGHT", raising=False)
+
+        import spec.executor.backends.llm as llm_mod
+
+        def boom(self):  # noqa: ARG001
+            raise Exception("no network")
+
+        monkeypatch.setattr(llm_mod.LlmBackend, "verify", boom)
+
+        llm_job = JobDef(
+            job_id="preflight-llm",
+            steps=[
+                StepTemplate(
+                    step_id="llm",
+                    backend=Backend.llm,
+                    payload={"prompt": "hello", "capture_git": False},
+                )
+            ],
+        )
+
+        envelope = {
+            "job_def": llm_job.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store, run_id="preflight-fail")
+        assert result.status == RunStatus.failed
+
+        # No step artifacts should exist because we abort before dispatch loop.
+        step1 = store.get_step_path(result.run_id, 1)
+        assert not (step1 / "manifest.yaml").exists()
+        assert not (step1 / "outcome.yaml").exists()
+        assert not (step1 / "capture.yaml").exists()
 
 
 class TestExecuteVariableResolution:
@@ -764,10 +925,9 @@ class TestExecuteVariableResolution:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "run-ref-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -844,10 +1004,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "continue-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -884,10 +1043,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "failfast-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -929,10 +1087,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "multi-fail-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -989,10 +1146,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "aip1-style-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -1034,10 +1190,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "all-success-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -1088,10 +1243,9 @@ class TestContinueOnFailure:
                 ),
             ],
         )
-        register_job_def(job_def)
 
         envelope = {
-            "job_id": "skip-to-test",
+            "job_def": job_def.model_dump(),
             "payload": {"repo_path": str(git_repo)},
         }
 
@@ -1121,3 +1275,169 @@ class TestContinueOnFailure:
         # capture and finalize should complete
         assert outcomes["capture"] == OutcomeStatus.completed
         assert outcomes["finalize"] == OutcomeStatus.completed
+
+
+# =============================================================================
+# Interactive Exit Code Policy Tests
+# =============================================================================
+
+
+class TestInteractiveExitCodePolicy:
+    """Tests for interactive step exit code handling.
+
+    Interactive steps (interactive=True) always complete regardless of
+    exit code — the human was present and controls the session.
+    Headless steps keep strict exit code handling.
+    """
+
+    @pytest.fixture
+    def git_repo(self, tmp_path):
+        """Create a test git repository."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        (repo_path / "test.txt").write_text("hello")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+
+        return repo_path
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        """Create a test store."""
+        return RunStore(root=tmp_path / "runs")
+
+    def test_interactive_exit_130_is_completed(self, git_repo, store):
+        """Interactive step with exit 130 (SIGINT) → completed."""
+        job_def = JobDef(
+            job_id="interactive-130-test",
+            steps=[
+                StepTemplate(
+                    step_id="interactive_step",
+                    backend=Backend.cmd,
+                    interactive=True,
+                    payload={"command": "exit 130", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        outcome = store.read_step_outcome(result.run_id, 1)
+        assert outcome.outcome == OutcomeStatus.completed
+        assert result.status == RunStatus.completed
+
+    def test_interactive_exit_143_is_completed(self, git_repo, store):
+        """Interactive step with exit 143 (SIGTERM) → completed."""
+        job_def = JobDef(
+            job_id="interactive-143-test",
+            steps=[
+                StepTemplate(
+                    step_id="interactive_step",
+                    backend=Backend.cmd,
+                    interactive=True,
+                    payload={"command": "exit 143", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        outcome = store.read_step_outcome(result.run_id, 1)
+        assert outcome.outcome == OutcomeStatus.completed
+        assert result.status == RunStatus.completed
+
+    def test_interactive_exit_0_is_completed(self, git_repo, store):
+        """Interactive step with exit 0 → completed (no regression)."""
+        job_def = JobDef(
+            job_id="interactive-0-test",
+            steps=[
+                StepTemplate(
+                    step_id="interactive_step",
+                    backend=Backend.cmd,
+                    interactive=True,
+                    payload={"command": "exit 0", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        outcome = store.read_step_outcome(result.run_id, 1)
+        assert outcome.outcome == OutcomeStatus.completed
+
+    def test_headless_exit_130_is_failed(self, git_repo, store):
+        """Headless step with exit 130 → failed (no regression)."""
+        job_def = JobDef(
+            job_id="headless-130-test",
+            steps=[
+                StepTemplate(
+                    step_id="headless_step",
+                    backend=Backend.cmd,
+                    interactive=False,  # default
+                    payload={"command": "exit 130", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        assert result.status == RunStatus.failed
+
+    def test_headless_exit_0_is_completed(self, git_repo, store):
+        """Headless step with exit 0 → completed (no regression)."""
+        job_def = JobDef(
+            job_id="headless-0-test",
+            steps=[
+                StepTemplate(
+                    step_id="headless_step",
+                    backend=Backend.cmd,
+                    interactive=False,
+                    payload={"command": "exit 0", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        outcome = store.read_step_outcome(result.run_id, 1)
+        assert outcome.outcome == OutcomeStatus.completed
+        assert result.status == RunStatus.completed

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 
 class PromptNotFoundError(SpecwrightError):

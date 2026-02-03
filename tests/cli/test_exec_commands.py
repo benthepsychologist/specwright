@@ -3,17 +3,15 @@ Tests for v2 executor CLI commands.
 """
 
 import subprocess
-from pathlib import Path
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from spec.cli.spec import app
-from spec.executor.engine import register_job_def
+from spec.executor.jobdefs import install_default_jobdefs
 from spec.executor.schemas import Backend, JobDef, StepTemplate
 from spec.executor.store import RunStore
-
 
 runner = CliRunner()
 
@@ -90,9 +88,28 @@ def store(tmp_path):
 
 
 @pytest.fixture
+def jobdefs_installed(tmp_path, monkeypatch):
+    """Install default jobdefs to a temp directory and patch the loader."""
+    gov_path = tmp_path / "local-governor"
+    install_default_jobdefs(gov_path)
+
+    # Monkeypatch the default governor path in the jobdefs module
+    import spec.executor.jobdefs as jobdefs_module
+    original_get_jobdefs_dir = jobdefs_module.get_jobdefs_dir
+
+    def patched_get_jobdefs_dir(governor_path=None):
+        if governor_path is None:
+            governor_path = gov_path
+        return original_get_jobdefs_dir(governor_path)
+
+    monkeypatch.setattr(jobdefs_module, "get_jobdefs_dir", patched_get_jobdefs_dir)
+    return gov_path
+
+
+@pytest.fixture
 def simple_job():
-    """Register a simple test job that doesn't require claude."""
-    job_def = JobDef(
+    """Create a simple test job that doesn't require claude."""
+    return JobDef(
         job_id="test-simple",
         steps=[
             StepTemplate(
@@ -102,8 +119,6 @@ def simple_job():
             ),
         ],
     )
-    register_job_def(job_def)
-    return job_def
 
 
 # =============================================================================
@@ -120,19 +135,19 @@ class TestCompileCommand:
         assert result.exit_code == 0
         assert "Compile a JobDef + spec" in result.stdout
 
-    def test_compile_missing_spec(self, tmp_path):
+    def test_compile_missing_spec(self, tmp_path, jobdefs_installed):
         """Compile fails with missing spec file."""
         result = runner.invoke(app, ["compile", "aip-1", "/nonexistent/spec.md"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
-    def test_compile_unknown_job_id(self, spec_file):
+    def test_compile_unknown_job_id(self, spec_file, jobdefs_installed):
         """Compile fails with unknown job_id."""
         result = runner.invoke(app, ["compile", "unknown-job", str(spec_file)])
         assert result.exit_code == 1
         assert "Unknown job_id" in result.output
 
-    def test_compile_success_stdout(self, spec_file, git_repo):
+    def test_compile_success_stdout(self, spec_file, git_repo, jobdefs_installed):
         """Compile outputs JobInstance to stdout."""
         result = runner.invoke(
             app,
@@ -143,7 +158,7 @@ class TestCompileCommand:
         assert "job_id: aip-1" in result.stdout
         assert "steps:" in result.stdout
 
-    def test_compile_success_file(self, spec_file, git_repo, tmp_path):
+    def test_compile_success_file(self, spec_file, git_repo, tmp_path, jobdefs_installed):
         """Compile writes JobInstance to file."""
         output_file = tmp_path / "job_instance.yaml"
         result = runner.invoke(
@@ -183,7 +198,7 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "Compile and execute" in result.stdout
 
-    def test_run_dry_run(self, spec_file, git_repo):
+    def test_run_dry_run(self, spec_file, git_repo, jobdefs_installed):
         """Run with --dry-run prints JobInstance without executing."""
         result = runner.invoke(
             app,
@@ -200,14 +215,20 @@ class TestRunCommand:
         assert "Dry run" in result.stdout
         assert "job_id: aip-1" in result.stdout
 
-    def test_run_missing_spec(self, tmp_path):
+    def test_run_missing_spec(self, tmp_path, jobdefs_installed):
         """Run fails with missing spec file."""
         result = runner.invoke(app, ["run", "aip-1", "/nonexistent/spec.md"])
         assert result.exit_code == 1
         assert "not found" in result.output
 
-    def test_run_simple_job(self, spec_file, git_repo, simple_job, tmp_path, monkeypatch):
+    def test_run_simple_job(self, spec_file, git_repo, simple_job, tmp_path, monkeypatch, jobdefs_installed):
         """Run executes a simple job successfully."""
+        # Write the simple_job to the jobdefs directory
+        import yaml as yaml_module
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
         # Use custom store location
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
@@ -292,12 +313,13 @@ class TestLogsCommand:
 class TestIntegration:
     """Integration tests for the full compile-run-status-logs flow."""
 
-    def test_full_workflow(self, git_repo, spec_file, tmp_path, monkeypatch):
+    def test_full_workflow(self, git_repo, spec_file, tmp_path, monkeypatch, jobdefs_installed):
         """Test full workflow: compile -> run -> status -> logs."""
         store_path = tmp_path / "runs"
         monkeypatch.setattr("spec.cli.exec_commands.RunStore", lambda: RunStore(root=store_path))
 
-        # Register a simple job for testing
+        # Create a simple job for testing and write to jobdefs directory
+        import yaml as yaml_module
         job_def = JobDef(
             job_id="test-workflow",
             steps=[
@@ -318,7 +340,9 @@ class TestIntegration:
                 ),
             ],
         )
-        register_job_def(job_def)
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-workflow.yaml", "w") as f:
+            yaml_module.dump(job_def.model_dump(mode="json"), f)
 
         # 1. Compile
         output_file = tmp_path / "job_instance.yaml"

@@ -19,17 +19,6 @@ from spec.epic.loader import (
     load_epic,
     load_epic_from_path,
 )
-from spec.epic.writer import (
-    add_spec,
-    add_target,
-    append_history,
-    create_epic,
-    generate_event_id,
-    mark_spec_done,
-    save_epic,
-    set_current_spec,
-    update_spec_status,
-)
 from spec.epic.schema import (
     Actor,
     Check,
@@ -48,6 +37,17 @@ from spec.epic.schema import (
     SpecStatus,
     Target,
     Verification,
+)
+from spec.epic.writer import (
+    add_spec,
+    add_target,
+    append_history,
+    create_epic,
+    generate_event_id,
+    mark_spec_done,
+    save_epic,
+    set_current_spec,
+    update_spec_status,
 )
 
 __all__ = [
