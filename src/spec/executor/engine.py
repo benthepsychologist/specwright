@@ -178,8 +178,14 @@ def resolve_variables(
     Raises:
         VariableError: If a reference cannot be resolved
     """
-    # Skip resolution for passthrough keys (user content like spec_md)
+    # For passthrough keys (spec_md, prompt, etc.), we need special handling:
+    # - If the value is a direct variable reference like '@payload.spec_md', resolve it
+    # - If the value is actual content (resolved markdown), don't scan it for @refs
     if _current_key in PASSTHROUGH_KEYS:
+        if isinstance(value, str) and _REF_PATTERN.fullmatch(value):
+            # Direct variable reference - resolve it to get the actual content
+            return _resolve_string(value, ctx, payload, run, allow_run=allow_run, preserve_run=preserve_run)
+        # Actual content - return unchanged (don't scan for embedded @refs)
         return value
 
     if isinstance(value, str):

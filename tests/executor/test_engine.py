@@ -157,6 +157,28 @@ class TestVariableResolution:
         assert result["prompt"] == "Execute @run.pipeline with items"
         assert result["repo_path"] == "/workspace"
 
+    def test_passthrough_direct_variable_ref_is_resolved(self):
+        """A passthrough key with a direct variable reference gets resolved.
+
+        This is the fix for the bug where '@payload.spec_md' in a JobDef template
+        was not resolved because spec_md is a passthrough key. The intent is to
+        skip resolution of *content* (which might contain @refs that aren't variables),
+        not to skip resolution of the initial variable substitution.
+        """
+        payload = {
+            "spec_md": "# My Spec\nThis is actual content with @run.items in it",
+        }
+        data = {
+            "spec_md": "@payload.spec_md",  # Direct variable reference
+            "other": "@payload.spec_md",    # Same ref in non-passthrough key
+        }
+        result = resolve_variables(data, {}, payload)
+        # Both should resolve to the actual spec content
+        assert result["spec_md"] == "# My Spec\nThis is actual content with @run.items in it"
+        assert result["other"] == "# My Spec\nThis is actual content with @run.items in it"
+        # Importantly: the @run.items in the resolved content should NOT be further resolved
+        # (it's passthrough content now)
+
 
 class TestHasUnresolvedRunRefs:
     """Tests for has_unresolved_run_refs."""
