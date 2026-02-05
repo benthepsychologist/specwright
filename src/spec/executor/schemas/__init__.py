@@ -6,6 +6,21 @@ Core data models for the job-based executor engine.
 
 from spec.executor.schemas.attempt import AttemptRecord
 from spec.executor.schemas.capture import AgentCapture, GitCapture, StepCapture
+from spec.executor.schemas.contract import (
+    AgentResponse,
+    AgentStatus,
+    CodexConfig,
+    CommandResult,
+    FailedCommand,
+    FailureContext,
+    RepoState,
+    ScopeResult,
+    ScopeViolation,
+    StepContract,
+    StepResult,
+    TerminationReason,
+    VerificationResult,
+)
 from spec.executor.schemas.job_def import JobDef, StepTemplate
 from spec.executor.schemas.job_instance import Common, JobInstance, Step
 from spec.executor.schemas.manifest import StepManifest
@@ -39,4 +54,18 @@ __all__ = [
     "AgentCapture",
     # Attempt
     "AttemptRecord",
+    # Contract (autonomous step execution)
+    "StepContract",
+    "CodexConfig",
+    "RepoState",
+    "FailureContext",
+    "FailedCommand",
+    "AgentResponse",
+    "AgentStatus",
+    "ScopeViolation",
+    "ScopeResult",
+    "CommandResult",
+    "VerificationResult",
+    "StepResult",
+    "TerminationReason",
 ]

@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "codex_output.schema.json",
+  "title": "Codex Output Schema",
+  "description": "Schema for Codex CLI --output-schema validation. The agent's final response must conform to this structure.",
+  "type": "object",
+  "required": ["patch_diff", "agent"],
+  "properties": {
+    "patch_diff": {
+      "type": "string",
+      "description": "Unified diff of all changes made. Must be a valid patch that can be applied with `git apply`."
+    },
+    "agent": {
+      "type": "object",
+      "description": "Agent metadata and status report.",
+      "required": ["status", "needs_human", "notes"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["success", "failure", "needs_human"],
+          "description": "Agent's assessment of task completion."
+        },
+        "needs_human": {
+          "type": "boolean",
+          "description": "Whether the agent is requesting human intervention."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Agent's notes explaining what was done or why help is needed."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
