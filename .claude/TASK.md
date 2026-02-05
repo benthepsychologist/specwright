@@ -1,73 +1,74 @@
 ---
-id: t004-05-spec-validation-enhancement
-title: "Spec validation: enforce schema compliance with build_delta and phases"
+id: t004-06-cli-cleanup-llm-drafting
+title: "CLI cleanup: LLM-assisted epic/spec drafting, remove legacy commands"
 tier: B
 owner: benthepsychologist
-goal: "Enhance spec validate spec to enforce full schema including phases, build_delta, and consistency checks"
-branch: feat/spec-validation-v2
+goal: "Clean CLI with LLM-assisted epic creation and spec addition, remove legacy trash"
+branch: feat/cli-cleanup-llm-drafting
 status: draft
+validated: false
 ---
 
-# t004-05: spec validate spec — Enforce schema compliance with build_delta
+# t004-06: CLI cleanup and LLM-assisted epic/spec drafting
 
 **Epic:** t004-specwright-governance
-**Branch:** `feat/spec-validation-v2`
+**Branch:** `feat/cli-cleanup-llm-drafting`
 **Tier:** B
 
 ## Objective
 
-Enhance `spec validate spec` to enforce the full spec schema including:
-1. Phase structure (not just "Step")
-2. Required phase subsections: Objective, Files to Touch, Verification
-3. Current Capabilities section (build.yaml context)
-4. Proposed build_delta section
-5. Consistency between build_delta and files_to_touch
-
-This ensures specs produced by `spec draft` stay valid, and manually-written specs meet the same quality bar.
+Clean up the specwright CLI by:
+1. Adding `--llm` mode to `spec epic create` for LLM-assisted epic drafting
+2. Adding `--llm` mode to `spec epic add-spec` for LLM-assisted spec entry drafting (supports multiple specs)
+3. Adding a per-spec execution recommendation (`mode: interactive|headless`) to epic entries
+4. Removing legacy/unused commands
+5. Simplifying `spec init` and `spec config`
 
 ## Problem
 
-1. **Current validation is too loose.** `spec validate spec` checks frontmatter and "Plan" section exists, but doesn't validate:
-   - Phase structure (schema uses `## Phase N:`, not `### Step N:`)
-   - Required subsections per phase
-   - build_delta presence
-   - Consistency between delta and implementation
+1. **Epic creation is manual and disconnected from codebase.** `spec epic create` only makes a skeleton. Authors must manually write the narrative, figure out what specs are needed, define expectations/constraints, and understand dependencies. Nothing crawls the repo to understand the problem.
 
-2. **Schema drift.** The `spec-v1.0.schema.json` defines phases with `files_to_touch`, `verification`, etc., but the parser validates against a different structure (`### Step N:`).
+2. **Adding specs to epics requires knowing everything upfront.** `spec epic add-spec` requires all fields (--id, --repo, --branch, --path, --expectation). Authors must manually determine what expectations make sense, what constraints apply, and how specs depend on each other.
 
-3. **No build.yaml linkage.** Specs should reference what exists (Current Capabilities) and what changes (build_delta). Nothing enforces this.
+3. **CLI is cluttered with legacy commands.** Commands like `spec create`, `spec spec-compile`, `spec gate-list`, `spec gate-report`, `spec materialize`, `spec migrate`, `spec list` are unused or superseded. They confuse users and add maintenance burden.
 
-## Current Capabilities (from specwright.build.yaml)
+4. **`spec init` does too much.** Creates directories that aren't used (tmp, runs, artifacts), copies stale GUIDE.md, has legacy mode that should be removed.
 
-### kernel.surfaces
+## Current Capabilities
+
+### kernel.surfaces (relevant subset)
 
 ```yaml
-- command: "spec validate spec"
-  usage: "spec validate spec ./my-feature.md [--check]"
+- command: "spec epic create"
+  usage: "spec epic create <title> --goal <goal>"
+  description: "Create skeleton epic directory and epic.yaml"
+
+- command: "spec epic add-spec"
+  usage: "spec epic add-spec <epic-id> --id <spec-id> --repo <repo> --branch <branch> ..."
+  description: "Add spec entry to epic (fully manual)"
+
+- command: "spec draft"
+  usage: "spec draft <spec-ref> [--llm]"
+  description: "Draft full spec.md from epic entry"
+
+- command: "spec init"
+  usage: "spec init [--governor <path>] [--claude/--no-claude]"
+  description: "Initialize specwright in repo"
+
+- command: "spec config"
+  usage: "spec config <key> <value>"
+  description: "Set config values (user, tier, current.spec, etc.)"
 ```
 
 ### modules
 
 ```yaml
-- name: compiler
-  kind: module
-  provides: ["spec markdown parsing", "v1 YAML compilation"]
-  depends_on: [core]
+- name: cli
+  provides: ['spec command-line interface']
 - name: governance
-  kind: module
-  provides: ["build validation", "epic validation", "contract validation"]
-  depends_on: [governor, epic]
-```
-
-### layout
-
-```yaml
-- path: src/spec/compiler/
-  module: compiler
-  role: "Spec markdown parser and v1 compiler (legacy)"
-- path: src/spec/governance/
-  module: governance
-  role: "Build, epic, and contract validation"
+  provides: ['build validation', 'epic validation', 'contract validation', 'spec scaffolding', 'intent parsing', 'LLM-assisted drafting']
+- name: epic
+  provides: ['epic loading', 'epic schema', 'DAG validation', 'epic writing']
 ```
 
 ## Proposed build_delta
@@ -75,508 +76,564 @@ This ensures specs produced by `spec draft` stay valid, and manually-written spe
 ```yaml
 build_delta:
   target: "projects/specwright/specwright.build.yaml"
-  summary: "Enhance spec validation to enforce schema compliance with build_delta requirements"
+  summary: "Add LLM-assisted epic/spec drafting, remove legacy CLI commands"
 
   adds:
     layout:
-      - path: src/spec/governance/
-        adds:
-          - spec_validator.py    # NEW - dedicated validation logic
+      - path: src/spec/governance/epic_drafter.py
+        role: "LLM-assisted epic drafting (crawl repo, generate narrative + specs)"
+      - path: src/spec/governance/spec_entry_drafter.py
+        role: "LLM-assisted spec entry drafting for epic.yaml"
+      - path: tests/governance/test_epic_drafter.py
+        role: "Epic drafter tests"
+      - path: tests/governance/test_spec_entry_drafter.py
+        role: "Spec entry drafter tests"
 
   modifies:
     modules:
-      - name: governance
+      governance:
         provides:
           - "build validation"
           - "epic validation"
           - "contract validation"
           - "spec scaffolding"
           - "intent parsing"
-          - "spec schema validation"     # NEW
+          - "LLM-assisted spec drafting"
+          - "LLM-assisted epic drafting"      # NEW
+          - "LLM-assisted spec entry drafting" # NEW
 
     kernel_surfaces:
-      - command: "spec validate spec"
-        usage: "spec validate spec ./my-feature.md [--check] [--strict]"
-        description: "Validate spec structure, phases, build_delta (--strict enforces full schema)"
+      - command: "spec epic create"
+        usage: "spec epic create <title> --goal <goal> --owner <owner> [--llm] [--context <file>] [--model <model>]"
+        description: "Create epic. Skeleton by default, LLM-assisted with --llm"
 
-  removes: {}
+      - command: "spec epic add-spec"
+        usage: "spec epic add-spec <epic-id> <description> [--llm] [--context <file>] [--target <target-id>]"
+        description: "Add spec(s) to epic. --llm crawls repo and drafts expectations/constraints"
+
+    cli:
+      - file: src/spec/cli/epic.py
+        changes: "Add --llm and --context to create (no --repo); change add-spec to accept description + --llm; add per-spec mode recommendation"
+      - file: src/spec/cli/spec.py
+        changes: "Remove legacy commands, simplify init"
+
+  removes:
+    kernel_surfaces:
+      - command: "spec create"
+        reason: "Superseded by spec draft"
+      - command: "spec spec-compile"
+        reason: "v1 authoring, obsolete"
+      - command: "spec gate-list"
+        reason: "AIP gate tracking, never used"
+      - command: "spec gate-report"
+        reason: "AIP gate tracking, never used"
+      - command: "spec materialize"
+        reason: "Governor materialization, rarely used"
+      - command: "spec migrate"
+        reason: "One-time migration tool, no longer needed"
+      - command: "spec list"
+        reason: "Confusing (lists specs/AIPs not epics), use spec epic list"
+
+    cli:
+      - file: src/spec/cli/spec.py
+        removes:
+          - "create command"
+          - "spec_compile command"
+          - "gate_list command"
+          - "gate_report command"
+          - "materialize command"
+          - "migrate command"
+          - "list_specs command"
+          - "RiskTier enum"
+          - "get_next_aip_id function"
+          - "get_template_path function"
+          - "get_schema_path function"
+          - "legacy config helpers"
 ```
 
 ## Acceptance Criteria
 
-**Frontmatter validation (existing):**
-- [ ] Required fields: tier, title, owner, goal
-- [ ] tier is A, B, or C
-- [ ] All fields are non-empty strings
+**Epic creation with LLM:**
+- [ ] `spec epic create "Title" --goal "..." --owner "..."` creates a skeleton epic (no repo-path flags)
+- [ ] `spec epic create "Title" --goal "..." --owner "..." --llm` crawls the current working repository (and any already-known targets, if present) and generates:
+  - Meaningful `intent.narrative` explaining the problem
+  - Initial `specs` list with expectations/constraints
+  - Proper `depends_on` relationships between specs
+- [ ] Each generated spec entry includes `mode: interactive|headless` recommendation
+- [ ] `--context <file>` accepts additional guidance (existing epic to clean up, notes, etc.)
+- [ ] Output is valid epic.yaml that passes `spec validate epic`
 
-**Phase validation (new):**
-- [ ] Accepts both `## Phase N:` and `### Step N:` formats (backward compat)
-- [ ] Each phase has `### Objective` subsection
-- [ ] Each phase has `### Files to Touch` subsection (warning if missing, error with --strict)
-- [ ] Each phase has `### Verification` subsection (warning if missing, error with --strict)
-- [ ] files_to_touch entries have path and action (create/modify/delete)
+**Spec entry addition with LLM:**
+- [ ] `spec epic add-spec t004 "description of work"` fails without --llm (needs either manual fields or LLM)
+- [ ] `spec epic add-spec t004 "description" --llm` crawls repo and generates one or more spec entries:
+  - Sensible `id`, `title`, `branch` naming
+  - `expectations` derived from codebase understanding
+  - `constraints` based on architectural boundaries
+  - `depends_on` figured out from existing specs
+  - `path` pointing to where spec.md will go
+- [ ] Generated spec entries include `mode: interactive|headless` recommendation
+- [ ] Can generate multiple specs from one description ("break this feature into specs")
+- [ ] Manual mode still works: `spec epic add-spec t004 --id ... --repo ... --branch ... --path ... --mode headless`
 
-**Build context validation (new, --strict only):**
-- [ ] `## Current Capabilities` section exists
-- [ ] `## Proposed build_delta` section exists
-- [ ] build_delta is valid YAML
-- [ ] build_delta has `adds`, `modifies`, or `removes` (at least one non-empty)
+**Legacy cleanup:**
+- [ ] `spec create` removed
+- [ ] `spec spec-compile` removed
+- [ ] `spec gate-list` removed
+- [ ] `spec gate-report` removed
+- [ ] `spec materialize` removed
+- [ ] `spec migrate` removed
+- [ ] `spec list` removed
+- [ ] Associated dead code removed (RiskTier, get_next_aip_id, templates, etc.)
 
-**Consistency validation (new, --strict only):**
-- [ ] Paths in files_to_touch are consistent with build_delta.adds.layout
-- [ ] If build_delta adds a module, files_to_touch should include files in that module's path
-
-**CLI flags:**
-- [ ] `--check` — validate without writing `validated: true` (existing)
-- [ ] `--strict` — enforce build_delta and full phase structure (new)
-- [ ] Default mode: warn on missing sections, don't fail
-- [ ] Strict mode: fail on missing sections
+**Init/config simplification:**
+- [ ] `spec init --legacy-mode` removed
+- [ ] `spec init` only: creates .specwright.yaml, installs the two default JobDefs, optionally installs slash commands
+- [ ] No more .specwright/tmp, .specwright/runs, .specwright/artifacts creation
+- [ ] `spec config` simplified to essential settings only
 
 ## Constraints
 
-- Backward compatible: existing specs pass default validation
-- --strict is opt-in initially; becomes default after migration
-- Warnings in default mode, errors in strict mode
-- No LLM calls — pure structural validation
-
-## Context
-
-### Current parser structure (SpecParser)
-
-```python
-# src/spec/compiler/parser.py
-REQUIRED_FRONTMATTER = {"tier", "title", "owner", "goal"}
-
-def _validate_frontmatter(self):
-    missing = self.REQUIRED_FRONTMATTER - set(self.frontmatter.keys())
-    if missing:
-        raise ValueError(f"Missing required frontmatter keys: {missing}")
-
-def _parse_plan(self):
-    plan_text = self.sections.get("plan", "")
-    if not plan_text:
-        raise ValueError("Plan section is required")
-    # Looks for ### Step N: pattern
-```
-
-### What needs to change
-
-1. **Accept Phase format**: `## Phase N:` in addition to `### Step N:`
-2. **Validate phase subsections**: Objective, Files to Touch, Verification
-3. **Parse build_delta**: Extract YAML from `## Proposed build_delta` section
-4. **Cross-check**: build_delta.adds.layout paths match files_to_touch paths
-
-### Why two modes?
-
-- **Default mode**: Backward compatible. Existing specs pass. Warns about missing sections.
-- **Strict mode**: Full enforcement. Used for new specs from `spec draft`. Required for CI gates.
-
-The migration path:
-1. `spec draft` produces specs that pass `--strict`
-2. Old specs pass default validation (warnings only)
-3. Over time, update old specs to pass `--strict`
-4. Eventually make `--strict` the default
+- LLM drafting uses read-only tool allowlist (same as spec_drafter.py)
+- No backwards compatibility guarantees. Commands/flags/config formats may change or be removed.
 
 ---
 
-## Phase 1: Phase format support
+## Phase 1: Epic drafter implementation
 
 ### Objective
-Update parser to accept `## Phase N:` format alongside `### Step N:`.
+Implement LLM-assisted epic drafting that crawls a repo and generates meaningful epic content.
 
 ### Files to Touch
-- `src/spec/compiler/parser.py` (modify) — add phase pattern matching alongside step pattern
-- `tests/compiler/test_parser.py` (modify) — add tests for phase format
+- `src/spec/governance/epic_drafter.py` (create) - EpicDrafter class
+- `tests/governance/test_epic_drafter.py` (create) - drafter tests
 
 ### Implementation Notes
 
 ```python
-import re
+"""LLM-assisted epic drafting using Claude Code."""
 
-# Add alongside existing step_pattern
-PHASE_PATTERN = re.compile(
-    r'^##\s+Phase\s+(\d+):\s*(.+?)$',
-    re.MULTILINE
-)
+from pathlib import Path
+from spec.governance.spec_drafter import DRAFTING_ALLOWLIST
 
-def _parse_plan(self):
-    """Parse Plan section into structured steps/phases."""
-    plan_text = self.sections.get("plan", "")
+class EpicDrafter:
+    """Draft epic.yaml content by crawling repository."""
 
-    # Also look for phases directly in body (not under Plan section)
-    if not plan_text:
-        plan_text = self._extract_phases_from_body()
+    def __init__(
+        self,
+        title: str,
+        goal: str,
+        context: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        self.title = title
+        self.goal = goal
+        self.context = context
+        self.model = model
 
-    if not plan_text:
-        raise ValueError("Plan section or Phase sections required")
+    def draft(self) -> dict:
+        """Generate epic dict by exploring repos.
 
-    # Try phases first (new format)
-    phases = self._parse_phases(plan_text)
-    if phases:
-        self.plan_steps = phases
-        return
+        Returns:
+            Epic dict ready for YAML serialization.
+        """
+        # Build prompt with goal + context
+        prompt = self._build_prompt()
 
-    # Fall back to steps (legacy format)
-    self._parse_steps(plan_text)
+        # Call Claude Code with read-only tools
+        result = self._call_claude_code(prompt)
 
-def _extract_phases_from_body(self) -> str:
-    """Extract all content from ## Phase N: sections."""
-    matches = list(PHASE_PATTERN.finditer(self.content_body))
-    if not matches:
-        return ""
-    # Return content from first phase to end
-    return self.content_body[matches[0].start():]
+        # Parse YAML from response
+        return self._parse_epic(result)
 
-def _parse_phases(self, text: str) -> list[dict]:
-    """Parse ## Phase N: sections into structured data."""
-    phases = []
-    for match in PHASE_PATTERN.finditer(text):
-        phase_num = int(match.group(1))
-        phase_title = match.group(2).strip()
+    def _build_prompt(self) -> str:
+        """Build prompt for epic drafting."""
+        return f"""You are drafting an epic for the specwright system.
 
-        # Extract phase body (until next phase or end)
-        start = match.end()
-        next_match = PHASE_PATTERN.search(text, start)
-        end = next_match.start() if next_match else len(text)
-        phase_body = text[start:end].strip()
+## Goal
+{self.goal}
 
-        phases.append({
-            "index": phase_num,
-            "title": phase_title,
-            "objective": self._extract_subsection(phase_body, "Objective"),
-            "files_to_touch": self._extract_files_to_touch(phase_body),
-            "implementation_notes": self._extract_subsection(phase_body, "Implementation Notes"),
-            "verification": self._extract_verification(phase_body),
-        })
+## Title
+{self.title}
 
-    return sorted(phases, key=lambda p: p["index"])
+## Target Repositories
+- Current working repository (cwd)
+- Any repositories registered as epic targets (if available)
+
+{f'## Additional Context\n{self.context}' if self.context else ''}
+
+## Your Task
+
+1. Explore the repository to understand the current state
+2. Identify what work needs to be done to achieve the goal
+3. Break the work into logical specs with clear boundaries
+4. For each spec, determine:
+   - A clear title and ID
+   - Expectations (what it should deliver)
+   - Constraints (boundaries, limitations)
+   - Dependencies on other specs
+
+## Output Format
+
+Output YAML for an epic *draft patch* (not a full epic.yaml). The CLI will:
+1) create a valid skeleton epic.yaml (with created/updated/state/history), then
+2) merge this patch into it, then
+3) validate and write the final epic.yaml.
+
+```yaml
+patch:
+  intent:
+    narrative: |
+      <Explain the problem and why this epic matters>
+  targets:
+    - id: <target-id>
+      repo_path: <absolute-path>
+      default_branch: main
+  specs:
+    - id: <spec-id>
+      title: <spec-title>
+      repo: <target-id>
+      branch: feat/<slug>
+      path: specs/<spec-id>.md
+      depends_on: []
+      mode: headless  # or interactive
+      expectations:
+        - <what this spec delivers>
+      constraints:
+        - <boundaries and limitations>
+```
+
+Output ONLY the YAML, nothing else."""
 ```
 
 ### Verification
-- `pytest tests/compiler/test_parser.py -v -k phase`
-- Spec with `## Phase 1:` format → parses successfully, extracts subsections
-- Spec with `### Step 1:` format → still works (backward compat)
-- Spec with no phases or steps → raises ValueError
+- `pytest tests/governance/test_epic_drafter.py -v`
+- EpicDrafter with mock Claude returns valid epic structure
+- Prompt includes all required context
 
 ---
 
-## Phase 2: Phase subsection validation
+## Phase 2: Spec entry drafter implementation
 
 ### Objective
-Validate that each phase has required subsections: Objective, Files to Touch, Verification.
+Implement LLM-assisted spec entry drafting that adds specs to existing epics.
 
 ### Files to Touch
-- `src/spec/governance/spec_validator.py` (create) — SpecValidator class with phase validation
-- `src/spec/governance/__init__.py` (modify) — export SpecValidator
-- `tests/governance/test_spec_validator.py` (create) — validation tests
+- `src/spec/governance/spec_entry_drafter.py` (create) - SpecEntryDrafter class
+- `tests/governance/test_spec_entry_drafter.py` (create) - drafter tests
 
 ### Implementation Notes
 
 ```python
-"""Spec structural validation beyond basic parsing."""
+"""LLM-assisted spec entry drafting for epics."""
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-import yaml
-import re
+from spec.epic.schema import Epic, SpecRef
 
+class SpecEntryDrafter:
+    """Draft spec entries for an existing epic."""
 
-@dataclass
-class ValidationResult:
-    """Result of spec validation."""
-    passed: bool
-    warnings: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    def __init__(
+        self,
+        epic: Epic,
+        description: str,
+      target_id: str | None = None,
+        context: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        self.epic = epic
+        self.description = description
+      self.target_id = target_id
+        self.context = context
+        self.model = model
 
+    def draft(self) -> list[SpecRef]:
+        """Generate spec entries by exploring repo.
 
-class SpecValidator:
-    """Validate spec structure beyond basic parsing."""
+        Returns:
+            List of SpecRef objects to add to epic.
+        """
+        prompt = self._build_prompt()
+        result = self._call_claude_code(prompt)
+        return self._parse_specs(result)
 
-    def __init__(self, parsed_spec: dict[str, Any], strict: bool = False):
-        self.spec = parsed_spec
-        self.strict = strict
-        self.warnings: list[str] = []
-        self.errors: list[str] = []
-
-    def validate(self) -> ValidationResult:
-        """Validate spec and return result."""
-        self._validate_phases()
-        if self.strict:
-            self._validate_build_context()
-            self._validate_consistency()
-
-        return ValidationResult(
-            passed=len(self.errors) == 0,
-            warnings=self.warnings,
-            errors=self.errors,
+    def _build_prompt(self) -> str:
+        """Build prompt including existing epic context."""
+        existing_specs = "\n".join(
+            f"- {s.id}: {s.title} (depends_on: {s.depends_on})"
+            for s in self.epic.specs
         )
 
-    def _add_issue(self, message: str, warning: bool = False) -> None:
-        """Add warning or error."""
-        if warning:
-            self.warnings.append(message)
-        else:
-            self.errors.append(message)
+        return f"""You are adding specs to an existing epic.
 
-    def _validate_phases(self) -> None:
-        """Validate phase subsections."""
-        phases = self.spec.get("phases", self.spec.get("plan_steps", []))
-        if not phases:
-            self._add_issue("No phases found", warning=not self.strict)
-            return
+## Epic: {self.epic.id}
+{self.epic.intent.goal}
 
-        for i, phase in enumerate(phases, 1):
-            phase_id = f"Phase {phase.get('index', i)}"
+## Existing Specs
+{existing_specs or "(none)"}
 
-            # Objective required
-            if not phase.get("objective"):
-                self._add_issue(f"{phase_id} missing Objective", warning=not self.strict)
+## Description of New Work
+{self.description}
 
-            # Files to Touch
-            if not phase.get("files_to_touch"):
-                self._add_issue(f"{phase_id} missing Files to Touch", warning=not self.strict)
-            else:
-                self._validate_files_to_touch(phase_id, phase["files_to_touch"])
+## Target Repositories (from epic.yaml)
+- Use all epic targets as context
+- If provided, treat `target_id` as the primary working repo for this spec batch
 
-            # Verification
-            if not phase.get("verification"):
-                self._add_issue(f"{phase_id} missing Verification", warning=not self.strict)
+{f'## Additional Context\n{self.context}' if self.context else ''}
 
-    def _validate_files_to_touch(self, phase_id: str, files: list) -> None:
-        """Validate files_to_touch entries."""
-        for f in files:
-            if isinstance(f, dict):
-                if not f.get("path"):
-                    self._add_issue(f"{phase_id}: files_to_touch entry missing path", warning=True)
-                if not f.get("action"):
-                    self._add_issue(f"{phase_id}: files_to_touch entry missing action", warning=True)
+## Your Task
+
+1. Explore the repository to understand the current state
+2. Based on the description, determine what spec(s) are needed
+3. For each spec, figure out:
+   - ID following epic's naming pattern (e.g., {self.epic.id.split('-')[0]}-XX)
+   - Clear title
+   - Branch name (feat/<slug>)
+   - Expectations (what it delivers)
+   - Constraints (boundaries)
+   - Dependencies on existing or new specs
+
+## Output Format
+
+Output YAML for the new spec entries:
+
+```yaml
+specs:
+  - id: <spec-id>
+    title: <title>
+    repo: <target-id>
+    branch: feat/<slug>
+    path: specs/<spec-id>.md
+    status: planned
+    depends_on: [<existing-spec-ids-if-any>]
+    mode: headless  # or interactive
+    expectations:
+      - <expectation>
+    constraints:
+      - <constraint>
+```
+
+You may output multiple specs if the work should be broken down.
+Output ONLY the YAML, nothing else."""
 ```
 
 ### Verification
-- `pytest tests/governance/test_spec_validator.py -v`
-- `python -c "from spec.governance.spec_validator import SpecValidator; print('OK')"`
-- Phase with all subsections → passes
-- Phase missing Objective → warning (default) or error (strict)
-- Phase missing Files to Touch → warning (default) or error (strict)
-- Phase missing Verification → warning (default) or error (strict)
+- `pytest tests/governance/test_spec_entry_drafter.py -v`
+- Drafter respects existing spec naming patterns
+- Dependencies reference existing specs correctly
+- Can generate multiple specs from one description
 
 ---
 
-## Phase 3: Build context validation
+## Phase 3: CLI integration for epic create --llm
 
 ### Objective
-Validate Current Capabilities and Proposed build_delta sections in strict mode.
+Wire EpicDrafter into `spec epic create` command with --llm flag.
 
 ### Files to Touch
-- `src/spec/governance/spec_validator.py` (modify) — add _validate_build_context method
-- `src/spec/compiler/parser.py` (modify) — extract build_delta YAML from section
-- `tests/governance/test_spec_validator.py` (modify) — add build context tests
+- `src/spec/cli/epic.py` (modify) - add --llm, --repo, --context to create command
+- `src/spec/governance/__init__.py` (modify) - export EpicDrafter
+- `tests/cli/test_epic_create_llm.py` (create) - CLI integration tests
 
 ### Implementation Notes
 
+Modify `create` command signature:
 ```python
-def _validate_build_context(self) -> None:
-    """Validate build.yaml context sections (strict mode only)."""
-    sections = self.spec.get("sections", {})
-
-    # Normalize section keys (lowercase)
-    section_keys = {k.lower(): k for k in sections.keys()}
-
-    # Check Current Capabilities
-    if "current capabilities" not in section_keys:
-        self._add_issue("Missing 'Current Capabilities' section", warning=False)
-
-    # Check Proposed build_delta
-    build_delta_key = None
-    for key in section_keys:
-        if "build_delta" in key or "build delta" in key:
-            build_delta_key = section_keys[key]
-            break
-
-    if not build_delta_key:
-        self._add_issue("Missing 'Proposed build_delta' section", warning=False)
-    else:
-        delta_content = sections[build_delta_key]
-        delta = self._parse_build_delta(delta_content)
-        if delta is None:
-            self._add_issue("build_delta is not valid YAML", warning=False)
-        elif not any([
-            delta.get("adds"),
-            delta.get("modifies"),
-            delta.get("removes"),
-        ]):
-            self._add_issue(
-                "build_delta has no adds, modifies, or removes",
-                warning=True  # Might be a no-op spec
-            )
-        else:
-            self._build_delta = delta
-
-def _parse_build_delta(self, content: str) -> dict | None:
-    """Extract YAML from build_delta section."""
-    # Find ```yaml ... ``` block
-    match = re.search(r'```ya?ml\n(.*?)\n```', content, re.DOTALL)
-    if not match:
-        return None
-
-    try:
-        return yaml.safe_load(match.group(1))
-    except yaml.YAMLError:
-        return None
-```
-
-### Verification
-- `pytest tests/governance/test_spec_validator.py -v -k build_context`
-- Spec with Current Capabilities + build_delta → passes strict
-- Spec missing Current Capabilities → fails strict
-- Spec missing build_delta → fails strict
-- build_delta with invalid YAML → error
-- build_delta with empty adds/modifies/removes → warning
-
----
-
-## Phase 4: Consistency validation
-
-### Objective
-Cross-check build_delta against files_to_touch to ensure they're aligned.
-
-### Files to Touch
-- `src/spec/governance/spec_validator.py` (modify) — add _validate_consistency method
-- `tests/governance/test_spec_validator.py` (modify) — add consistency tests
-
-### Implementation Notes
-
-```python
-def _validate_consistency(self) -> None:
-    """Check build_delta aligns with files_to_touch (strict mode only)."""
-    if not hasattr(self, "_build_delta") or not self._build_delta:
-        return  # No delta to check, already reported
-
-    # Collect paths from build_delta.adds.layout
-    delta_layout_paths = set()
-    adds = self._build_delta.get("adds", {})
-    for item in adds.get("layout", []):
-        if isinstance(item, dict) and "path" in item:
-            delta_layout_paths.add(item["path"].rstrip("/"))
-        elif isinstance(item, str):
-            delta_layout_paths.add(item.rstrip("/"))
-
-    # Collect parent directories from files_to_touch (create actions)
-    files_dirs = set()
-    phases = self.spec.get("phases", self.spec.get("plan_steps", []))
-    for phase in phases:
-        for f in phase.get("files_to_touch", []):
-            if isinstance(f, dict) and f.get("action") == "create":
-                path = f.get("path", "")
-                parent = str(Path(path).parent)
-                files_dirs.add(parent.rstrip("/"))
-                # Also add the path itself if it's a directory
-                if not Path(path).suffix:
-                    files_dirs.add(path.rstrip("/"))
-
-    # Check: if delta adds layout paths, files_to_touch should create files there
-    for delta_path in delta_layout_paths:
-        matches = [d for d in files_dirs if d.startswith(delta_path) or delta_path.startswith(d)]
-        if not matches:
-            self._add_issue(
-                f"build_delta adds '{delta_path}/' but no files_to_touch create files there",
-                warning=True  # Warning — might be filled in later during implementation
-            )
-```
-
-### Verification
-- `pytest tests/governance/test_spec_validator.py -v -k consistency`
-- build_delta adds `compose/life/`, files_to_touch has `compose/life/docker-compose.yaml` → passes
-- build_delta adds `src/new_module/`, files_to_touch has `src/new_module/__init__.py` → passes
-- build_delta adds path not in files_to_touch → warning (not error)
-
----
-
-## Phase 5: CLI integration
-
-### Objective
-Wire SpecValidator into `spec validate spec` CLI command with `--strict` flag.
-
-### Files to Touch
-- `src/spec/cli/governance.py` (modify) — add --strict flag, integrate SpecValidator
-- `tests/cli/test_validate_spec.py` (create) — CLI integration tests
-
-### Implementation Notes
-
-```python
-@validate_app.command("spec")
-def validate_spec(
-    spec_path: Path = typer.Argument(
-        None,
-        help="Path to spec .md file (uses current if omitted)",
-    ),
-    check_only: bool = typer.Option(
-        False, "--check", "-c",
-        help="Check only, don't write validated flag",
-    ),
-    strict: bool = typer.Option(
-        False, "--strict", "-s",
-        help="Enforce build_delta and full phase structure",
-    ),
+@epic_app.command()
+def create(
+    title: str = typer.Argument(..., help="Epic title"),
+    id: str | None = typer.Option(None, "--id", help="Epic ID"),
+    goal: str = typer.Option(..., "--goal", "-g", help="One-line goal"),
+  owner: str = typer.Option(..., "--owner", help="Owner username"),
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft epic content"),
+    context: Path | None = typer.Option(None, "--context", "-c", help="Additional context file"),
+    model: str = typer.Option("claude-sonnet-4-20250514", "--model", "-m", help="Model for --llm"),
 ) -> None:
-    """Validate a spec markdown file structure.
+```
 
-    Validates YAML frontmatter (required: tier, title, owner, goal),
-    phase structure, and optionally build_delta context.
+Logic:
+- Without --llm: create skeleton epic.yaml only
+- With --llm: create skeleton epic.yaml, then use EpicDrafter to generate a patch and merge it into the skeleton
 
-    Default mode warns about missing sections. Strict mode (--strict)
-    requires full schema compliance including Current Capabilities
-    and Proposed build_delta sections.
+### Verification
+- `spec epic create --help` shows new flags
+- `spec epic create "Title" --goal "..." --owner "..."` creates skeleton
+- `spec epic create "Title" --goal "..." --owner "..." --llm` drafts and writes epic content
+- Generated epic passes `spec validate epic`
+
+---
+
+## Phase 4: CLI integration for epic add-spec --llm
+
+### Objective
+Wire SpecEntryDrafter into `spec epic add-spec` with --llm flag.
+
+### Files to Touch
+- `src/spec/cli/epic.py` (modify) - change add-spec to support description + --llm
+- `tests/cli/test_epic_add_spec_llm.py` (create) - CLI integration tests
+
+### Implementation Notes
+
+Change `add-spec` signature to support both modes:
+```python
+@epic_app.command("add-spec")
+def add_spec(
+    epic_id: str = typer.Argument(..., help="Epic ID"),
+    description: str | None = typer.Argument(None, help="Description of work (for --llm mode)"),
+    # Manual mode options (existing)
+    spec_id: str | None = typer.Option(None, "--id", help="Spec ID (manual mode)"),
+    repo: str | None = typer.Option(None, "--repo", help="Target repo ID"),
+    branch: str | None = typer.Option(None, "--branch", help="Working branch"),
+    path: str | None = typer.Option(None, "--path", help="Spec path"),
+  mode: str = typer.Option("headless", "--mode", help="Recommended mode: interactive|headless"),
+    depends_on: list[str] = typer.Option([], "--depends-on", help="Dependencies"),
+    expectation: list[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
+    # LLM mode options
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft spec entries"),
+  target: str | None = typer.Option(None, "--target", help="Primary target repo ID (LLM mode)"),
+    context: Path | None = typer.Option(None, "--context", "-c", help="Additional context"),
+    model: str = typer.Option("claude-sonnet-4-20250514", "--model", "-m", help="Model"),
+) -> None:
+```
+
+Logic:
+- With --llm + description: use SpecEntryDrafter, may add multiple specs (and set `mode` for each)
+- Without --llm: require manual fields (--id, --repo, --branch, --path)
+- Description without --llm: fail with helpful message
+
+### Verification
+- `spec epic add-spec t004 "add caching" --llm` drafts spec entry
+- Multiple specs can be generated from one description
+- Manual mode still works: `spec epic add-spec t004 --id ... --repo ...`
+- Generated specs have proper depends_on for existing specs
+
+---
+
+## Phase 5: Legacy command removal
+
+### Objective
+Remove unused legacy commands and associated dead code.
+
+### Files to Touch
+- `src/spec/cli/spec.py` (modify) - remove commands and helpers
+- `tests/cli/test_legacy_removed.py` (create) - verify commands are gone
+
+### Implementation Notes
+
+Remove from spec.py:
+1. `create` command (lines 536-732)
+2. `spec_compile` command (lines 735-848)
+3. `gate_list` command (lines 854-915)
+4. `gate_report` command (lines 918-969)
+5. `materialize` command (lines 972-1026)
+6. `migrate` command (lines 1029-1165)
+7. `list_specs` command (lines 1168-1214)
+
+Remove helper functions:
+- `RiskTier` enum
+- `slugify` function
+- `get_next_aip_id` function
+- `get_git_remote_url` function
+- `get_template_path` function
+- `get_schema_path` function
+- `get_default_config` legacy mode support
+- `is_legacy_config` function
+- `get_specs_path` function
+- `get_aips_path` function
+- `get_user_default` function
+
+### Verification
+- `spec create` returns "unknown command"
+- `spec spec-compile` returns "unknown command"
+- `spec gate-list` returns "unknown command"
+- `spec gate-report` returns "unknown command"
+- `spec materialize` returns "unknown command"
+- `spec migrate` returns "unknown command"
+- `spec list` returns "unknown command"
+- `ruff check src/spec/cli/spec.py` passes (no unused imports)
+
+---
+
+## Phase 6: Init/config simplification
+
+### Objective
+Simplify `spec init` to essentials and remove legacy mode.
+
+### Files to Touch
+- `src/spec/cli/spec.py` (modify) - simplify init command
+- `tests/cli/test_init_simplified.py` (create) - verify simplified behavior
+
+### Implementation Notes
+
+Simplified init:
+```python
+@app.command()
+def init(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
+    governor: str = typer.Option(
+        "~/.local/local-governor",
+        "--governor",
+        help="Local-governor path"
+    ),
+    claude: bool = typer.Option(True, "--claude/--no-claude", help="Install slash commands"),
+) -> None:
+    """Initialize Specwright configuration.
+
+    Creates .specwright.yaml with governor path and installs JobDefs.
 
     Examples:
-        spec validate spec ./my-feature.md
-        spec validate spec ./my-feature.md --check
-        spec validate spec ./my-feature.md --strict
+        spec init
+        spec init --governor /custom/path
+        spec init --no-claude
     """
-    # ... existing path resolution and parsing ...
+    config_path = Path.cwd() / ".specwright.yaml"
 
-    from spec.compiler.parser import SpecParser
-    from spec.governance.spec_validator import SpecValidator
-
-    try:
-        content = spec_path.read_text()
-        parser = SpecParser(content, source_path=spec_path)
-        parsed = parser.parse()
-        typer.secho("Spec parsing OK", fg=typer.colors.GREEN)
-    except ValueError as e:
-        typer.secho(f"Parse error: {e}", fg=typer.colors.RED, err=True)
+    if config_path.exists() and not force:
+        typer.echo(f"Error: {config_path} already exists. Use --force to overwrite.")
         raise typer.Exit(1)
 
-    # Run structural validation
-    validator = SpecValidator(parsed, strict=strict)
-    result = validator.validate()
+    # Write minimal config (no legacy)
+    config = {
+      "version": "0.7",
+      "governor": {"path": governor},
+      "jobdefs": {"path": f"{governor}/jobdefs/specwright"},
+      "defaults": {
+        "jobs": {
+          "headless": "aip-1",
+          "interactive": "interactive-1",
+        }
+      },
+    }
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, sort_keys=False)
 
-    # Print warnings
-    for w in result.warnings:
-        typer.secho(f"  Warning: {w}", fg=typer.colors.YELLOW)
+    typer.secho(f"Created {config_path}", fg=typer.colors.GREEN)
 
-    # Print errors
-    for e in result.errors:
-        typer.secho(f"  Error: {e}", fg=typer.colors.RED)
+    # Install the two default JobDefs
+    from spec.executor.jobdefs import install_default_jobdefs
+    gov_path = Path(governor).expanduser()
+    installed = install_default_jobdefs(gov_path, overwrite=force)
+    if installed:
+        typer.echo(f"Installed {len(installed)} JobDefs to {gov_path}/jobdefs/")
 
-    if not result.passed:
-        typer.secho("Validation failed", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-
-    if strict:
-        typer.secho("Strict validation passed", fg=typer.colors.GREEN)
-    else:
-        typer.secho("Validation passed", fg=typer.colors.GREEN)
-
-    # ... existing validated flag writing ...
+    # Install slash commands
+    if claude:
+        _install_slash_commands()
 ```
 
+Remove from init:
+- `--legacy-mode` flag
+- `.specwright/` directory creation (tmp, runs, artifacts)
+- GUIDE.md copying
+- Schema copying
+- gitignore modification
+
+Simplified config - keep only:
+- `spec config --show` to display config
+- Remove the key-value setting complexity
+
 ### Verification
-- `spec validate spec --help` → shows --strict flag
-- `spec validate spec t004-04-spec-draft.md` → passes, may show warnings
-- `spec validate spec t004-04-spec-draft.md --strict` → passes (it has all sections)
-- `spec validate spec thin-spec.md` → warns about missing sections
-- `spec validate spec thin-spec.md --strict` → fails with errors
-- `ruff check src/spec/cli/governance.py` → clean
-- `pytest tests/cli/test_validate_spec.py -v` → passes
+- `spec init --legacy-mode` fails (unknown option)
+- `spec init` creates minimal .specwright.yaml
+- No .specwright/ directory created
+- JobDefs installed to governor (aip-1 + interactive-1)
+- `spec config --show` displays config

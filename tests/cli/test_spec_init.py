@@ -23,21 +23,17 @@ def temp_empty_dir(tmp_path: Path) -> Path:
 class TestDefaultConfig:
     """Tests for default configuration."""
 
-    def test_default_config_v06(self) -> None:
-        """Default config (v0.6) is governor-based."""
+    def test_default_config_v07(self) -> None:
+        """Default config (v0.7) is governor-based with jobdefs and defaults."""
         config = get_default_config()
 
-        assert config["version"] == "0.6"
+        assert config["version"] == "0.7"
         assert "governor" in config
         assert config["governor"]["path"] == "~/.local/local-governor"
-
-    def test_legacy_config_has_paths(self) -> None:
-        """Legacy config (v0.1) has paths and user sections."""
-        config = get_default_config(legacy=True)
-
-        assert config["version"] == "0.1"
-        assert "paths" in config
-        assert "user" in config
+        assert "jobdefs" in config
+        assert "defaults" in config
+        assert config["defaults"]["jobs"]["headless"] == "aip-1"
+        assert config["defaults"]["jobs"]["interactive"] == "interactive-1"
 
 
 class TestConfigLoading:
@@ -70,7 +66,7 @@ class TestSpecInit:
     """Tests for spec init command."""
 
     def test_init_creates_config(self, temp_empty_dir: Path) -> None:
-        """spec init creates config without autogov section."""
+        """spec init creates v0.7 config."""
         original_dir = os.getcwd()
         try:
             os.chdir(temp_empty_dir)
@@ -89,6 +85,31 @@ class TestSpecInit:
             with open(config_path) as f:
                 config = yaml.safe_load(f)
 
-            assert "autogov" not in config
+            assert config["version"] == "0.7"
+            assert "governor" in config
+            assert "jobdefs" in config
+            assert "defaults" in config
+        finally:
+            os.chdir(original_dir)
+
+    def test_init_with_custom_governor(self, temp_empty_dir: Path) -> None:
+        """spec init with custom governor path."""
+        original_dir = os.getcwd()
+        try:
+            os.chdir(temp_empty_dir)
+            result = runner.invoke(
+                app,
+                ["init", "--no-claude", "--governor", "/custom/governor"],
+                catch_exceptions=False,
+            )
+
+            assert result.exit_code == 0
+
+            config_path = temp_empty_dir / ".specwright.yaml"
+            with open(config_path) as f:
+                config = yaml.safe_load(f)
+
+            assert config["governor"]["path"] == "/custom/governor"
+            assert "/custom/governor" in config["jobdefs"]["path"]
         finally:
             os.chdir(original_dir)
