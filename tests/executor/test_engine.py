@@ -122,6 +122,41 @@ class TestVariableResolution:
         result = resolve_variables("@ctx['my-key']", ctx, {})
         assert result == "value"
 
+    def test_passthrough_spec_md(self):
+        """spec_md key is not resolved (contains user content with @-refs)."""
+        ctx = {"name": "test"}
+        data = {
+            "spec_md": "# Spec\n@run.read.items should NOT be resolved",
+            "other_key": "@ctx.name",
+        }
+        result = resolve_variables(data, ctx, {})
+        # spec_md should be passed through unchanged
+        assert result["spec_md"] == "# Spec\n@run.read.items should NOT be resolved"
+        # other_key should be resolved
+        assert result["other_key"] == "test"
+
+    def test_passthrough_epic_spec(self):
+        """epic_spec key is not resolved."""
+        data = {
+            "epic_spec": {"pipeline": "@run.read.items"},
+            "normal": "@ctx.val",
+        }
+        ctx = {"val": "resolved"}
+        result = resolve_variables(data, ctx, {})
+        assert result["epic_spec"] == {"pipeline": "@run.read.items"}
+        assert result["normal"] == "resolved"
+
+    def test_passthrough_prompt(self):
+        """prompt key is not resolved."""
+        data = {
+            "prompt": "Execute @run.pipeline with items",
+            "repo_path": "@ctx.path",
+        }
+        ctx = {"path": "/workspace"}
+        result = resolve_variables(data, ctx, {})
+        assert result["prompt"] == "Execute @run.pipeline with items"
+        assert result["repo_path"] == "/workspace"
+
 
 class TestHasUnresolvedRunRefs:
     """Tests for has_unresolved_run_refs."""

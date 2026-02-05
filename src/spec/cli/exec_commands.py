@@ -273,8 +273,12 @@ def compile_command(
     repo_path = repo_path.resolve()
 
     # Resolve branch from frontmatter or generate from title
+    # Check multiple locations: top-level "branch", repo.working_branch, or generate
     if branch is None:
-        branch = frontmatter.get("repo", {}).get("working_branch")
+        branch = (
+            frontmatter.get("branch")  # Top-level branch (new simple format)
+            or frontmatter.get("repo", {}).get("working_branch")  # Nested repo.working_branch
+        )
         if not branch:
             title_slug = frontmatter["title"].lower().replace(" ", "-")
             branch = f"feat/{title_slug}"
@@ -516,8 +520,12 @@ def run_command(
         raise typer.Exit(1)
 
     # Resolve branch from frontmatter or generate from title
+    # Check multiple locations: top-level "branch", repo.working_branch, or generate
     if branch is None:
-        branch = frontmatter.get("repo", {}).get("working_branch")
+        branch = (
+            frontmatter.get("branch")  # Top-level branch (new simple format)
+            or frontmatter.get("repo", {}).get("working_branch")  # Nested repo.working_branch
+        )
         if not branch:
             title_slug = frontmatter["title"].lower().replace(" ", "-")
             branch = f"feat/{title_slug}"

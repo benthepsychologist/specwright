@@ -38,6 +38,10 @@ def create(
     title: str = typer.Argument(..., help="Epic title"),
     id: str | None = typer.Option(None, "--id", help="Epic ID (auto-generated if not provided)"),
     goal: str = typer.Option(..., "--goal", "-g", help="One-line goal statement"),
+    category: str = typer.Option(
+        "e", "--category", "-C",
+        help="Epic category: e(pics), t(ooling), a(rchitecture), h(otfix), s(ecurity)"
+    ),
     owner: str | None = typer.Option(None, "--owner", help="Owner username"),
     llm: bool = typer.Option(False, "--llm", help="Use LLM to draft epic content"),
     context: Path | None = typer.Option(
@@ -64,29 +68,53 @@ def create(
         spec epic create "Refactor DB" --id e002-db-refactor --goal "Migrate to PostgreSQL"
         spec epic create "Add caching" --goal "Add Redis caching" --llm
         spec epic create "Migrate API" --goal "GraphQL migration" --llm --context notes.md
+        spec epic create "New Tool" --category t --goal "Add new tooling"
     """
     import re
 
-    from spec.epic.loader import get_epic_path
+    from spec.epic.loader import (
+        CATEGORY_MAP,
+        get_category_from_id,
+        get_epic_path,
+        list_epics,
+    )
     from spec.epic.writer import create_epic as do_create_epic
+
+    # Determine effective category
+    # If --id is provided with a category prefix, use that prefix (overrides --category)
+    # Otherwise use the --category flag (defaults to 'e')
+    effective_category = category
+    if id is not None:
+        id_category = get_category_from_id(id)
+        if id_category:
+            effective_category = id_category
+
+    # Validate category
+    if effective_category not in CATEGORY_MAP:
+        typer.secho(
+            f"Error: Invalid category '{effective_category}'. "
+            f"Valid categories: {', '.join(sorted(CATEGORY_MAP.keys()))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
 
     # Auto-generate ID if not provided
     if id is None:
-        # Generate ID from title: e001-my-epic-title
+        # Generate slug from title
         slug = re.sub(r"[^\w\s-]", "", title.lower())
         slug = re.sub(r"[-\s]+", "-", slug).strip("-")
 
-        # Find next available number
-        from spec.epic.loader import list_epics
-
+        # Find next available number within the category
         existing = list_epics()
         existing_nums = []
         for eid in existing:
-            match = re.match(r"e(\d+)-", eid)
+            # Match epics with the same category prefix
+            match = re.match(rf"^{effective_category}(\d+)-", eid)
             if match:
                 existing_nums.append(int(match.group(1)))
         next_num = max(existing_nums, default=0) + 1
-        id = f"e{next_num:03d}-{slug}"
+        id = f"{effective_category}{next_num:03d}-{slug}"
 
     # Get owner from config if not provided
     if owner is None:

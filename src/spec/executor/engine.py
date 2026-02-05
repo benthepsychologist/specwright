@@ -13,8 +13,8 @@ The engine:
 
 from __future__ import annotations
 
-import os
 import hashlib
+import os
 import re
 import time
 from datetime import UTC, datetime
@@ -144,6 +144,12 @@ def _get_nested(data: dict[str, Any], path: str) -> Any:
     return current
 
 
+# Keys in payload that should NOT have variable resolution applied.
+# These contain arbitrary user content (spec markdown, prompts) that may
+# include @-prefixed strings that are NOT specwright variables.
+PASSTHROUGH_KEYS = frozenset({"spec_md", "epic_spec", "prompt"})
+
+
 def resolve_variables(
     value: Any,
     ctx: dict[str, Any],
@@ -152,6 +158,7 @@ def resolve_variables(
     *,
     allow_run: bool = True,
     preserve_run: bool = False,
+    _current_key: str | None = None,
 ) -> Any:
     """
     Resolve @ctx.*, @payload.*, and @run.* references in a value.
@@ -163,6 +170,7 @@ def resolve_variables(
         run: Run variables (@run.*) - only available during execution
         allow_run: Whether @run.* references are allowed
         preserve_run: If True, preserve @run.* references when run is None (for compile time)
+        _current_key: Internal - the dict key being processed (to check passthrough)
 
     Returns:
         The value with all references resolved
@@ -170,10 +178,22 @@ def resolve_variables(
     Raises:
         VariableError: If a reference cannot be resolved
     """
+    # Skip resolution for passthrough keys (user content like spec_md)
+    if _current_key in PASSTHROUGH_KEYS:
+        return value
+
     if isinstance(value, str):
         return _resolve_string(value, ctx, payload, run, allow_run=allow_run, preserve_run=preserve_run)
     elif isinstance(value, dict):
-        return {k: resolve_variables(v, ctx, payload, run, allow_run=allow_run, preserve_run=preserve_run) for k, v in value.items()}
+        return {
+            k: resolve_variables(
+                v, ctx, payload, run,
+                allow_run=allow_run,
+                preserve_run=preserve_run,
+                _current_key=k,
+            )
+            for k, v in value.items()
+        }
     elif isinstance(value, list):
         return [resolve_variables(v, ctx, payload, run, allow_run=allow_run, preserve_run=preserve_run) for v in value]
     else:

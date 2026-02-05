@@ -7,6 +7,7 @@ filesystem and validating their structure.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,15 @@ from spec.epic.schema import (
     SpecStatus,
 )
 
+# Category mapping: prefix letter -> directory name
+CATEGORY_MAP = {
+    "a": "a-architecture",
+    "e": "e-epics",
+    "t": "t-tooling",
+    "h": "h-hotfix",
+    "s": "s-security",
+}
+
 
 class EpicNotFoundError(SpecwrightError):
     """Epic not found in governor."""
@@ -34,6 +44,31 @@ class EpicValidationError(SpecwrightError):
     """Epic validation failed."""
 
     exit_code = 3
+
+
+def get_category_from_id(epic_id: str) -> str | None:
+    """Extract category prefix from epic ID.
+
+    Args:
+        epic_id: Epic identifier like 't004-specwright-governance'.
+
+    Returns:
+        Single-letter category prefix (e.g., 't'), or None if not recognized.
+    """
+    match = re.match(r"^([aehst])\d{3}-", epic_id)
+    return match.group(1) if match else None
+
+
+def get_category_dir(category: str) -> str | None:
+    """Get category directory name from prefix.
+
+    Args:
+        category: Single-letter category prefix.
+
+    Returns:
+        Directory name (e.g., 't-tooling'), or None if unknown.
+    """
+    return CATEGORY_MAP.get(category)
 
 
 def _disable_implicit_timestamps(yaml: YAML) -> None:
@@ -72,13 +107,33 @@ def get_governor_root() -> Path:
 def get_epic_path(epic_id: str) -> Path:
     """Get the path to an epic directory.
 
+    Resolves category-based paths from the epic ID prefix:
+    - t004-foo -> epics/t-tooling/t004-foo/
+    - e012-bar -> epics/e-epics/e012-bar/
+    - unknown  -> epics/unknown/ (fallback for legacy/uncategorized)
+
     Args:
         epic_id: The epic identifier.
 
     Returns:
         Path to the epic directory within governor.
     """
-    return get_governor_root() / "epics" / epic_id
+    epics_root = get_governor_root() / "epics"
+
+    # Try to extract category from ID prefix
+    category = get_category_from_id(epic_id)
+    if category:
+        category_dir = get_category_dir(category)
+        if category_dir:
+            return epics_root / category_dir / epic_id
+
+    # Fallback: check if epic exists in any category subdir (for loading)
+    for epic_yaml in epics_root.rglob("epic.yaml"):
+        if epic_yaml.parent.name == epic_id:
+            return epic_yaml.parent
+
+    # Final fallback: flat structure (legacy)
+    return epics_root / epic_id
 
 
 def load_epic(epic_id: str) -> Epic:
@@ -202,16 +257,24 @@ def _parse_datetime(value: Any) -> datetime:
 def list_epics() -> list[str]:
     """List all epic IDs in the governor.
 
+    Supports multiple layouts:
+    - Flat: epics/t004-foo/epic.yaml
+    - Category-grouped: epics/t-tooling/t004-foo/epic.yaml
+
     Returns:
-        List of epic IDs (directory names under governor/epics/).
+        List of epic IDs (directory names containing epic.yaml).
     """
     epics_dir = get_governor_root() / "epics"
     if not epics_dir.exists():
         return []
 
     epic_ids: list[str] = []
-    for item in epics_dir.iterdir():
-        if item.is_dir() and (item / "epic.yaml").exists():
-            epic_ids.append(item.name)
+    seen: set[str] = set()
+
+    for epic_yaml in epics_dir.rglob("epic.yaml"):
+        epic_id = epic_yaml.parent.name
+        if epic_id not in seen:
+            seen.add(epic_id)
+            epic_ids.append(epic_id)
 
     return sorted(epic_ids)
