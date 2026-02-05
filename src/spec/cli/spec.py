@@ -68,6 +68,11 @@ from spec.cli.delta import delta_app  # noqa: E402
 
 app.add_typer(delta_app, name="delta")
 
+# Register spec draft command (scaffolded spec generation)
+from spec.cli.draft import spec_draft  # noqa: E402
+
+app.command("draft")(spec_draft)
+
 
 class RiskTier(str, Enum):
     """Risk tier enumeration."""
