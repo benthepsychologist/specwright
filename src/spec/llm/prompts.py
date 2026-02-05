@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 from spec.llm.config import get_governor_config_path
 
 

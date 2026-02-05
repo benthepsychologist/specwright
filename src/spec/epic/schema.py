@@ -17,36 +17,73 @@ if TYPE_CHECKING:
 
 
 class SpecStatus(str, Enum):
-    """Status of a spec within an epic."""
+    """Status of a spec within an epic.
+
+    Includes aliases for epic-level status values (in_progress, completed,
+    superseded) to allow the same enum for both spec and epic status fields.
+    """
 
     PLANNED = "planned"
     ACTIVE = "active"
     BLOCKED = "blocked"
     DONE = "done"
     ABANDONED = "abandoned"
+    # Epic-level status aliases (permissive parsing)
+    IN_PROGRESS = "in_progress"  # alias for ACTIVE at epic level
+    COMPLETED = "completed"  # alias for DONE at epic level
+    SUPERSEDED = "superseded"  # epic-only status
 
 
 class EventType(str, Enum):
-    """Types of events in epic history."""
+    """Types of events in epic history.
 
+    This enum is intentionally permissive to allow for organic event types
+    that emerge during epic execution. Add new event types as needed.
+    """
+
+    # Core events
     EPIC_CREATED = "epic.created"
     EPIC_UPDATED = "epic.updated"
     EPIC_REVISED = "epic.revised"
+    EPIC_RESTRUCTURED = "epic.restructured"
+    EPIC_REDESIGNED = "epic.redesigned"
+    EPIC_SIMPLIFIED = "epic.simplified"
+    EPIC_AMENDED = "epic.amended"
+
+    # Spec events
+    SPEC_ADDED = "spec.added"
     SPEC_ACTIVATED = "spec.activated"
     SPEC_BLOCKED = "spec.blocked"
     SPEC_DONE = "spec.done"
     SPEC_ABANDONED = "spec.abandoned"
+    SPEC_REVIEWED = "spec.reviewed"
+    SPECS_RESTRUCTURED = "specs.restructured"
+    SPECS_RESEQUENCED = "specs.resequenced"
+
+    # Check events
     CHECK_COMPLETED = "check.completed"
     CHECK_FAILED = "check.failed"
+    CHECKS_ADDED = "checks.added"
+
+    # Step events
     STEP_STARTED = "step.started"
     STEP_COMPLETED = "step.completed"
     STEP_FAILED = "step.failed"
+
+    # Gate events
+    GATE_COMPLETED = "gate.completed"
+    GATE_RESCOPED = "gate.rescoped"
+
+    # Scope events
+    SCOPE_CLARIFIED = "scope.clarified"
 
 
 class Actor(str, Enum):
     """Actor types for history events."""
 
     HUMAN = "human"
+    AI = "ai"
+    HUMAN_AI = "human+ai"
     SPECWRIGHT = "specwright"
     LLM = "llm"
 
@@ -109,12 +146,15 @@ class SpecRef:
     id: str
     repo: str
     branch: str
+    title: str | None = None
     path: str | None = None
     status: SpecStatus = SpecStatus.PLANNED
+    dev_intent: str | None = None
     depends_on: list[str] = field(default_factory=list)
     expectations: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
+    build_delta: dict | None = None
 
 
 @dataclass
@@ -297,7 +337,12 @@ class Epic:
         return errors
 
     def _validate_current_spec(self) -> list[str]:
-        """Check that current_spec is active if set."""
+        """Check that current_spec exists if set.
+
+        Note: We no longer require current_spec to be active. The state section
+        is deprecated in v0.2 and this validation is permissive to allow for
+        organic epic evolution (e.g., setting current_spec before marking it active).
+        """
         errors: list[str] = []
         if self.state and self.state.current_spec:
             spec = self.get_spec(self.state.current_spec)
@@ -305,11 +350,7 @@ class Epic:
                 errors.append(
                     f"current_spec '{self.state.current_spec}' does not exist"
                 )
-            elif spec.status != SpecStatus.ACTIVE:
-                errors.append(
-                    f"current_spec '{self.state.current_spec}' is not active "
-                    f"(status: {spec.status.value})"
-                )
+            # Permissive: don't require current_spec to be active
         return errors
 
     def get_spec(self, spec_id: str) -> SpecRef | None:
@@ -421,8 +462,12 @@ def _spec_to_dict(spec: SpecRef) -> dict[str, Any]:
         "branch": spec.branch,
         "status": spec.status.value,
     }
+    if spec.title:
+        result["title"] = spec.title
     if spec.path:
         result["path"] = spec.path
+    if spec.dev_intent:
+        result["dev_intent"] = spec.dev_intent
     if spec.depends_on:
         result["depends_on"] = spec.depends_on
     if spec.expectations:
@@ -431,6 +476,8 @@ def _spec_to_dict(spec: SpecRef) -> dict[str, Any]:
         result["constraints"] = spec.constraints
     if spec.checks:
         result["checks"] = spec.checks
+    if spec.build_delta:
+        result["build_delta"] = spec.build_delta
     return result
 
 

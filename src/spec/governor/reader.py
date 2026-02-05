@@ -58,8 +58,13 @@ class GovernorReader:
     def read_spec(self, slug: str) -> str:
         """Read a spec file by slug.
 
+        Resolution order:
+        1. Direct .md file in project specs/ (legacy)
+        2. .index.yaml spec-ref → follow path to canonical location
+        3. Prefix-based resolver (searches epics/)
+
         Args:
-            slug: The spec slug (filename without extension)
+            slug: The spec slug (filename without extension), or a prefix.
 
         Returns:
             The spec content as a string
@@ -67,10 +72,38 @@ class GovernorReader:
         Raises:
             SpecNotFoundError: If the spec doesn't exist
         """
-        spec_path = self._paths.specs / f"{slug}.md"
-        if not spec_path.exists():
-            raise SpecNotFoundError(slug, spec_path)
-        return spec_path.read_text(encoding="utf-8")
+        resolved = self._resolve_spec_path(slug)
+        if resolved is None:
+            raise SpecNotFoundError(slug, self._paths.specs / f"{slug}.md")
+        return resolved.read_text(encoding="utf-8")
+
+    def _resolve_spec_path(self, slug: str) -> Path | None:
+        """Resolve a spec slug to a file path.
+
+        Tries direct .md, then .index.yaml, then the epic-based prefix resolver.
+        """
+        # 1. Direct .md in project specs/
+        direct = self._paths.specs / f"{slug}.md"
+        if direct.exists():
+            return direct
+
+        # 2. Index file (.index.yaml) in project specs/
+        index = self._paths.specs / f"{slug}.index.yaml"
+        if index.exists():
+            ref = yaml.safe_load(index.read_text(encoding="utf-8"))
+            if ref and ref.get("kind") == "spec-ref" and ref.get("path"):
+                canonical = self._paths.root / ref["path"]
+                if canonical.exists():
+                    return canonical
+
+        # 3. Prefix-based resolver (searches epics by prefix match)
+        from spec.governor.resolver import ResolveError, resolve_spec
+
+        try:
+            resolved = resolve_spec(slug, self._paths.root)
+            return resolved.spec_path
+        except ResolveError:
+            return None
 
     def read_spec_parsed(self, slug: str) -> dict[str, Any]:
         """Read and parse a spec file by slug.
@@ -108,14 +141,23 @@ class GovernorReader:
     def list_specs(self) -> list[str]:
         """List all spec slugs in governor.
 
+        Includes both direct .md files and .index.yaml references.
+
         Returns:
-            List of spec slugs (filenames without .md extension)
+            List of spec slugs (deduplicated, sorted).
         """
         if not self._paths.specs.exists():
             return []
-        return sorted(
-            p.stem for p in self._paths.specs.glob("*.md") if p.is_file()
-        )
+        slugs: set[str] = set()
+        for p in self._paths.specs.iterdir():
+            if not p.is_file():
+                continue
+            if p.suffix == ".md":
+                slugs.add(p.stem)
+            elif p.name.endswith(".index.yaml"):
+                # Strip .index.yaml to get the slug
+                slugs.add(p.name.removesuffix(".index.yaml"))
+        return sorted(slugs)
 
     def list_aips(self) -> list[str]:
         """List all AIP IDs in governor.
@@ -130,7 +172,7 @@ class GovernorReader:
         )
 
     def spec_exists(self, slug: str) -> bool:
-        """Check if a spec exists.
+        """Check if a spec exists (direct, index, or prefix-resolvable).
 
         Args:
             slug: The spec slug
@@ -138,7 +180,7 @@ class GovernorReader:
         Returns:
             True if the spec exists
         """
-        return (self._paths.specs / f"{slug}.md").exists()
+        return self._resolve_spec_path(slug) is not None
 
     def aip_exists(self, aip_id: str) -> bool:
         """Check if an AIP exists.
@@ -152,14 +194,17 @@ class GovernorReader:
         return (self._paths.aips / f"{aip_id}.yaml").exists()
 
     def get_spec_path(self, slug: str) -> Path:
-        """Get the path to a spec file.
+        """Get the resolved path to a spec file.
 
         Args:
             slug: The spec slug
 
         Returns:
-            Path to the spec file (may not exist)
+            Resolved path to the spec file, or the legacy path if unresolvable.
         """
+        resolved = self._resolve_spec_path(slug)
+        if resolved is not None:
+            return resolved
         return self._paths.specs / f"{slug}.md"
 
     def get_aip_path(self, aip_id: str) -> Path:

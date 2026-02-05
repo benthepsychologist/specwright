@@ -7,13 +7,15 @@ implementation plans with dependency tracking and status management.
 from __future__ import annotations
 
 import functools
-from typing import List
+from pathlib import Path
 
 import typer
+from rich.console import Console
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 epic_app = typer.Typer(help="Epic management commands")
+console = Console()
 
 
 def _epic_exception_handler(func):
@@ -36,7 +38,18 @@ def create(
     title: str = typer.Argument(..., help="Epic title"),
     id: str | None = typer.Option(None, "--id", help="Epic ID (auto-generated if not provided)"),
     goal: str = typer.Option(..., "--goal", "-g", help="One-line goal statement"),
+    category: str = typer.Option(
+        "e", "--category", "-C",
+        help="Epic category: e(pics), t(ooling), a(rchitecture), h(otfix), s(ecurity)"
+    ),
     owner: str | None = typer.Option(None, "--owner", help="Owner username"),
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft epic content"),
+    context: Path | None = typer.Option(
+        None, "--context", "-c", help="Additional context file"
+    ),
+    model: str = typer.Option(
+        "claude-sonnet-4-20250514", "--model", "-m", help="Model for --llm mode"
+    ),
 ) -> None:
     """Create a new epic.
 
@@ -47,31 +60,61 @@ def create(
     - notes.md: Epic notes
     - epic.yaml: Epic definition
 
+    With --llm, the command will use Claude Code to explore the current
+    repository and generate meaningful narrative, specs, and dependencies.
+
     Examples:
         spec epic create "Add OAuth" --goal "Implement OAuth2 authentication"
         spec epic create "Refactor DB" --id e002-db-refactor --goal "Migrate to PostgreSQL"
+        spec epic create "Add caching" --goal "Add Redis caching" --llm
+        spec epic create "Migrate API" --goal "GraphQL migration" --llm --context notes.md
+        spec epic create "New Tool" --category t --goal "Add new tooling"
     """
+    import re
+
+    from spec.epic.loader import (
+        CATEGORY_MAP,
+        get_category_from_id,
+        get_epic_path,
+        list_epics,
+    )
     from spec.epic.writer import create_epic as do_create_epic
+
+    # Determine effective category
+    # If --id is provided with a category prefix, use that prefix (overrides --category)
+    # Otherwise use the --category flag (defaults to 'e')
+    effective_category = category
+    if id is not None:
+        id_category = get_category_from_id(id)
+        if id_category:
+            effective_category = id_category
+
+    # Validate category
+    if effective_category not in CATEGORY_MAP:
+        typer.secho(
+            f"Error: Invalid category '{effective_category}'. "
+            f"Valid categories: {', '.join(sorted(CATEGORY_MAP.keys()))}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
 
     # Auto-generate ID if not provided
     if id is None:
-        # Generate ID from title: e001-my-epic-title
-        import re
-
+        # Generate slug from title
         slug = re.sub(r"[^\w\s-]", "", title.lower())
         slug = re.sub(r"[-\s]+", "-", slug).strip("-")
 
-        # Find next available number
-        from spec.epic.loader import list_epics
-
+        # Find next available number within the category
         existing = list_epics()
         existing_nums = []
         for eid in existing:
-            match = re.match(r"e(\d+)-", eid)
+            # Match epics with the same category prefix
+            match = re.match(rf"^{effective_category}(\d+)-", eid)
             if match:
                 existing_nums.append(int(match.group(1)))
         next_num = max(existing_nums, default=0) + 1
-        id = f"e{next_num:03d}-{slug}"
+        id = f"{effective_category}{next_num:03d}-{slug}"
 
     # Get owner from config if not provided
     if owner is None:
@@ -88,7 +131,7 @@ def create(
             raise typer.Exit(1)
         typer.echo(f"Using default owner: {owner}")
 
-    # Create the epic
+    # Create skeleton epic first
     epic = do_create_epic(
         id=id,
         title=title,
@@ -96,17 +139,127 @@ def create(
         goal=goal,
     )
 
-    from spec.epic.loader import get_epic_path
-
     epic_dir = get_epic_path(epic.id)
 
-    typer.secho(f"✓ Created epic: {epic.id}", fg=typer.colors.GREEN)
+    typer.secho(f"✓ Created epic skeleton: {epic.id}", fg=typer.colors.GREEN)
     typer.echo(f"  Title: {epic.title}")
     typer.echo(f"  Path: {epic_dir}")
-    typer.echo("\nNext steps:")
-    typer.echo(f"  1. Add targets: spec epic add-target {epic.id} --id myrepo --repo-path /path/to/repo")
-    typer.echo(f"  2. Add specs: spec epic add-spec {epic.id} --id spec-01 --repo myrepo ...")
-    typer.echo(f"  3. View status: spec epic status {epic.id}")
+
+    # If --llm, draft content and merge
+    if llm:
+        from spec.governance.epic_drafter import EpicDrafter
+
+        # Load additional context if provided
+        context_content: str | None = None
+        if context:
+            if not context.exists():
+                typer.secho(f"Error: Context file not found: {context}", fg=typer.colors.RED, err=True)
+                raise typer.Exit(1)
+            context_content = context.read_text()
+
+        console.print("\n[bold]Using LLM to draft epic content...[/]")
+        console.print(f"[dim]Model: {model}[/]")
+
+        try:
+            drafter = EpicDrafter(
+                title=title,
+                goal=goal,
+                owner=owner,
+                repo_path=Path.cwd(),
+                context=context_content,
+                model=model,
+            )
+
+            with console.status("Claude Code is exploring and drafting..."):
+                patch = drafter.draft()
+
+            # Apply patch to epic
+            _apply_epic_patch(epic, patch)
+
+            console.print("[green]✓[/] Applied LLM-drafted content")
+
+            # Show what was generated
+            if patch.get("intent", {}).get("narrative"):
+                console.print(f"\n[bold]Narrative:[/]\n{patch['intent']['narrative'][:200]}...")
+
+            if patch.get("targets"):
+                console.print(f"\n[bold]Targets:[/] {len(patch['targets'])} target(s)")
+
+            if patch.get("specs"):
+                console.print(f"\n[bold]Specs:[/] {len(patch['specs'])} spec(s)")
+                for spec in patch["specs"][:5]:
+                    mode = spec.get("mode", "headless")
+                    console.print(f"  - {spec.get('id')}: {spec.get('title')} [dim]({mode})[/]")
+
+        except FileNotFoundError as e:
+            console.print(f"[red]Error:[/] {e}")
+            console.print("[dim]Make sure the claude CLI is installed and in PATH[/]")
+            console.print("\n[yellow]Epic skeleton was created, but LLM drafting failed.[/]")
+            raise typer.Exit(1)
+        except RuntimeError as e:
+            console.print(f"[red]Error:[/] {e}")
+            console.print("\n[yellow]Epic skeleton was created, but LLM drafting failed.[/]")
+            raise typer.Exit(1)
+
+        typer.echo("\nNext steps:")
+        typer.echo(f"  1. Review epic: spec epic status {epic.id}")
+        typer.echo(f"  2. Validate: spec epic validate {epic.id}")
+        typer.echo(f"  3. Start drafting specs: spec draft {epic.id}/<spec-id>")
+    else:
+        typer.echo("\nNext steps:")
+        typer.echo(f"  1. Add targets: spec epic add-target {epic.id} --id myrepo --repo-path /path/to/repo")
+        typer.echo(f"  2. Add specs: spec epic add-spec {epic.id} --id spec-01 --repo myrepo ...")
+        typer.echo(f"  3. View status: spec epic status {epic.id}")
+
+
+def _apply_epic_patch(epic, patch: dict) -> None:
+    """Apply a patch dict to an epic and save.
+
+    Args:
+        epic: Epic instance to modify.
+        patch: Patch dict with intent, targets, specs to merge.
+    """
+    from spec.epic.schema import SpecRef, SpecStatus, Target
+    from spec.epic.writer import save_epic
+
+    # Update narrative
+    if "intent" in patch:
+        if patch["intent"].get("narrative"):
+            epic.intent.narrative = patch["intent"]["narrative"]
+
+    # Add targets
+    if "targets" in patch:
+        existing_target_ids = {t.id for t in epic.targets}
+        for t in patch["targets"]:
+            if t["id"] not in existing_target_ids:
+                epic.targets.append(
+                    Target(
+                        id=t["id"],
+                        repo_path=t.get("repo_path", str(Path.cwd())),
+                        default_branch=t.get("default_branch", "main"),
+                        governor_project=t.get("governor_project"),
+                    )
+                )
+
+    # Add specs
+    if "specs" in patch:
+        existing_spec_ids = {s.id for s in epic.specs}
+        for s in patch["specs"]:
+            if s["id"] not in existing_spec_ids:
+                spec = SpecRef(
+                    id=s["id"],
+                    repo=s.get("repo", epic.targets[0].id if epic.targets else "default"),
+                    branch=s.get("branch", f"feat/{s['id']}"),
+                    title=s.get("title"),
+                    path=s.get("path", f"specs/{s['id']}.md"),
+                    status=SpecStatus.PLANNED,
+                    depends_on=s.get("depends_on", []),
+                    expectations=s.get("expectations", []),
+                    constraints=s.get("constraints", []),
+                )
+                epic.specs.append(spec)
+
+    save_epic(epic)
 
 
 @epic_app.command("add-target")
@@ -148,21 +301,50 @@ def add_target(
 @_epic_exception_handler
 def add_spec(
     epic_id: str = typer.Argument(..., help="Epic ID"),
-    spec_id: str = typer.Option(..., "--id", help="Spec ID"),
-    repo: str = typer.Option(..., "--repo", help="Target repo ID"),
-    branch: str = typer.Option(..., "--branch", help="Working branch"),
-    path: str = typer.Option(..., "--path", help="Spec path relative to governor"),
-    depends_on: List[str] = typer.Option([], "--depends-on", help="Dependency spec IDs"),
-    expectation: List[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
+    description: str | None = typer.Argument(
+        None, help="Description of work (for --llm mode)"
+    ),
+    # Manual mode options (existing)
+    spec_id: str | None = typer.Option(None, "--id", help="Spec ID (manual mode)"),
+    repo: str | None = typer.Option(None, "--repo", help="Target repo ID"),
+    branch: str | None = typer.Option(None, "--branch", help="Working branch"),
+    path: str | None = typer.Option(None, "--path", help="Spec path relative to governor"),
+    mode: str = typer.Option(
+        "headless", "--mode", help="Recommended mode: interactive|headless"
+    ),
+    depends_on: list[str] = typer.Option([], "--depends-on", help="Dependency spec IDs"),
+    expectation: list[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
+    constraint: list[str] = typer.Option([], "--constraint", help="Constraints"),
+    # LLM mode options
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft spec entries"),
+    target: str | None = typer.Option(
+        None, "--target", help="Primary target repo ID (LLM mode)"
+    ),
+    context: Path | None = typer.Option(
+        None, "--context", "-c", help="Additional context file"
+    ),
+    model: str = typer.Option(
+        "claude-sonnet-4-20250514", "--model", "-m", help="Model for --llm mode"
+    ),
 ) -> None:
-    """Add a spec reference to an epic.
+    """Add spec reference(s) to an epic.
 
-    Validates that the target repo exists and that adding the spec
-    doesn't create a dependency cycle.
+    Two modes:
+    1. Manual mode: Provide all fields (--id, --repo, --branch, --path)
+    2. LLM mode: Provide description and --llm flag
+
+    With --llm, Claude Code explores the repo and generates one or more
+    spec entries with expectations, constraints, and dependencies.
 
     Examples:
+        # Manual mode (all fields required)
         spec epic add-spec e001-auth --id spec-01 --repo myrepo --branch feat/auth --path specs/auth.md
         spec epic add-spec e001-auth --id spec-02 --repo myrepo --branch feat/auth --path specs/tokens.md --depends-on spec-01
+
+        # LLM mode (description required)
+        spec epic add-spec t004 "add caching layer" --llm
+        spec epic add-spec t004 "break down the API refactor into specs" --llm --target myrepo
+        spec epic add-spec t004 "implement OAuth" --llm --context notes.md
     """
     from spec.epic.loader import load_epic
     from spec.epic.schema import SpecRef, SpecStatus
@@ -170,21 +352,140 @@ def add_spec(
 
     epic = load_epic(epic_id)
 
-    spec = SpecRef(
-        id=spec_id,
-        repo=repo,
-        branch=branch,
-        path=path,
-        status=SpecStatus.PLANNED,
-        depends_on=list(depends_on),
-        expectations=list(expectation),
-    )
+    if llm:
+        # LLM mode: requires description
+        if not description:
+            typer.secho(
+                "Error: Description required for --llm mode",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo("  Usage: spec epic add-spec <epic-id> \"description\" --llm", err=True)
+            raise typer.Exit(1)
 
-    do_add_spec(epic, spec)
+        # Load additional context if provided
+        context_content: str | None = None
+        if context:
+            if not context.exists():
+                typer.secho(
+                    f"Error: Context file not found: {context}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+                raise typer.Exit(1)
+            context_content = context.read_text()
 
-    typer.secho(f"✓ Added spec '{spec_id}' to epic '{epic_id}'", fg=typer.colors.GREEN)
-    if depends_on:
-        typer.echo(f"  Dependencies: {', '.join(depends_on)}")
+        console.print(f"\n[bold]Adding specs to epic:[/] {epic.id}")
+        console.print(f"[bold]Description:[/] {description}")
+        console.print(f"[dim]Model: {model}[/]")
+
+        try:
+            from spec.governance.spec_entry_drafter import SpecEntryDrafter
+
+            drafter = SpecEntryDrafter(
+                epic=epic,
+                description=description,
+                target_id=target,
+                context=context_content,
+                model=model,
+            )
+
+            with console.status("Claude Code is exploring and drafting..."):
+                spec_entries = drafter.draft()
+
+            if not spec_entries:
+                console.print("[yellow]Warning:[/] No specs were generated")
+                raise typer.Exit(0)
+
+            console.print(f"\n[green]✓[/] Generated {len(spec_entries)} spec(s):")
+
+            # Add each generated spec
+            added_count = 0
+            for entry in spec_entries:
+                spec = SpecRef(
+                    id=entry["id"],
+                    repo=entry.get("repo", epic.targets[0].id if epic.targets else "default"),
+                    branch=entry.get("branch", f"feat/{entry['id']}"),
+                    title=entry.get("title"),
+                    path=entry.get("path", f"specs/{entry['id']}.md"),
+                    status=SpecStatus.PLANNED,
+                    depends_on=entry.get("depends_on", []),
+                    expectations=entry.get("expectations", []),
+                    constraints=entry.get("constraints", []),
+                )
+
+                try:
+                    do_add_spec(epic, spec)
+                    spec_mode = entry.get("mode", "headless")
+                    console.print(
+                        f"  [green]✓[/] {spec.id}: {spec.title or '(no title)'} "
+                        f"[dim]({spec_mode})[/]"
+                    )
+                    if spec.depends_on:
+                        console.print(f"      depends_on: {', '.join(spec.depends_on)}")
+                    added_count += 1
+                except Exception as e:
+                    console.print(f"  [red]✗[/] {spec.id}: {e}")
+
+            console.print(f"\n[bold]Added {added_count} spec(s) to epic '{epic_id}'[/]")
+
+        except FileNotFoundError as e:
+            console.print(f"[red]Error:[/] {e}")
+            console.print("[dim]Make sure the claude CLI is installed and in PATH[/]")
+            raise typer.Exit(1)
+        except RuntimeError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1)
+        except ValueError as e:
+            console.print(f"[red]Error:[/] {e}")
+            raise typer.Exit(1)
+
+    else:
+        # Manual mode: requires all fields
+        if description and not spec_id:
+            # User provided description but not --llm
+            typer.secho(
+                "Error: Description provided without --llm flag",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo(
+                "  Either add --llm to use LLM drafting, or provide manual fields "
+                "(--id, --repo, --branch, --path)",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        # Validate required fields for manual mode
+        if not all([spec_id, repo, branch, path]):
+            typer.secho(
+                "Error: Manual mode requires --id, --repo, --branch, and --path",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            typer.echo(
+                "  For LLM-assisted drafting, use: spec epic add-spec <epic-id> \"description\" --llm",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        spec = SpecRef(
+            id=spec_id,
+            repo=repo,
+            branch=branch,
+            path=path,
+            status=SpecStatus.PLANNED,
+            depends_on=list(depends_on),
+            expectations=list(expectation),
+            constraints=list(constraint),
+        )
+
+        do_add_spec(epic, spec)
+
+        typer.secho(f"✓ Added spec '{spec_id}' to epic '{epic_id}'", fg=typer.colors.GREEN)
+        typer.echo(f"  Mode: {mode}")
+        if depends_on:
+            typer.echo(f"  Dependencies: {', '.join(depends_on)}")
 
 
 @epic_app.command("set-current")
@@ -279,7 +580,7 @@ def status(
         state_icon, state_color = status_icons.get(
             epic.state.status, ("?", typer.colors.WHITE)
         )
-        typer.echo(f"Status: ", nl=False)
+        typer.echo("Status: ", nl=False)
         typer.secho(f"{state_icon} {epic.state.status.value}", fg=state_color)
         if epic.state.current_spec:
             typer.echo(f"Current: {epic.state.current_spec}")
@@ -398,7 +699,7 @@ def validate(
     from spec.epic.loader import EpicValidationError, load_epic
 
     try:
-        epic = load_epic(epic_id)
+        load_epic(epic_id)
         typer.secho(f"✓ Epic '{epic_id}' is valid", fg=typer.colors.GREEN)
         raise typer.Exit(0)
     except EpicValidationError as e:
@@ -434,9 +735,9 @@ def check(
         spec epic check e001-auth
         spec epic check e001-auth --check CHECK-e001-core
     """
-    from spec.epic.loader import EpicNotFoundError, get_epic_path, load_epic
-    from spec.llm.client import LLMClient, LLMExecutionError
-    from spec.llm.config import LLMConfigError, require_llm_enabled
+    from spec.epic.loader import get_epic_path, load_epic
+    from spec.llm.client import LLMClient
+    from spec.llm.config import require_llm_enabled
 
     # Load the epic (raises EpicNotFoundError with exit_code=2 if not found)
     epic = load_epic(epic_id)

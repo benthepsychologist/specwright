@@ -18,9 +18,13 @@ from spec.executor.engine import (
     compile_job,
     execute,
     execute_instance,
-    get_job_def,
+)
+from spec.executor.jobdefs import (
+    JobDefError,
+    JobDefNotFoundError,
+    install_default_jobdefs,
     list_job_defs,
-    register_job_def,
+    load_job_def,
 )
 from spec.executor.sandbox import (
     PolicyViolation,
@@ -52,12 +56,15 @@ __all__ = [
     "compile_job",
     "execute",
     "execute_instance",
-    "register_job_def",
-    "get_job_def",
-    "list_job_defs",
     "CompileError",
     "ExecutorError",
     "VariableError",
+    # JobDef loading
+    "load_job_def",
+    "list_job_defs",
+    "install_default_jobdefs",
+    "JobDefError",
+    "JobDefNotFoundError",
     # Backends
     "BackendBase",
     "BackendError",

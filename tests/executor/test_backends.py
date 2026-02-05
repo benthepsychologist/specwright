@@ -3,7 +3,6 @@ Tests for execution backends.
 """
 
 import subprocess
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -324,6 +323,48 @@ class TestLlmBackend:
         stderr_path = artifacts_dir / capture.agent.stderr_file
         assert "API rate limit" in stderr_path.read_text()
 
+    def test_verify_network_preflight_disabled_by_default(self, backend, monkeypatch):
+        """verify() should not make a network prompt unless explicitly enabled."""
+        monkeypatch.delenv("SPECWRIGHT_LLM_NETWORK_PREFLIGHT", raising=False)
+
+        import sys
+        from types import ModuleType
+
+        class DummyModel:
+            needs_key = None
+
+            def prompt(self, _prompt):  # pragma: no cover
+                raise AssertionError("network preflight should not run")
+
+        dummy_llm = ModuleType("llm")
+        dummy_llm.get_model = lambda _name: DummyModel()  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "llm", dummy_llm)
+
+        backend.verify()
+
+    def test_verify_network_preflight_enabled(self, backend, monkeypatch):
+        """verify() performs a tiny real-prompt call when enabled (mocked here)."""
+        monkeypatch.setenv("SPECWRIGHT_LLM_NETWORK_PREFLIGHT", "1")
+
+        import sys
+        from types import ModuleType
+
+        class DummyResp:
+            def text(self):
+                return "OK"
+
+        class DummyModel:
+            needs_key = None
+
+            def prompt(self, _prompt):
+                return DummyResp()
+
+        dummy_llm = ModuleType("llm")
+        dummy_llm.get_model = lambda _name: DummyModel()  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "llm", dummy_llm)
+
+        backend.verify()
+
 
 # =============================================================================
 # ClaudeCodeBackend Tests
@@ -431,6 +472,70 @@ class TestClaudeCodeBackend:
         with pytest.raises(BackendError) as exc_info:
             backend.verify()
         assert "claude" in str(exc_info.value)
+
+    def test_build_interactive_command_basic(self, backend):
+        """Interactive command has prompt as positional argument after --."""
+        cmd = backend._build_interactive_command(prompt="Do the task")
+        assert cmd == ["claude", "--", "Do the task"]
+
+    def test_build_interactive_command_resume(self, backend):
+        """Interactive command with resume."""
+        cmd = backend._build_interactive_command(prompt="Do the task", resume=True)
+        assert cmd == ["claude", "--resume", "--", "Do the task"]
+
+    def test_build_interactive_command_model(self, backend):
+        """Interactive command with model."""
+        cmd = backend._build_interactive_command(prompt="Do the task", model="opus-4")
+        assert cmd == ["claude", "--model", "opus-4", "--", "Do the task"]
+
+    def test_build_interactive_command_resume_and_model(self, backend):
+        """Interactive command with both resume and model."""
+        cmd = backend._build_interactive_command(prompt="Do the task", model="opus-4", resume=True)
+        assert "--dangerously-skip-permissions" not in cmd
+        assert "--resume" in cmd
+        assert "--model" in cmd
+        assert "opus-4" in cmd
+        assert "--" in cmd
+        assert "Do the task" in cmd
+
+    def test_build_interactive_command_no_print(self, backend):
+        """Interactive command must NOT have --print (it's interactive, not headless)."""
+        cmd = backend._build_interactive_command(prompt="Do the task")
+        assert "--print" not in cmd
+        # But it DOES NOT have --dangerously-skip-permissions since we want human control
+        assert "--dangerously-skip-permissions" not in cmd
+
+    def test_write_task_md(self, backend, tmp_path):
+        """_write_task_md writes content to .claude/TASK.md."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        task_path = backend._write_task_md(repo_path, "# My Spec\nDo the thing.")
+
+        assert task_path == repo_path / ".claude" / "TASK.md"
+        assert task_path.exists()
+        assert "# My Spec" in task_path.read_text()
+        assert "Do the thing." in task_path.read_text()
+
+    def test_write_task_md_creates_claude_dir(self, backend, tmp_path):
+        """_write_task_md creates .claude/ if it doesn't exist."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+
+        backend._write_task_md(repo_path, "content")
+
+        assert (repo_path / ".claude").is_dir()
+
+    def test_write_task_md_overwrites_existing(self, backend, tmp_path):
+        """_write_task_md overwrites existing TASK.md."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / ".claude").mkdir()
+        (repo_path / ".claude" / "TASK.md").write_text("old content")
+
+        backend._write_task_md(repo_path, "new content")
+
+        assert (repo_path / ".claude" / "TASK.md").read_text() == "new content"
 
 
 # =============================================================================

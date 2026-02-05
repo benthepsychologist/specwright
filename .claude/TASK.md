@@ -1,194 +1,639 @@
-# Task: e008-01-core
+---
+id: t004-06-cli-cleanup-llm-drafting
+title: "CLI cleanup: LLM-assisted epic/spec drafting, remove legacy commands"
+tier: B
+owner: benthepsychologist
+goal: "Clean CLI with LLM-assisted epic creation and spec addition, remove legacy trash"
+branch: feat/cli-cleanup-llm-drafting
+status: draft
+validated: false
+---
 
-**Epic:** e008-specwright-v2
-**Branch:** feat/specwright-v2-core
+# t004-06: CLI cleanup and LLM-assisted epic/spec drafting
 
-## Goal
+**Epic:** t004-specwright-governance
+**Branch:** `feat/cli-cleanup-llm-drafting`
+**Tier:** B
 
-Transform specwright from step-gating executor to Claude Code orchestrator
+## Objective
 
-## Expectations
+Clean up the specwright CLI by:
+1. Adding `--llm` mode to `spec epic create` for LLM-assisted epic drafting
+2. Adding `--llm` mode to `spec epic add-spec` for LLM-assisted spec entry drafting (supports multiple specs)
+3. Adding a per-spec execution recommendation (`mode: interactive|headless`) to epic entries
+4. Removing legacy/unused commands
+5. Simplifying `spec init` and `spec config`
 
-- AIP v3 schema exists and validates
-- spec aip-compile <spec_id> reads epic, outputs AIP skeleton
-- spec aip-enrich <spec_id> calls LLM to generate steps + guidance
-- spec aip-run <spec_id> invokes Claude with --dangerously-skip-permissions --print
-- spec aip-run <spec_id> --interactive launches Claude TUI
-- Artifacts captured: transcript.jsonl, commands.json, patch.diff, verification.json
-- spec aip-status <spec_id> shows run state and artifact summary
-- spec aip-diff <spec_id> shows branch diff
-- Dogfood: run this spec against specwright repo and produce a non-empty artifact set
+## Problem
+
+1. **Epic creation is manual and disconnected from codebase.** `spec epic create` only makes a skeleton. Authors must manually write the narrative, figure out what specs are needed, define expectations/constraints, and understand dependencies. Nothing crawls the repo to understand the problem.
+
+2. **Adding specs to epics requires knowing everything upfront.** `spec epic add-spec` requires all fields (--id, --repo, --branch, --path, --expectation). Authors must manually determine what expectations make sense, what constraints apply, and how specs depend on each other.
+
+3. **CLI is cluttered with legacy commands.** Commands like `spec create`, `spec spec-compile`, `spec gate-list`, `spec gate-report`, `spec materialize`, `spec migrate`, `spec list` are unused or superseded. They confuse users and add maintenance burden.
+
+4. **`spec init` does too much.** Creates directories that aren't used (tmp, runs, artifacts), copies stale GUIDE.md, has legacy mode that should be removed.
+
+## Current Capabilities
+
+### kernel.surfaces (relevant subset)
+
+```yaml
+- command: "spec epic create"
+  usage: "spec epic create <title> --goal <goal>"
+  description: "Create skeleton epic directory and epic.yaml"
+
+- command: "spec epic add-spec"
+  usage: "spec epic add-spec <epic-id> --id <spec-id> --repo <repo> --branch <branch> ..."
+  description: "Add spec entry to epic (fully manual)"
+
+- command: "spec draft"
+  usage: "spec draft <spec-ref> [--llm]"
+  description: "Draft full spec.md from epic entry"
+
+- command: "spec init"
+  usage: "spec init [--governor <path>] [--claude/--no-claude]"
+  description: "Initialize specwright in repo"
+
+- command: "spec config"
+  usage: "spec config <key> <value>"
+  description: "Set config values (user, tier, current.spec, etc.)"
+```
+
+### modules
+
+```yaml
+- name: cli
+  provides: ['spec command-line interface']
+- name: governance
+  provides: ['build validation', 'epic validation', 'contract validation', 'spec scaffolding', 'intent parsing', 'LLM-assisted drafting']
+- name: epic
+  provides: ['epic loading', 'epic schema', 'DAG validation', 'epic writing']
+```
+
+## Proposed build_delta
+
+```yaml
+build_delta:
+  target: "projects/specwright/specwright.build.yaml"
+  summary: "Add LLM-assisted epic/spec drafting, remove legacy CLI commands"
+
+  adds:
+    layout:
+      - path: src/spec/governance/epic_drafter.py
+        role: "LLM-assisted epic drafting (crawl repo, generate narrative + specs)"
+      - path: src/spec/governance/spec_entry_drafter.py
+        role: "LLM-assisted spec entry drafting for epic.yaml"
+      - path: tests/governance/test_epic_drafter.py
+        role: "Epic drafter tests"
+      - path: tests/governance/test_spec_entry_drafter.py
+        role: "Spec entry drafter tests"
+
+  modifies:
+    modules:
+      governance:
+        provides:
+          - "build validation"
+          - "epic validation"
+          - "contract validation"
+          - "spec scaffolding"
+          - "intent parsing"
+          - "LLM-assisted spec drafting"
+          - "LLM-assisted epic drafting"      # NEW
+          - "LLM-assisted spec entry drafting" # NEW
+
+    kernel_surfaces:
+      - command: "spec epic create"
+        usage: "spec epic create <title> --goal <goal> --owner <owner> [--llm] [--context <file>] [--model <model>]"
+        description: "Create epic. Skeleton by default, LLM-assisted with --llm"
+
+      - command: "spec epic add-spec"
+        usage: "spec epic add-spec <epic-id> <description> [--llm] [--context <file>] [--target <target-id>]"
+        description: "Add spec(s) to epic. --llm crawls repo and drafts expectations/constraints"
+
+    cli:
+      - file: src/spec/cli/epic.py
+        changes: "Add --llm and --context to create (no --repo); change add-spec to accept description + --llm; add per-spec mode recommendation"
+      - file: src/spec/cli/spec.py
+        changes: "Remove legacy commands, simplify init"
+
+  removes:
+    kernel_surfaces:
+      - command: "spec create"
+        reason: "Superseded by spec draft"
+      - command: "spec spec-compile"
+        reason: "v1 authoring, obsolete"
+      - command: "spec gate-list"
+        reason: "AIP gate tracking, never used"
+      - command: "spec gate-report"
+        reason: "AIP gate tracking, never used"
+      - command: "spec materialize"
+        reason: "Governor materialization, rarely used"
+      - command: "spec migrate"
+        reason: "One-time migration tool, no longer needed"
+      - command: "spec list"
+        reason: "Confusing (lists specs/AIPs not epics), use spec epic list"
+
+    cli:
+      - file: src/spec/cli/spec.py
+        removes:
+          - "create command"
+          - "spec_compile command"
+          - "gate_list command"
+          - "gate_report command"
+          - "materialize command"
+          - "migrate command"
+          - "list_specs command"
+          - "RiskTier enum"
+          - "get_next_aip_id function"
+          - "get_template_path function"
+          - "get_schema_path function"
+          - "legacy config helpers"
+```
+
+## Acceptance Criteria
+
+**Epic creation with LLM:**
+- [ ] `spec epic create "Title" --goal "..." --owner "..."` creates a skeleton epic (no repo-path flags)
+- [ ] `spec epic create "Title" --goal "..." --owner "..." --llm` crawls the current working repository (and any already-known targets, if present) and generates:
+  - Meaningful `intent.narrative` explaining the problem
+  - Initial `specs` list with expectations/constraints
+  - Proper `depends_on` relationships between specs
+- [ ] Each generated spec entry includes `mode: interactive|headless` recommendation
+- [ ] `--context <file>` accepts additional guidance (existing epic to clean up, notes, etc.)
+- [ ] Output is valid epic.yaml that passes `spec validate epic`
+
+**Spec entry addition with LLM:**
+- [ ] `spec epic add-spec t004 "description of work"` fails without --llm (needs either manual fields or LLM)
+- [ ] `spec epic add-spec t004 "description" --llm` crawls repo and generates one or more spec entries:
+  - Sensible `id`, `title`, `branch` naming
+  - `expectations` derived from codebase understanding
+  - `constraints` based on architectural boundaries
+  - `depends_on` figured out from existing specs
+  - `path` pointing to where spec.md will go
+- [ ] Generated spec entries include `mode: interactive|headless` recommendation
+- [ ] Can generate multiple specs from one description ("break this feature into specs")
+- [ ] Manual mode still works: `spec epic add-spec t004 --id ... --repo ... --branch ... --path ... --mode headless`
+
+**Legacy cleanup:**
+- [ ] `spec create` removed
+- [ ] `spec spec-compile` removed
+- [ ] `spec gate-list` removed
+- [ ] `spec gate-report` removed
+- [ ] `spec materialize` removed
+- [ ] `spec migrate` removed
+- [ ] `spec list` removed
+- [ ] Associated dead code removed (RiskTier, get_next_aip_id, templates, etc.)
+
+**Init/config simplification:**
+- [ ] `spec init --legacy-mode` removed
+- [ ] `spec init` only: creates .specwright.yaml, installs the two default JobDefs, optionally installs slash commands
+- [ ] No more .specwright/tmp, .specwright/runs, .specwright/artifacts creation
+- [ ] `spec config` simplified to essential settings only
 
 ## Constraints
 
-- Compiler reads from epic, not spec.md
-- AIP is the only execution artifact (no sep.yaml)
-- Use existing LLMClient and prompts.yaml infrastructure
-- Artifacts stored at ~/.local/local-governor/artifacts/{epic}/{spec}/
-- Background mode captures stdout with timeout handling
-- Repo-scoped by default: execution and diffs are for the target repo; cross-repo changes require explicit opt-in
+- LLM drafting uses read-only tool allowlist (same as spec_drafter.py)
+- No backwards compatibility guarantees. Commands/flags/config formats may change or be removed.
 
-## Implementation Steps
+---
 
-### step-1: Validate AIP v3 Data Model
+## Phase 1: Epic drafter implementation
 
-Verify that dataclasses in `src/spec/aip/models.py` correctly serialize to JSON that validates against `src/spec/schemas/aip-v3.schema.json`, ensuring the foundation for AIP execution artifacts.
+### Objective
+Implement LLM-assisted epic drafting that crawls a repo and generates meaningful epic content.
 
-**Likely files:**
-- `src/spec/aip/models.py`
-- `src/spec/schemas/aip-v3.schema.json`
-- `tests/aip/test_models.py`
+### Files to Touch
+- `src/spec/governance/epic_drafter.py` (create) - EpicDrafter class
+- `tests/governance/test_epic_drafter.py` (create) - drafter tests
 
-**Patterns to follow:**
-- `src/spec/aip/models.py` - Use standard python @dataclass for model definitions.
-- `tests/aip/test_compiler.py` - Follow existing test structure for fixtures and assertions.
+### Implementation Notes
 
-**Approach:**
+```python
+"""LLM-assisted epic drafting using Claude Code."""
 
-1. Create a new test file `tests/aip/test_models.py`.
-2. Define a 'golden' instance of the top-level AIP dataclass in `src/spec/aip/models.py` populated with all possible fields.
-3. Implement a serialization routine (using `dataclasses.asdict`) that handles Enums and optional fields to match JSON expectations.
-4. Load `src/spec/schemas/aip-v3.schema.json` using the `jsonschema` library.
-5. Assert that the serialized dataclass validates against the schema.
-6. Adjust `src/spec/aip/models.py` field names or types if validation fails.
+from pathlib import Path
+from spec.governance.spec_drafter import DRAFTING_ALLOWLIST
 
-**Watch out for:**
-- Mismatch between Python snake_case attributes and JSON schema field naming (camelCase vs snake_case).
-- Serialization of Python `Enum` objects (requires conversion to string values before validation).
-- Handling of `None` values in dataclasses versus omitted keys in JSON schema validation.
+class EpicDrafter:
+    """Draft epic.yaml content by crawling repository."""
 
-### step-2: Verify Compiler CLI Integration
+    def __init__(
+        self,
+        title: str,
+        goal: str,
+        context: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        self.title = title
+        self.goal = goal
+        self.context = context
+        self.model = model
 
-Confirm `spec aip-compile` in `src/spec/cli/spec.py` correctly invokes `src/spec/aip/compiler.py` to read an epic via `src/spec/epic/loader.py` and output a valid AIP skeleton.
+    def draft(self) -> dict:
+        """Generate epic dict by exploring repos.
 
-**Likely files:**
-- `src/spec/cli/spec.py`
-- `src/spec/aip/compiler.py`
-- `src/spec/epic/loader.py`
-- `src/spec/aip/models.py`
-- `tests/aip/test_compiler.py`
+        Returns:
+            Epic dict ready for YAML serialization.
+        """
+        # Build prompt with goal + context
+        prompt = self._build_prompt()
 
-**Patterns to follow:**
-- `src/spec/cli/spec.py` - Follow existing click/argparse command definitions for handling input file paths and flags.
-- `src/spec/epic/loader.py` - Use existing loader functions to hydrate Epic objects from disk before passing to the compiler.
+        # Call Claude Code with read-only tools
+        result = self._call_claude_code(prompt)
 
-**Approach:**
+        # Parse YAML from response
+        return self._parse_epic(result)
 
-1. Inspect `src/spec/cli/spec.py` to ensure the `aip-compile` command is registered and accepts an epic path and output path.
-2. Verify that `aip-compile` imports `load_epic` from `src/spec/epic/loader.py` to parse the input.
-3. Ensure the CLI passes the loaded Epic object to `src/spec/aip/compiler.py`.
-4. Confirm `src/spec/aip/compiler.py` returns a compliant AIP skeleton (dict or dataclass) matching `src/spec/aip/models.py`.
-5. Verify the CLI writes the resulting output to the specified destination.
+    def _build_prompt(self) -> str:
+        """Build prompt for epic drafting."""
+        return f"""You are drafting an epic for the specwright system.
 
-**Watch out for:**
-- Ensure logic remains in `compiler.py` and not leaked into `cli/spec.py`.
-- Validate that the output structure aligns with `src/spec/schemas/aip-v3.schema.json`.
-- Avoid using Pydantic for models; stick to standard library dataclasses or TypedDict.
+## Goal
+{self.goal}
 
-### step-3: Verify Enricher CLI Integration
+## Title
+{self.title}
 
-Confirm `spec aip-enrich` in `src/spec/cli/spec.py` correctly invokes `src/spec/aip/enricher.py`, utilizing `src/spec/llm/client.py` to populate the AIP skeleton with steps and guidance.
+## Target Repositories
+- Current working repository (cwd)
+- Any repositories registered as epic targets (if available)
 
-**Likely files:**
-- `src/spec/cli/spec.py`
-- `src/spec/aip/enricher.py`
-- `src/spec/llm/client.py`
-- `src/spec/llm/prompts.py`
-- `tests/aip/test_enricher.py`
+{f'## Additional Context\n{self.context}' if self.context else ''}
 
-**Patterns to follow:**
-- `src/spec/cli/spec.py` - Follow the existing Click command registration pattern (e.g., similar to `aip-compile`) for handling input/output file paths.
-- `src/spec/aip/compiler.py` - Mirror the functional approach: load JSON, instantiate LLM client, invoke logic, save JSON.
+## Your Task
 
-**Approach:**
+1. Explore the repository to understand the current state
+2. Identify what work needs to be done to achieve the goal
+3. Break the work into logical specs with clear boundaries
+4. For each spec, determine:
+   - A clear title and ID
+   - Expectations (what it should deliver)
+   - Constraints (boundaries, limitations)
+   - Dependencies on other specs
 
-1. Implement the `aip-enrich` command in `src/spec/cli/spec.py`, ensuring it accepts path arguments for the skeleton AIP and the output file.
-2. In `src/spec/aip/enricher.py`, implement the logic to traverse the AIP skeleton steps, using `src/spec/llm/client.py` and prompts from `src/spec/llm/prompts.py` to generate step-specific guidance.
-3. Ensure the enricher populates the `guidance` field for each step without altering the overall JSON structure defined in `src/spec/schemas/aip-v3.schema.json`.
-4. specific unit tests in `tests/aip/test_enricher.py` to mock LLM responses and verify JSON transformation.
+## Output Format
 
-**Watch out for:**
-- Ensure no Pydantic models are introduced; stick to standard Python types/dicts.
-- Verify that `src/spec/llm/client.py` handles API key configuration implicitly or via environment variables, avoiding hardcoded secrets in the CLI.
-- Do not depend on legacy logic in `src/spec/governor` or `src/spec/executor`.
+Output YAML for an epic *draft patch* (not a full epic.yaml). The CLI will:
+1) create a valid skeleton epic.yaml (with created/updated/state/history), then
+2) merge this patch into it, then
+3) validate and write the final epic.yaml.
 
-### step-4: Harden Runner and Artifact Collection
+```yaml
+patch:
+  intent:
+    narrative: |
+      <Explain the problem and why this epic matters>
+  targets:
+    - id: <target-id>
+      repo_path: <absolute-path>
+      default_branch: main
+  specs:
+    - id: <spec-id>
+      title: <spec-title>
+      repo: <target-id>
+      branch: feat/<slug>
+      path: specs/<spec-id>.md
+      depends_on: []
+      mode: headless  # or interactive
+      expectations:
+        - <what this spec delivers>
+      constraints:
+        - <boundaries and limitations>
+```
 
-Verify `spec aip-run` in `src/spec/cli/spec.py` invokes `src/spec/runner/background.py` to execute Claude (with `--dangerously-skip-permissions`), and ensure `src/spec/artifacts/collector.py` correctly captures `transcript.jsonl`, `commands.json`, `patch.diff`, and `verification.json` to the artifact storage path.
+Output ONLY the YAML, nothing else."""
+```
 
-**Likely files:**
-- `src/spec/cli/spec.py`
-- `src/spec/runner/background.py`
-- `src/spec/artifacts/collector.py`
-- `src/spec/artifacts/storage.py`
-- `tests/runner/test_background.py`
+### Verification
+- `pytest tests/governance/test_epic_drafter.py -v`
+- EpicDrafter with mock Claude returns valid epic structure
+- Prompt includes all required context
 
-**Patterns to follow:**
-- `src/spec/cli/spec.py` - Ensure `aip-run` uses the existing Click command structure and argument parsing patterns.
-- `src/spec/artifacts/storage.py` - Use this module to resolve the destination paths for artifact persistence before implementing the copy logic in collector.py.
+---
 
-**Approach:**
+## Phase 2: Spec entry drafter implementation
 
-1. Update `src/spec/runner/background.py` to build the `claude` subprocess command, explicitly adding the `--dangerously-skip-permissions` flag to bypass interactive prompts.
-2. Implement the execution logic in `background.py` to run the subprocess in the target working directory and wait for completion.
-3. Modify `src/spec/artifacts/collector.py` to scan the execution directory after the run completes and copy `transcript.jsonl`, `commands.json`, `patch.diff`, and `verification.json` to the artifact storage location.
-4. Connect `spec aip-run` in `src/spec/cli/spec.py` to invoke the runner and then the collector.
-5. Verify command construction and artifact file existence checks in `tests/runner/test_background.py`.
+### Objective
+Implement LLM-assisted spec entry drafting that adds specs to existing epics.
 
-**Watch out for:**
-- Failing to include `--dangerously-skip-permissions` will cause the background process to hang waiting for user input.
-- The artifact collector must handle cases where optional files (like `patch.diff` or `verification.json`) are not generated by Claude.
-- Ensure the subprocess execution environment (cwd) matches where Claude expects to run to generate relative file paths correctly.
+### Files to Touch
+- `src/spec/governance/spec_entry_drafter.py` (create) - SpecEntryDrafter class
+- `tests/governance/test_spec_entry_drafter.py` (create) - drafter tests
 
-### step-5: Verify Status and Diff Reporting
+### Implementation Notes
 
-Ensure `spec aip-status` and `spec aip-diff` in `src/spec/cli/spec.py` correctly retrieve execution state and git diffs from `src/spec/artifacts/storage.py` and display them to the user.
+```python
+"""LLM-assisted spec entry drafting for epics."""
 
-**Likely files:**
-- `src/spec/cli/spec.py`
-- `src/spec/artifacts/storage.py`
+from pathlib import Path
+from spec.epic.schema import Epic, SpecRef
 
-**Patterns to follow:**
-- `src/spec/cli/spec.py` - Follow the Click command structure for `aip-status` and `aip-diff` subcommands, ensuring proper context handling.
-- `src/spec/artifacts/storage.py` - Encapsulate filesystem reads within the storage class methods (e.g., `load_execution_state`, `load_diff`) rather than reading files directly in the CLI.
+class SpecEntryDrafter:
+    """Draft spec entries for an existing epic."""
 
-**Approach:**
+    def __init__(
+        self,
+        epic: Epic,
+        description: str,
+      target_id: str | None = None,
+        context: str | None = None,
+        model: str = "claude-sonnet-4-20250514",
+    ):
+        self.epic = epic
+        self.description = description
+      self.target_id = target_id
+        self.context = context
+        self.model = model
 
-1. Update `src/spec/artifacts/storage.py` to include methods for retrieving the persisted execution state (status) and the generated git diff content.
-2. In `src/spec/cli/spec.py`, implement `aip-status` to invoke the storage layer, parse the execution state, and display a human-readable summary of the current step and overall progress.
-3. In `src/spec/cli/spec.py`, implement `aip-diff` to invoke the storage layer for the git diff artifact and print it to stdout.
-4. Add error handling in the CLI to display a friendly message if the artifacts (status or diff) do not exist yet.
+    def draft(self) -> list[SpecRef]:
+        """Generate spec entries by exploring repo.
 
-**Watch out for:**
-- Hardcoding file paths in the CLI module instead of relying on `storage.py` configuration.
-- Failing to handle cases where `aip-run` has not yet been executed (missing artifacts).
-- Complex formatting logic in the CLI; keep it simple and readable.
+        Returns:
+            List of SpecRef objects to add to epic.
+        """
+        prompt = self._build_prompt()
+        result = self._call_claude_code(prompt)
+        return self._parse_specs(result)
 
-### step-6: Dogfooding: End-to-End Orchestration Run
+    def _build_prompt(self) -> str:
+        """Build prompt including existing epic context."""
+        existing_specs = "\n".join(
+            f"- {s.id}: {s.title} (depends_on: {s.depends_on})"
+            for s in self.epic.specs
+        )
 
-Run the full `spec aip-compile` -> `spec aip-enrich` -> `spec aip-run` lifecycle against the `specwright` repo (targeting a maintenance task) to prove the pipeline works and produce a complete set of non-empty artifacts.
+        return f"""You are adding specs to an existing epic.
 
-**Likely files:**
-- `src/spec/cli/spec.py`
-- `src/spec/aip/compiler.py`
-- `src/spec/aip/enricher.py`
-- `src/spec/runner/background.py`
-- `src/spec/artifacts/storage.py`
-- `src/spec/llm/client.py`
+## Epic: {self.epic.id}
+{self.epic.intent.goal}
 
-**Patterns to follow:**
-- `src/spec/cli/spec.py` - Ensure argparse subcommands (aip-compile, aip-enrich, aip-run) are correctly wired to pass artifact IDs/paths between stages.
-- `src/spec/artifacts/storage.py` - Verify that JSON artifacts are serialized/deserialized correctly between CLI steps without using Pydantic (use standard json or dataclasses.asdict).
+## Existing Specs
+{existing_specs or "(none)"}
 
-**Approach:**
+## Description of New Work
+{self.description}
 
-1. Create a simple input file (e.g., `task.md`) describing a trivial maintenance task (e.g., 'Add a comment to src/spec/cli/spec.py').
-2. Run `spec aip-compile task.md` and verify it produces an initial structural artifact (check storage).
-3. Run `spec aip-enrich <artifact_id>` to invoke the LLM logic and verify the artifact is updated with concrete execution steps.
-4. Run `spec aip-run <artifact_id>` to execute the plan.
-5. validate that the expected change (the comment) appears in the target file.
+## Target Repositories (from epic.yaml)
+- Use all epic targets as context
+- If provided, treat `target_id` as the primary working repo for this spec batch
 
-**Watch out for:**
-- Ensure `aip-enrich` does not hallucinate non-existent file paths; the context retrieval must be working.
-- Verify that `aip-run` correctly interprets the enriched steps and doesn't just print them.
-- Check that `ArtifactStorage` uses a consistent directory (e.g., `.spec/store`) across multiple CLI invocations.
+{f'## Additional Context\n{self.context}' if self.context else ''}
+
+## Your Task
+
+1. Explore the repository to understand the current state
+2. Based on the description, determine what spec(s) are needed
+3. For each spec, figure out:
+   - ID following epic's naming pattern (e.g., {self.epic.id.split('-')[0]}-XX)
+   - Clear title
+   - Branch name (feat/<slug>)
+   - Expectations (what it delivers)
+   - Constraints (boundaries)
+   - Dependencies on existing or new specs
+
+## Output Format
+
+Output YAML for the new spec entries:
+
+```yaml
+specs:
+  - id: <spec-id>
+    title: <title>
+    repo: <target-id>
+    branch: feat/<slug>
+    path: specs/<spec-id>.md
+    status: planned
+    depends_on: [<existing-spec-ids-if-any>]
+    mode: headless  # or interactive
+    expectations:
+      - <expectation>
+    constraints:
+      - <constraint>
+```
+
+You may output multiple specs if the work should be broken down.
+Output ONLY the YAML, nothing else."""
+```
+
+### Verification
+- `pytest tests/governance/test_spec_entry_drafter.py -v`
+- Drafter respects existing spec naming patterns
+- Dependencies reference existing specs correctly
+- Can generate multiple specs from one description
+
+---
+
+## Phase 3: CLI integration for epic create --llm
+
+### Objective
+Wire EpicDrafter into `spec epic create` command with --llm flag.
+
+### Files to Touch
+- `src/spec/cli/epic.py` (modify) - add --llm, --repo, --context to create command
+- `src/spec/governance/__init__.py` (modify) - export EpicDrafter
+- `tests/cli/test_epic_create_llm.py` (create) - CLI integration tests
+
+### Implementation Notes
+
+Modify `create` command signature:
+```python
+@epic_app.command()
+def create(
+    title: str = typer.Argument(..., help="Epic title"),
+    id: str | None = typer.Option(None, "--id", help="Epic ID"),
+    goal: str = typer.Option(..., "--goal", "-g", help="One-line goal"),
+  owner: str = typer.Option(..., "--owner", help="Owner username"),
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft epic content"),
+    context: Path | None = typer.Option(None, "--context", "-c", help="Additional context file"),
+    model: str = typer.Option("claude-sonnet-4-20250514", "--model", "-m", help="Model for --llm"),
+) -> None:
+```
+
+Logic:
+- Without --llm: create skeleton epic.yaml only
+- With --llm: create skeleton epic.yaml, then use EpicDrafter to generate a patch and merge it into the skeleton
+
+### Verification
+- `spec epic create --help` shows new flags
+- `spec epic create "Title" --goal "..." --owner "..."` creates skeleton
+- `spec epic create "Title" --goal "..." --owner "..." --llm` drafts and writes epic content
+- Generated epic passes `spec validate epic`
+
+---
+
+## Phase 4: CLI integration for epic add-spec --llm
+
+### Objective
+Wire SpecEntryDrafter into `spec epic add-spec` with --llm flag.
+
+### Files to Touch
+- `src/spec/cli/epic.py` (modify) - change add-spec to support description + --llm
+- `tests/cli/test_epic_add_spec_llm.py` (create) - CLI integration tests
+
+### Implementation Notes
+
+Change `add-spec` signature to support both modes:
+```python
+@epic_app.command("add-spec")
+def add_spec(
+    epic_id: str = typer.Argument(..., help="Epic ID"),
+    description: str | None = typer.Argument(None, help="Description of work (for --llm mode)"),
+    # Manual mode options (existing)
+    spec_id: str | None = typer.Option(None, "--id", help="Spec ID (manual mode)"),
+    repo: str | None = typer.Option(None, "--repo", help="Target repo ID"),
+    branch: str | None = typer.Option(None, "--branch", help="Working branch"),
+    path: str | None = typer.Option(None, "--path", help="Spec path"),
+  mode: str = typer.Option("headless", "--mode", help="Recommended mode: interactive|headless"),
+    depends_on: list[str] = typer.Option([], "--depends-on", help="Dependencies"),
+    expectation: list[str] = typer.Option([], "--expectation", "-e", help="Expectations"),
+    # LLM mode options
+    llm: bool = typer.Option(False, "--llm", help="Use LLM to draft spec entries"),
+  target: str | None = typer.Option(None, "--target", help="Primary target repo ID (LLM mode)"),
+    context: Path | None = typer.Option(None, "--context", "-c", help="Additional context"),
+    model: str = typer.Option("claude-sonnet-4-20250514", "--model", "-m", help="Model"),
+) -> None:
+```
+
+Logic:
+- With --llm + description: use SpecEntryDrafter, may add multiple specs (and set `mode` for each)
+- Without --llm: require manual fields (--id, --repo, --branch, --path)
+- Description without --llm: fail with helpful message
+
+### Verification
+- `spec epic add-spec t004 "add caching" --llm` drafts spec entry
+- Multiple specs can be generated from one description
+- Manual mode still works: `spec epic add-spec t004 --id ... --repo ...`
+- Generated specs have proper depends_on for existing specs
+
+---
+
+## Phase 5: Legacy command removal
+
+### Objective
+Remove unused legacy commands and associated dead code.
+
+### Files to Touch
+- `src/spec/cli/spec.py` (modify) - remove commands and helpers
+- `tests/cli/test_legacy_removed.py` (create) - verify commands are gone
+
+### Implementation Notes
+
+Remove from spec.py:
+1. `create` command (lines 536-732)
+2. `spec_compile` command (lines 735-848)
+3. `gate_list` command (lines 854-915)
+4. `gate_report` command (lines 918-969)
+5. `materialize` command (lines 972-1026)
+6. `migrate` command (lines 1029-1165)
+7. `list_specs` command (lines 1168-1214)
+
+Remove helper functions:
+- `RiskTier` enum
+- `slugify` function
+- `get_next_aip_id` function
+- `get_git_remote_url` function
+- `get_template_path` function
+- `get_schema_path` function
+- `get_default_config` legacy mode support
+- `is_legacy_config` function
+- `get_specs_path` function
+- `get_aips_path` function
+- `get_user_default` function
+
+### Verification
+- `spec create` returns "unknown command"
+- `spec spec-compile` returns "unknown command"
+- `spec gate-list` returns "unknown command"
+- `spec gate-report` returns "unknown command"
+- `spec materialize` returns "unknown command"
+- `spec migrate` returns "unknown command"
+- `spec list` returns "unknown command"
+- `ruff check src/spec/cli/spec.py` passes (no unused imports)
+
+---
+
+## Phase 6: Init/config simplification
+
+### Objective
+Simplify `spec init` to essentials and remove legacy mode.
+
+### Files to Touch
+- `src/spec/cli/spec.py` (modify) - simplify init command
+- `tests/cli/test_init_simplified.py` (create) - verify simplified behavior
+
+### Implementation Notes
+
+Simplified init:
+```python
+@app.command()
+def init(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing config"),
+    governor: str = typer.Option(
+        "~/.local/local-governor",
+        "--governor",
+        help="Local-governor path"
+    ),
+    claude: bool = typer.Option(True, "--claude/--no-claude", help="Install slash commands"),
+) -> None:
+    """Initialize Specwright configuration.
+
+    Creates .specwright.yaml with governor path and installs JobDefs.
+
+    Examples:
+        spec init
+        spec init --governor /custom/path
+        spec init --no-claude
+    """
+    config_path = Path.cwd() / ".specwright.yaml"
+
+    if config_path.exists() and not force:
+        typer.echo(f"Error: {config_path} already exists. Use --force to overwrite.")
+        raise typer.Exit(1)
+
+    # Write minimal config (no legacy)
+    config = {
+      "version": "0.7",
+      "governor": {"path": governor},
+      "jobdefs": {"path": f"{governor}/jobdefs/specwright"},
+      "defaults": {
+        "jobs": {
+          "headless": "aip-1",
+          "interactive": "interactive-1",
+        }
+      },
+    }
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, sort_keys=False)
+
+    typer.secho(f"Created {config_path}", fg=typer.colors.GREEN)
+
+    # Install the two default JobDefs
+    from spec.executor.jobdefs import install_default_jobdefs
+    gov_path = Path(governor).expanduser()
+    installed = install_default_jobdefs(gov_path, overwrite=force)
+    if installed:
+        typer.echo(f"Installed {len(installed)} JobDefs to {gov_path}/jobdefs/")
+
+    # Install slash commands
+    if claude:
+        _install_slash_commands()
+```
+
+Remove from init:
+- `--legacy-mode` flag
+- `.specwright/` directory creation (tmp, runs, artifacts)
+- GUIDE.md copying
+- Schema copying
+- gitignore modification
+
+Simplified config - keep only:
+- `spec config --show` to display config
+- Remove the key-value setting complexity
+
+### Verification
+- `spec init --legacy-mode` fails (unknown option)
+- `spec init` creates minimal .specwright.yaml
+- No .specwright/ directory created
+- JobDefs installed to governor (aip-1 + interactive-1)
+- `spec config --show` displays config

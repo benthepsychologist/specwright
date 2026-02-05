@@ -24,14 +24,19 @@ from spec.executor.engine import (
     execute,
     execute_instance,
     generate_run_id,
-    get_job_def,
+)
+from spec.executor.jobdefs import (
+    JobDefError,
+    JobDefNotFoundError,
     list_job_defs,
+    load_job_def,
 )
 from spec.executor.schemas import (
     JobInstance,
     OutcomeStatus,
     RunStatus,
 )
+from spec.executor.store import DEFAULT_ROOT as DEFAULT_RUNS_ROOT
 from spec.executor.store import RunStore
 
 # Required frontmatter fields for .md specs
@@ -236,9 +241,19 @@ def compile_command(
         _echo_error(f"Spec file not found: {spec_path}")
         raise typer.Exit(1)
 
-    if job_id not in list_job_defs():
+    # Load JobDef from local-governor
+    try:
+        job_def = load_job_def(job_id)
+    except JobDefNotFoundError:
         _echo_error(f"Unknown job_id: {job_id}")
-        typer.echo(f"Available job IDs: {', '.join(list_job_defs())}")
+        available = list_job_defs()
+        if available:
+            typer.echo(f"Available job IDs: {', '.join(available)}")
+        else:
+            typer.echo("No JobDefs installed. Run 'spec init' to install defaults.")
+        raise typer.Exit(1)
+    except JobDefError as e:
+        _echo_error(f"Failed to load JobDef: {e}")
         raise typer.Exit(1)
 
     # Load spec markdown
@@ -258,15 +273,19 @@ def compile_command(
     repo_path = repo_path.resolve()
 
     # Resolve branch from frontmatter or generate from title
+    # Check multiple locations: top-level "branch", repo.working_branch, or generate
     if branch is None:
-        branch = frontmatter.get("repo", {}).get("working_branch")
+        branch = (
+            frontmatter.get("branch")  # Top-level branch (new simple format)
+            or frontmatter.get("repo", {}).get("working_branch")  # Nested repo.working_branch
+        )
         if not branch:
             title_slug = frontmatter["title"].lower().replace(" ", "-")
             branch = f"feat/{title_slug}"
 
-    # Build envelope
+    # Build envelope (job_def is included, not just job_id)
     envelope = {
-        "job_id": job_id,
+        "job_def": job_def.model_dump(),
         "payload": {
             "spec_md": spec_md,  # Full markdown content
             "spec_path": str(spec_path.resolve()),
@@ -279,9 +298,8 @@ def compile_command(
         },
     }
 
-    # Get JobDef and compile
+    # Compile to JobInstance (job_def already loaded above)
     try:
-        job_def = get_job_def(job_id)
         job_instance = compile_job(job_def, envelope)
     except CompileError as e:
         _echo_error(f"Compilation failed: {e}")
@@ -344,7 +362,7 @@ def execute_command(
     typer.echo("")
 
     # Execute directly from JobInstance (no recompilation)
-    store = RunStore()
+    store = _new_store(_infer_runs_root())
 
     try:
         result = execute_instance(job_instance, store=store, run_id=run_id)
@@ -409,9 +427,19 @@ def run_command(
         _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
         raise typer.Exit(1)
 
-    if job_id not in list_job_defs():
+    # Load JobDef from local-governor
+    try:
+        job_def = load_job_def(job_id)
+    except JobDefNotFoundError:
         _echo_error(f"Unknown job_id: {job_id}")
-        typer.echo(f"Available job IDs: {', '.join(list_job_defs())}")
+        available = list_job_defs()
+        if available:
+            typer.echo(f"Available job IDs: {', '.join(available)}")
+        else:
+            typer.echo("No JobDefs installed. Run 'spec init' to install defaults.")
+        raise typer.Exit(1)
+    except JobDefError as e:
+        _echo_error(f"Failed to load JobDef: {e}")
         raise typer.Exit(1)
 
     # Load spec - either from file or from epic/spec
@@ -492,15 +520,19 @@ def run_command(
         raise typer.Exit(1)
 
     # Resolve branch from frontmatter or generate from title
+    # Check multiple locations: top-level "branch", repo.working_branch, or generate
     if branch is None:
-        branch = frontmatter.get("repo", {}).get("working_branch")
+        branch = (
+            frontmatter.get("branch")  # Top-level branch (new simple format)
+            or frontmatter.get("repo", {}).get("working_branch")  # Nested repo.working_branch
+        )
         if not branch:
             title_slug = frontmatter["title"].lower().replace(" ", "-")
             branch = f"feat/{title_slug}"
 
-    # Build envelope
+    # Build envelope (job_def is included, not just job_id)
     envelope = {
-        "job_id": job_id,
+        "job_def": job_def.model_dump(),
         "payload": {
             "spec_md": spec_md,  # Full markdown content
             "spec_path": str(spec_path.resolve()),
@@ -519,7 +551,6 @@ def run_command(
     if dry_run:
         # Compile and print without executing
         try:
-            job_def = get_job_def(job_id)
             job_instance = compile_job(job_def, envelope)
         except CompileError as e:
             _echo_error(f"Compilation failed: {e}")
@@ -535,7 +566,7 @@ def run_command(
     if run_id is None:
         run_id = generate_run_id(spec_id=resolved_spec_id)
 
-    typer.echo(f"Running job: {job_id}")
+    typer.echo(f"Running job: {job_def.job_id}")
     typer.echo(f"  Run ID:   {run_id}")
     if epic_id and spec_id:
         typer.echo(f"  Epic:     {epic_id}")
@@ -547,7 +578,7 @@ def run_command(
     typer.echo("")
 
     # Execute
-    store = RunStore()
+    store = _new_store(_infer_runs_root(spec_path))
 
     try:
         result = execute(envelope, store=store, run_id=run_id)
@@ -584,7 +615,8 @@ def status_command(
         spec status run-20260123-143052-abc123
         spec status --limit 20
     """
-    store = RunStore()
+    hint_root = _infer_runs_root()
+    store = _new_store(hint_root)
 
     if run_id is None:
         # List recent runs
@@ -612,12 +644,13 @@ def status_command(
                 typer.echo(f"{rid:<40} {'<error reading>':<20}")
     else:
         # Show specific run
-        if not store.run_exists(run_id):
+        resolved_store = _store_for_run_id(run_id, hint_runs_root=hint_root)
+        if resolved_store is None:
             _echo_error(f"Run not found: {run_id}")
             raise typer.Exit(1)
 
-        record = store.read_run_record(run_id)
-        _show_run_details(record, store)
+        record = resolved_store.read_run_record(run_id)
+        _show_run_details(record, resolved_store)
 
 
 # =============================================================================
@@ -642,9 +675,9 @@ def logs_command(
         spec logs run-20260123-143052-abc123 2 --stderr
         spec logs run-20260123-143052-abc123 2 --patch
     """
-    store = RunStore()
-
-    if not store.run_exists(run_id):
+    hint_root = _infer_runs_root()
+    store = _store_for_run_id(run_id, hint_runs_root=hint_root)
+    if store is None:
         _echo_error(f"Run not found: {run_id}")
         raise typer.Exit(1)
 
@@ -716,6 +749,109 @@ def _show_run_summary(result, store: RunStore) -> None:
     status_color = _status_color(result.status)
     typer.echo("Run completed: ", nl=False)
     typer.secho(result.status.value, fg=status_color)
+
+
+def _find_epic_dir_for_spec_path(spec_path: Path) -> Path | None:
+    """Infer epic directory from a spec path.
+
+    Expected layout (local-governor epics):
+        <epic_dir>/epic.yaml
+        <epic_dir>/specs/<spec>.md
+    """
+    try:
+        spec_path = spec_path.resolve()
+    except Exception:
+        return None
+
+    if spec_path.parent.name == "specs":
+        epic_dir = spec_path.parent.parent
+        if (epic_dir / "epic.yaml").exists():
+            return epic_dir
+
+    # Fallback: walk upward looking for epic.yaml
+    for parent in [spec_path.parent, *spec_path.parents]:
+        if (parent / "epic.yaml").exists():
+            return parent
+    return None
+
+
+def _find_epic_dir_from_cwd() -> Path | None:
+    """Infer epic directory from current working directory by walking upward."""
+    cwd = Path.cwd()
+    for parent in [cwd, *cwd.parents]:
+        if (parent / "epic.yaml").exists():
+            return parent
+    return None
+
+
+def _infer_runs_root(spec_path: Path | None = None) -> Path:
+    """Choose a runs root.
+
+    Priority:
+      1) If spec_path is in an epic, use <epic_dir>/runs
+      2) If cwd is inside an epic, use <epic_dir>/runs
+      3) Legacy default (~/.local/local-governor/runs)
+    """
+    epic_dir = None
+    if spec_path is not None:
+        epic_dir = _find_epic_dir_for_spec_path(spec_path)
+    if epic_dir is None:
+        epic_dir = _find_epic_dir_from_cwd()
+    if epic_dir is not None:
+        return epic_dir / "runs"
+    return DEFAULT_RUNS_ROOT
+
+
+def _new_store(root: Path | None = None) -> RunStore:
+    """Create a RunStore, resilient to test monkeypatching.
+
+    Some tests monkeypatch `spec.cli.exec_commands.RunStore` with a zero-arg
+    callable. Prefer `RunStore(root=...)` but fall back to setting `store.root`.
+    """
+    if root is None:
+        return RunStore()
+
+    try:
+        return RunStore(root=root)
+    except TypeError:
+        # Tests may monkeypatch RunStore to a zero-arg callable that already
+        # returns a store rooted where the test expects. In that case, do not
+        # attempt to override `.root`.
+        return RunStore()
+
+
+def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> RunStore | None:
+    """Find which RunStore contains a run_id.
+
+    Tries hinted root, then legacy default root, then scans local-governor epics.
+    """
+    candidates: list[Path] = []
+    if hint_runs_root is not None:
+        candidates.append(hint_runs_root)
+    candidates.append(DEFAULT_RUNS_ROOT)
+
+    for root in candidates:
+        store = _new_store(root)
+        if store.run_exists(run_id):
+            return store
+
+    # Scan epics for <epic_dir>/runs/<run_id>/run.yaml
+    epics_root = Path.home() / ".local" / "local-governor" / "epics"
+    if epics_root.exists():
+        try:
+            for run_yaml in epics_root.rglob(f"runs/{run_id}/run.yaml"):
+                # run_yaml = <epic_dir>/runs/<run_id>/run.yaml
+                run_dir = run_yaml.parent
+                runs_root = run_dir.parent
+                store = _new_store(runs_root)
+                if store.run_exists(run_id):
+                    return store
+                break
+        except Exception:
+            # Non-fatal: fallback to None
+            pass
+
+    return None
 
     typer.echo(f"  Run ID:     {result.run_id}")
     typer.echo(f"  Job:        {result.job_id}")

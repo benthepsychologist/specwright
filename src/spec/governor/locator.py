@@ -2,7 +2,7 @@
 
 This module handles discovery of the local-governor directory using a
 precedence chain:
-1. SPECWRIGHT_GOVERNOR environment variable
+1. SPECWRIGHT_GOVERNOR_ROOT environment variable
 2. .specwright.yaml governor.path configuration
 3. Default: ~/.local/local-governor
 """
@@ -28,7 +28,7 @@ class GovernorNotFoundError(Exception):
             f"Could not find local-governor. Searched:\n  - {paths_str}\n\n"
             "To fix this:\n"
             "  1. Install local-governor: governor init\n"
-            "  2. Or set SPECWRIGHT_GOVERNOR environment variable\n"
+            "  2. Or set SPECWRIGHT_GOVERNOR_ROOT environment variable\n"
             "  3. Or add governor.path to .specwright.yaml"
         )
 
@@ -88,7 +88,7 @@ class GovernorLocator:
     """Locates and validates the local-governor directory."""
 
     # Environment variable for governor path
-    ENV_VAR = "SPECWRIGHT_GOVERNOR"
+    ENV_VAR = "SPECWRIGHT_GOVERNOR_ROOT"
 
     # Default governor path
     DEFAULT_PATH = Path.home() / ".local" / "local-governor"
@@ -134,10 +134,6 @@ class GovernorLocator:
         project = self._config.get("project_slug")
         if project:
             return project
-        # Try to get from autogov source
-        autogov = self._config.get("autogov", {})
-        if autogov.get("source"):
-            return autogov["source"]
         # Default to current directory name
         return Path.cwd().name
 

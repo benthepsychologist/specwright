@@ -1,7 +1,11 @@
 """
 claude-code backend: Spawn Claude Code agent sessions.
 
-Runs Claude Code CLI in dangerous mode with a tool allowlist.
+Supports two modes:
+  - Headless (default): --print + --dangerously-skip-permissions, stdin prompt,
+    stdout/stderr captured. Used by aip-1 JobDef.
+  - Interactive (payload.interactive=True): No --print, inherits terminal,
+    context via .claude/TASK.md. Used by interactive-1 JobDef.
 
 SECURITY NOTE:
     This backend uses a tool allowlist approach rather than the SandboxEnforcer
@@ -32,8 +36,7 @@ class ClaudeCodeBackend(BackendBase):
     """
     Claude Code agent session backend.
 
-    Spawns Claude Code in dangerous mode (--dangerously-skip-permissions)
-    with --print for non-interactive execution.
+    Spawns Claude Code in either headless or interactive mode.
 
     Payload schema:
         prompt: str - The prompt/instruction for Claude
@@ -43,6 +46,8 @@ class ClaudeCodeBackend(BackendBase):
         model: str | None - Model to use
         max_turns: int | None - Maximum conversation turns
         capture_git: bool - Whether to capture git state (default True)
+        interactive: bool - If True, launch TUI instead of headless (default False)
+        resume: bool - If True, pass --resume to claude CLI (default False)
     """
 
     @property
@@ -69,6 +74,7 @@ class ClaudeCodeBackend(BackendBase):
 
         payload = manifest.payload
         common = manifest.common
+        interactive = payload.get("interactive", False)
 
         # Extract payload fields
         prompt = payload.get("prompt")
@@ -99,6 +105,7 @@ class ClaudeCodeBackend(BackendBase):
         model = payload.get("model")
         max_turns = payload.get("max_turns")
         capture_git = payload.get("capture_git", True)
+        resume = payload.get("resume", False)
         timeout_s = common.timeout_s
 
         # Ensure artifacts directory exists
@@ -117,38 +124,59 @@ class ClaudeCodeBackend(BackendBase):
             except Exception as e:
                 pre_git_state = {"error": str(e)}
 
-        # Build command
-        cmd = self._build_command(
-            prompt=prompt,
-            repo_path=repo_path,
-            allowed_tools=allowed_tools,
-            model=model,
-            max_turns=max_turns,
-            policy=policy,
-        )
-
         # Prepare output files
         stdout_path = artifacts_dir / "stdout.txt"
         stderr_path = artifacts_dir / "stderr.txt"
         transcript_path = artifacts_dir / "transcript.jsonl"
 
-        # Execute
+        # Execute — branch based on interactive mode
         exit_code = 0
 
-        try:
-            exit_code = self._execute_claude(
-                cmd=cmd,
+        if interactive:
+            # Interactive: write TASK.md for reference, pass full spec as prompt
+            # (same as headless - the full spec content is the prompt)
+            cmd = self._build_interactive_command(
+                prompt=prompt,
+                model=model,
+                resume=resume,
+            )
+            try:
+                exit_code = self._execute_interactive(
+                    cmd=cmd,
+                    prompt=prompt,
+                    repo_path=repo_path,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
+            except Exception as e:
+                exit_code = 1
+                stderr_path.write_text(f"Execution error: {e}\n")
+                if not stdout_path.exists():
+                    stdout_path.write_text("")
+        else:
+            # Headless: --print mode, stdin prompt, capture stdout
+            cmd = self._build_command(
                 prompt=prompt,
                 repo_path=repo_path,
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                timeout_s=timeout_s,
+                allowed_tools=allowed_tools,
+                model=model,
+                max_turns=max_turns,
+                policy=policy,
             )
-        except Exception as e:
-            exit_code = 1
-            stderr_path.write_text(f"Execution error: {e}\n")
-            if not stdout_path.exists():
-                stdout_path.write_text("")
+            try:
+                exit_code = self._execute_claude(
+                    cmd=cmd,
+                    prompt=prompt,
+                    repo_path=repo_path,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    timeout_s=timeout_s,
+                )
+            except Exception as e:
+                exit_code = 1
+                stderr_path.write_text(f"Execution error: {e}\n")
+                if not stdout_path.exists():
+                    stdout_path.write_text("")
 
         # Try to extract transcript if available
         self._extract_transcript(repo_path, transcript_path)
@@ -224,7 +252,7 @@ class ClaudeCodeBackend(BackendBase):
         max_turns: int | None,
         policy: Policy,
     ) -> list[str]:
-        """Build the claude CLI command."""
+        """Build the claude CLI command for headless mode."""
         cmd = [
             "claude",
             "--print",  # Non-interactive mode
@@ -248,6 +276,38 @@ class ClaudeCodeBackend(BackendBase):
         # Add max turns if specified
         if max_turns:
             cmd.extend(["--max-turns", str(max_turns)])
+
+        return cmd
+
+    def _build_interactive_command(
+        self,
+        prompt: str,
+        model: str | None = None,
+        resume: bool = False,
+    ) -> list[str]:
+        """Build the claude CLI command for interactive TUI mode.
+
+        Uses --dangerously-skip-permissions because specwright operates in
+        a sandboxed context where the human has already approved the spec.
+        The human still controls the session via the TUI.
+
+        Args:
+            prompt: Initial prompt to start the session with
+            model: Optional model override
+            resume: If True, pass --resume to continue previous session
+        """
+        cmd = ["claude"]
+
+        if resume:
+            cmd.append("--resume")
+
+        if model:
+            cmd.extend(["--model", model])
+
+        # Use -- to signal end of options, then add prompt as positional argument
+        # This prevents prompts starting with - or --- from being parsed as options
+        cmd.append("--")
+        cmd.append(prompt)
 
         return cmd
 
@@ -305,7 +365,7 @@ class ClaudeCodeBackend(BackendBase):
         stderr_path: Path,
         timeout_s: int,
     ) -> int:
-        """Execute claude CLI and capture output."""
+        """Execute claude CLI in headless mode and capture output."""
         # Start process with new session for clean timeout handling
         proc = subprocess.Popen(
             cmd,
@@ -333,6 +393,73 @@ class ClaudeCodeBackend(BackendBase):
             stdout_path.write_text("")
             stderr_path.write_text(f"Claude timed out after {timeout_s}s\n")
             return 124  # Standard timeout exit code
+
+    def _execute_interactive(
+        self,
+        cmd: list[str],
+        prompt: str,
+        repo_path: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> int:
+        """Execute claude CLI in interactive TUI mode.
+
+        Writes spec content to .claude/TASK.md for Claude to reference,
+        then launches the TUI with terminal inherited (no PIPE).
+        No timeout — the human controls when to exit.
+
+        Args:
+            cmd: The claude command to run
+            prompt: Spec content to write as TASK.md
+            repo_path: Target repository path
+            stdout_path: Path to write stdout marker (empty for interactive)
+            stderr_path: Path to write stderr marker (empty for interactive)
+
+        Returns:
+            Exit code from the claude process
+        """
+        # Write TASK.md so Claude has context
+        self._write_task_md(repo_path, prompt)
+
+        # Build shell command string for os.system (proper TTY handling)
+        import shlex
+        cmd_str = " ".join(shlex.quote(arg) for arg in cmd)
+
+        try:
+            # Launch TUI via os.system for proper terminal inheritance
+            # subprocess.run doesn't properly attach PTY for interactive use
+            original_cwd = os.getcwd()
+            os.chdir(repo_path)
+            exit_code = os.system(cmd_str)
+            # os.system returns wait status, extract actual exit code
+            if os.WIFEXITED(exit_code):
+                exit_code = os.WEXITSTATUS(exit_code)
+            else:
+                exit_code = 1
+        finally:
+            os.chdir(original_cwd)
+            # Write empty marker files for artifact consistency
+            stdout_path.write_text("(interactive session — no stdout capture)\n")
+            stderr_path.write_text("")
+
+        return exit_code
+
+    @staticmethod
+    def _write_task_md(repo_path: Path, content: str) -> Path:
+        """Write spec content to .claude/TASK.md in the target repo.
+
+        Args:
+            repo_path: Target repository path
+            content: Markdown content to write
+
+        Returns:
+            Path to the written TASK.md file
+        """
+        claude_dir = repo_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        task_path = claude_dir / "TASK.md"
+        task_path.write_text(content, encoding="utf-8")
+        return task_path
 
     def _extract_transcript(self, repo_path: Path, transcript_path: Path) -> None:
         """Try to extract conversation transcript if available."""

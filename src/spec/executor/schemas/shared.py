@@ -12,3 +12,4 @@ class Backend(str, Enum):
     llm = "llm"
     claude_code = "claude-code"
     codex = "codex"
+    python = "python"

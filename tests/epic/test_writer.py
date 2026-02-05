@@ -1,7 +1,7 @@
 """Tests for epic writer - create and update epics."""
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,6 @@ from spec.epic.schema import (
 from spec.epic.writer import (
     add_spec,
     add_target,
-    append_history,
     create_epic,
     generate_event_id,
     mark_spec_done,
@@ -51,7 +50,7 @@ def temp_governor(tmp_path: Path):
 @pytest.fixture
 def sample_epic() -> Epic:
     """Create a sample epic for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Epic(
         version="0.1",
         kind="epic",
@@ -92,7 +91,7 @@ class TestCreateEpic:
 
     def test_creates_directory_structure(self, temp_governor: Path):
         """Creates correct directory structure."""
-        epic = create_epic(
+        create_epic(
             id="new-epic",
             title="New Epic",
             owner="testuser",
@@ -108,7 +107,7 @@ class TestCreateEpic:
 
     def test_creates_notes_stub(self, temp_governor: Path):
         """Creates notes.md with title."""
-        epic = create_epic(
+        create_epic(
             id="new-epic",
             title="My New Epic",
             owner="testuser",
@@ -448,7 +447,7 @@ class TestGenerateEventId:
 
     def test_first_event(self):
         """Generates EVT-0001 for first event."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         epic = Epic(
             version="0.1",
             kind="epic",
@@ -466,7 +465,7 @@ class TestGenerateEventId:
 
     def test_monotonic_increment(self):
         """Generates monotonically increasing IDs."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         epic = Epic(
             version="0.1",
             kind="epic",
@@ -490,7 +489,7 @@ class TestGenerateEventId:
 
     def test_handles_non_numeric_ids(self):
         """Handles non-standard event IDs."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         epic = Epic(
             version="0.1",
             kind="epic",

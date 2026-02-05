@@ -43,13 +43,33 @@ def _invoke_ok(runner: CliRunner, args: list[str]) -> str:
 
 
 def _write_epic_yaml(governor_root: Path, epic_id: str, yaml_text: str) -> None:
-    epic_dir = governor_root / "epics" / epic_id
+    """Write epic.yaml to the correct category-based path."""
+    from spec.epic.loader import CATEGORY_MAP, get_category_from_id
+
+    # Determine correct directory based on epic ID category prefix
+    category = get_category_from_id(epic_id)
+    if category and category in CATEGORY_MAP:
+        category_dir = CATEGORY_MAP[category]
+        epic_dir = governor_root / "epics" / category_dir / epic_id
+    else:
+        epic_dir = governor_root / "epics" / epic_id
+
     epic_dir.mkdir(parents=True, exist_ok=True)
     (epic_dir / "epic.yaml").write_text(yaml_text)
 
 
 def _write_epic_with_check(governor_root: Path, epic_id: str) -> None:
-    epic_dir = governor_root / "epics" / epic_id
+    """Write epic with check prompt file to the correct category-based path."""
+    from spec.epic.loader import CATEGORY_MAP, get_category_from_id
+
+    # Determine correct directory based on epic ID category prefix
+    category = get_category_from_id(epic_id)
+    if category and category in CATEGORY_MAP:
+        category_dir = CATEGORY_MAP[category]
+        epic_dir = governor_root / "epics" / category_dir / epic_id
+    else:
+        epic_dir = governor_root / "epics" / epic_id
+
     checks_dir = epic_dir / "checks"
     checks_dir.mkdir(parents=True, exist_ok=True)
     (checks_dir / "CHECK-001.md").write_text("# Check\n\nReturn a short response.")

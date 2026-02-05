@@ -11,7 +11,7 @@ import signal
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from spec.autogov.exceptions import SpecwrightError
+from spec.core.exceptions import SpecwrightError
 
 if TYPE_CHECKING:
     from spec.llm.config import LLMConfig

@@ -1,21 +1,22 @@
 """Tests for epic loader - load and validate from YAML."""
 
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from spec.epic.loader import (
+    CATEGORY_MAP,
     EpicNotFoundError,
     EpicValidationError,
+    get_category_dir,
+    get_category_from_id,
     get_epic_path,
     get_governor_root,
     list_epics,
     load_epic,
     load_epic_from_path,
 )
-from spec.epic.schema import SpecStatus
 
 
 @pytest.fixture
@@ -102,13 +103,88 @@ class TestGetGovernorRoot:
         assert ".local/local-governor" in str(root)
 
 
+class TestCategoryFunctions:
+    """Tests for category helper functions."""
+
+    def test_get_category_from_id_tooling(self):
+        """Extracts 't' from tooling epic IDs."""
+        assert get_category_from_id("t004-specwright") == "t"
+        assert get_category_from_id("t012-canon-registries") == "t"
+
+    def test_get_category_from_id_epics(self):
+        """Extracts 'e' from domain epic IDs."""
+        assert get_category_from_id("e001-auth") == "e"
+        assert get_category_from_id("e012-pm-system") == "e"
+
+    def test_get_category_from_id_all_categories(self):
+        """Extracts all category prefixes correctly."""
+        assert get_category_from_id("a001-architecture") == "a"
+        assert get_category_from_id("e001-domain") == "e"
+        assert get_category_from_id("h001-hotfix") == "h"
+        assert get_category_from_id("s001-security") == "s"
+        assert get_category_from_id("t001-tooling") == "t"
+
+    def test_get_category_from_id_invalid(self):
+        """Returns None for IDs without category prefix."""
+        assert get_category_from_id("my-epic") is None
+        assert get_category_from_id("test-001") is None
+        assert get_category_from_id("x001-unknown") is None  # 'x' not a valid category
+
+    def test_get_category_dir(self):
+        """Returns correct directory names for categories."""
+        assert get_category_dir("a") == "a-architecture"
+        assert get_category_dir("e") == "e-epics"
+        assert get_category_dir("h") == "h-hotfix"
+        assert get_category_dir("s") == "s-security"
+        assert get_category_dir("t") == "t-tooling"
+
+    def test_get_category_dir_invalid(self):
+        """Returns None for unknown categories."""
+        assert get_category_dir("x") is None
+        assert get_category_dir("z") is None
+
+    def test_category_map_completeness(self):
+        """CATEGORY_MAP contains all expected categories."""
+        expected = {"a", "e", "h", "s", "t"}
+        assert set(CATEGORY_MAP.keys()) == expected
+
+
 class TestGetEpicPath:
     """Tests for get_epic_path function."""
 
-    def test_returns_epics_subdir(self, temp_governor: Path):
-        """Returns path under epics subdirectory."""
+    def test_returns_epics_subdir_legacy(self, temp_governor: Path):
+        """Returns flat path for IDs without category prefix."""
         path = get_epic_path("my-epic")
         assert path == temp_governor / "epics" / "my-epic"
+
+    def test_returns_category_subdir_tooling(self, temp_governor: Path):
+        """Returns category path for tooling epics."""
+        path = get_epic_path("t004-specwright")
+        assert path == temp_governor / "epics" / "t-tooling" / "t004-specwright"
+
+    def test_returns_category_subdir_epics(self, temp_governor: Path):
+        """Returns category path for domain epics."""
+        path = get_epic_path("e012-pm-system")
+        assert path == temp_governor / "epics" / "e-epics" / "e012-pm-system"
+
+    def test_returns_category_subdir_all(self, temp_governor: Path):
+        """Returns correct category paths for all categories."""
+        assert get_epic_path("a001-arch") == temp_governor / "epics" / "a-architecture" / "a001-arch"
+        assert get_epic_path("e001-domain") == temp_governor / "epics" / "e-epics" / "e001-domain"
+        assert get_epic_path("h001-hotfix") == temp_governor / "epics" / "h-hotfix" / "h001-hotfix"
+        assert get_epic_path("s001-security") == temp_governor / "epics" / "s-security" / "s001-security"
+        assert get_epic_path("t001-tool") == temp_governor / "epics" / "t-tooling" / "t001-tool"
+
+    def test_finds_existing_epic_in_category(self, temp_governor: Path, valid_epic_yaml: str):
+        """Finds existing epic in category subdir when loading."""
+        # Create epic in category subdir
+        epic_dir = temp_governor / "epics" / "t-tooling" / "t004-specwright"
+        epic_dir.mkdir(parents=True)
+        (epic_dir / "epic.yaml").write_text(valid_epic_yaml.replace("test-epic", "t004-specwright"))
+
+        # get_epic_path should find it
+        path = get_epic_path("t004-specwright")
+        assert path == epic_dir
 
 
 class TestLoadEpic:
@@ -281,3 +357,40 @@ class TestListEpics:
 
         result = list_epics()
         assert result == ["a-epic", "m-epic", "z-epic"]
+
+    def test_list_epics_in_category_subdirs(self, temp_governor: Path, valid_epic_yaml: str):
+        """Lists epics from category subdirectories."""
+        # Create epics in different category subdirs
+        for category_dir, epic_id in [
+            ("t-tooling", "t001-tool"),
+            ("t-tooling", "t002-other"),
+            ("e-epics", "e001-domain"),
+            ("a-architecture", "a001-arch"),
+        ]:
+            epic_dir = temp_governor / "epics" / category_dir / epic_id
+            epic_dir.mkdir(parents=True)
+            (epic_dir / "epic.yaml").write_text(valid_epic_yaml.replace("test-epic", epic_id))
+
+        result = list_epics()
+        assert len(result) == 4
+        assert "t001-tool" in result
+        assert "t002-other" in result
+        assert "e001-domain" in result
+        assert "a001-arch" in result
+
+    def test_list_mixed_flat_and_category(self, temp_governor: Path, valid_epic_yaml: str):
+        """Lists epics from both flat and category structures."""
+        # Flat epic
+        flat_epic = temp_governor / "epics" / "legacy-epic"
+        flat_epic.mkdir(parents=True)
+        (flat_epic / "epic.yaml").write_text(valid_epic_yaml.replace("test-epic", "legacy-epic"))
+
+        # Category epic
+        cat_epic = temp_governor / "epics" / "t-tooling" / "t001-new"
+        cat_epic.mkdir(parents=True)
+        (cat_epic / "epic.yaml").write_text(valid_epic_yaml.replace("test-epic", "t001-new"))
+
+        result = list_epics()
+        assert len(result) == 2
+        assert "legacy-epic" in result
+        assert "t001-new" in result

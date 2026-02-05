@@ -42,6 +42,10 @@ class StepTemplate(BaseModel):
         default=False,
         description="If True, generate changes.patch for this step (diff since baseline)",
     )
+    interactive: bool = Field(
+        default=False,
+        description="If True, step runs interactively (exit code is telemetry, not success signal)",
+    )
 
     model_config = {"extra": "forbid"}
 

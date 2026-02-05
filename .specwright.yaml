@@ -1,15 +1,3 @@
 version: '0.6'
 governor:
   path: ~/.local/local-governor
-project_slug: specwright
-autogov:
-  enabled: true
-  source: specwright
-repo:
-  default_branch: main
-user:
-  default_owner: benthepsychologist
-  default_tier: C
-current:
-  spec: .specwright/specs/local-governance-major-revision.md
-  aip: /home/developer/.local/local-governor/projects/specwright/aips/e002-04-workman-move.yaml

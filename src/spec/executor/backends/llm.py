@@ -8,6 +8,7 @@ multiple providers: OpenAI, Gemini, Anthropic, local models, etc.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -16,8 +17,9 @@ from spec.executor.backends.base import BackendBase, BackendError
 if TYPE_CHECKING:
     from spec.executor.schemas import Policy, StepCapture, StepManifest
 
-# Default model - can be overridden in payload
-DEFAULT_MODEL = "gemini/gemini-3-pro-preview"
+# Default model - can be overridden in payload or env.
+# Use the short alias form accepted by `llm --model ...`.
+DEFAULT_MODEL = "gemini-3-pro-preview"
 
 
 class LlmBackend(BackendBase):
@@ -38,14 +40,121 @@ class LlmBackend(BackendBase):
         return "llm"
 
     def verify(self) -> None:
-        """Verify llm package is available."""
+        """Verify llm is installed and a usable model+key are configured.
+
+        This is intentionally a *non-network* preflight: it checks that the
+        model can be resolved and that required keys are present (via llm's
+        standard key lookup), but does not make a provider API call.
+        """
+        import sys
+
         try:
-            import llm  # noqa: F401
+            import llm
         except ImportError as e:
             raise BackendError(
-                "llm package not installed. Run: pip install llm",
+                "llm package not installed. Install it in the active environment.",
                 backend=self.name,
             ) from e
+
+        model_name = os.environ.get("SPECWRIGHT_LLM_MODEL") or DEFAULT_MODEL
+        model_name = self._normalize_model_name(model_name)
+
+        # Validate model exists
+        try:
+            model = llm.get_model(model_name)
+        except Exception as e:
+            # Provide actionable context without requiring external commands.
+            available = []
+            try:
+                models = list(llm.get_models())
+                available = sorted({getattr(m, "model_id", str(m)) for m in models})
+            except Exception:
+                available = []
+
+            gemini_like = [m for m in available if "gemini" in m.lower()]
+            hint_lines = []
+            if gemini_like:
+                hint_lines.append("Gemini-like models visible to this env:")
+                hint_lines.extend(f"- {m}" for m in gemini_like[:10])
+            elif available:
+                hint_lines.append("Some models visible to this env:")
+                hint_lines.extend(f"- {m}" for m in available[:10])
+            else:
+                hint_lines.append("No models could be enumerated from llm.get_models().")
+
+            user_dir = None
+            try:
+                user_dir = str(llm.user_dir())
+            except Exception:
+                user_dir = None
+
+            details = [
+                f"Requested model: {model_name}",
+                f"Python: {sys.executable}",
+            ]
+            if user_dir:
+                details.append(f"llm user dir: {user_dir}")
+
+            msg = (
+                "LLM model is not available in the active Python environment.\n"
+                + "\n".join(details)
+                + "\n\n"
+                + "\n".join(hint_lines)
+                + "\n\n"
+                + "Fix: install the provider plugin in this environment and/or set SPECWRIGHT_LLM_MODEL to one of the visible models."
+            )
+            raise BackendError(msg, backend=self.name) from e
+
+        # Validate key exists if needed
+        needs_key = getattr(model, "needs_key", None)
+        if needs_key:
+            try:
+                # Many llm provider plugins implement model.get_key()
+                get_key = getattr(model, "get_key", None)
+                key = get_key() if callable(get_key) else llm.get_key(alias=str(needs_key))
+            except Exception:
+                key = None
+
+            if not key:
+                env_var = getattr(model, "key_env_var", None) or "(provider-specific env var)"
+                raise BackendError(
+                    (
+                        f"Missing LLM key for provider '{needs_key}'.\n"
+                        f"Python: {sys.executable}\n"
+                        f"Fix: set {env_var} or configure keys for '{needs_key}' via the llm key store in this environment."
+                    ),
+                    backend=self.name,
+                )
+
+        # Optional network preflight (disabled by default): performs a minimal
+        # prompt to validate that the provider is reachable and credentials work.
+        # Enable with: SPECWRIGHT_LLM_NETWORK_PREFLIGHT=1
+        if self._is_truthy(os.environ.get("SPECWRIGHT_LLM_NETWORK_PREFLIGHT")):
+            try:
+                resp = model.prompt("Reply with exactly: OK")
+                text = resp.text().strip() if resp is not None else ""
+                if not text.startswith("OK"):
+                    raise BackendError(
+                        f"LLM network preflight returned unexpected output: {text[:80]!r}",
+                        backend=self.name,
+                    )
+            except BackendError:
+                raise
+            except Exception as e:
+                raise BackendError(
+                    f"LLM network preflight failed: {e}",
+                    backend=self.name,
+                ) from e
+
+    def _is_truthy(self, value: str | None) -> bool:
+        if value is None:
+            return False
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    def _normalize_model_name(self, model_name: str) -> str:
+        if model_name.startswith("gemini/gemini-"):
+            return model_name.removeprefix("gemini/")
+        return model_name
 
     def dispatch(
         self,
@@ -80,7 +189,13 @@ class LlmBackend(BackendBase):
             )
 
         context = payload.get("context", "")
-        model_name = payload.get("model", DEFAULT_MODEL)
+        model_name = (
+            payload.get("model")
+            or os.environ.get("SPECWRIGHT_LLM_MODEL")
+            or DEFAULT_MODEL
+        )
+
+        model_name = self._normalize_model_name(str(model_name))
         system = payload.get("system")
         schema = payload.get("schema")
         options = payload.get("options", {})
