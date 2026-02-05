@@ -6,11 +6,14 @@ Also provides spec scaffolding from intents.
 from spec.governance.intent_parser import IntentParser, ParsedIntent
 from spec.governance.spec_drafter import SpecDrafter, check_claude_available
 from spec.governance.spec_scaffolder import SpecScaffolder
+from spec.governance.spec_validator import SpecValidator, ValidationResult
 
 __all__ = [
     "IntentParser",
     "ParsedIntent",
     "SpecDrafter",
     "SpecScaffolder",
+    "SpecValidator",
+    "ValidationResult",
     "check_claude_available",
 ]

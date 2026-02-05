@@ -15,6 +15,18 @@ class SpecParser:
     VALID_TIERS = {"A", "B", "C"}
     VALID_GATES = {"G0", "G1", "G2", "G3", "G4"}
 
+    # Pattern for ## Phase N: format (new spec schema)
+    PHASE_PATTERN = re.compile(
+        r'^##\s+Phase\s+(\d+):\s*(.+?)$',
+        re.MULTILINE
+    )
+
+    # Pattern for ### Step N: format (legacy)
+    STEP_PATTERN = re.compile(
+        r'^###\s+Step\s+(\d+):\s+(.+?)\s*(?:\[(G[0-4]\s*:\s*.+?)\])?\s*$',
+        re.MULTILINE
+    )
+
     def __init__(self, content: str, source_path: Path | None = None, repo_root: Path | None = None):
         self.content = content
         self.source_path = source_path
@@ -93,26 +105,88 @@ class SpecParser:
         self.sections = sections
 
     def _parse_plan(self):
-        """Parse Plan section into structured steps."""
-        plan_text = self.sections.get("plan", "")
-        if not plan_text:
-            raise ValueError("Plan section is required")
+        """Parse Plan section into structured steps/phases.
 
-        # Improved step pattern with optional whitespace and stricter gate capture
-        step_pattern = re.compile(
-            r'^###\s+Step\s+(\d+):\s+(.+?)\s*(?:\[(G[0-4]\s*:\s*.+?)\])?\s*$',
-            re.MULTILINE
-        )
+        Supports both formats:
+        - ## Phase N: (new spec schema)
+        - ### Step N: (legacy format)
+
+        Phases can also appear directly in the content body (not under Plan section).
+        """
+        plan_text = self.sections.get("plan", "")
+
+        # Also look for phases directly in body (not under Plan section)
+        if not plan_text:
+            plan_text = self._extract_phases_from_body()
+
+        if not plan_text:
+            raise ValueError("Plan section or Phase sections required")
+
+        # Try phases first (new format)
+        phases = self._parse_phases(plan_text)
+        if phases:
+            self.plan_steps = phases
+            return
+
+        # Fall back to steps (legacy format)
+        self._parse_steps(plan_text)
+
+    def _extract_phases_from_body(self) -> str:
+        """Extract all content from ## Phase N: sections in body."""
+        matches = list(self.PHASE_PATTERN.finditer(self.content_body))
+        if not matches:
+            return ""
+        # Return content from first phase to end
+        return self.content_body[matches[0].start():]
+
+    def _parse_phases(self, text: str) -> list[dict[str, Any]]:
+        """Parse ## Phase N: sections into structured data."""
+        phases = []
+        matches = list(self.PHASE_PATTERN.finditer(text))
+
+        if not matches:
+            return []
+
+        for i, match in enumerate(matches):
+            phase_num = int(match.group(1))
+            phase_title = match.group(2).strip()
+
+            # Extract phase body (until next phase or end)
+            start = match.end()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            phase_body = text[start:end].strip()
+
+            phases.append({
+                "index": phase_num,
+                "title": phase_title,
+                "gate_ref": None,  # Phases don't use gate refs in the header
+                "objective": self._extract_subsection(phase_body, "Objective"),
+                "files_to_touch": self._extract_files_to_touch(phase_body),
+                "implementation_notes": self._extract_subsection(phase_body, "Implementation Notes"),
+                "verification": self._extract_verification(phase_body),
+                # Legacy fields for backward compat
+                "prompts": self._extract_prompts(phase_body),
+                "commands": self._extract_commands(phase_body),
+                "outputs": self._extract_outputs(phase_body),
+                "gate_review": self._extract_gate_review(phase_body),
+                "role": self._extract_role(phase_body),
+                "suggested_paths": self._extract_path_list(phase_body, "Suggested Paths"),
+            })
+
+        return sorted(phases, key=lambda p: p["index"])
+
+    def _parse_steps(self, plan_text: str) -> None:
+        """Parse ### Step N: sections (legacy format)."""
         steps = []
 
-        for match in step_pattern.finditer(plan_text):
+        for match in self.STEP_PATTERN.finditer(plan_text):
             step_num = int(match.group(1))
             step_title = match.group(2).strip()
             gate_ref = match.group(3).strip() if match.group(3) else None
 
             # Extract step body
             start = match.end()
-            next_match = step_pattern.search(plan_text, start)
+            next_match = self.STEP_PATTERN.search(plan_text, start)
             end = next_match.start() if next_match else len(plan_text)
             step_body = plan_text[start:end].strip()
 
@@ -132,9 +206,88 @@ class SpecParser:
             steps.append(step)
 
         if not steps:
-            raise ValueError("Plan must contain at least one step (### Step N: ...)")
+            raise ValueError("Plan must contain at least one step (### Step N: ...) or phase (## Phase N: ...)")
 
         self.plan_steps = sorted(steps, key=lambda s: s["index"])
+
+    def _extract_subsection(self, text: str, section_name: str) -> str:
+        """Extract content from a ### subsection."""
+        # Pattern: ### Section Name\n...(until next ### or end)
+        pattern = rf'###\s+{re.escape(section_name)}\s*\n(.*?)(?=\n###|\Z)'
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def _extract_files_to_touch(self, text: str) -> list[dict[str, str]]:
+        """Extract files_to_touch from ### Files to Touch subsection."""
+        subsection = self._extract_subsection(text, "Files to Touch")
+        if not subsection:
+            return []
+
+        files = []
+        # Parse lines like: - `path/to/file.py` (action) — description
+        # Or: - `path/to/file.py` (action)
+        # Or just: - `path/to/file.py`
+        for line in subsection.split('\n'):
+            line = line.strip()
+            if not line.startswith('-') and not line.startswith('*'):
+                continue
+
+            # Extract path in backticks
+            path_match = re.search(r'`([^`]+)`', line)
+            if not path_match:
+                continue
+
+            path = path_match.group(1)
+
+            # Extract action in parens (create/modify/delete or past tense variants)
+            action = "modify"  # default
+            action_match = re.search(r'\((create|created|modify|modified|delete|deleted)\)', line, re.IGNORECASE)
+            if action_match:
+                raw_action = action_match.group(1).lower()
+                # Normalize past tense to present tense
+                if raw_action == "created":
+                    action = "create"
+                elif raw_action == "modified":
+                    action = "modify"
+                elif raw_action == "deleted":
+                    action = "delete"
+                else:
+                    action = raw_action
+
+            # Extract description after em dash or hyphen
+            description = ""
+            desc_match = re.search(r'[—–-]\s*(.+)$', line)
+            if desc_match:
+                description = desc_match.group(1).strip()
+
+            files.append({
+                "path": path,
+                "action": action,
+                "description": description,
+            })
+
+        return files
+
+    def _extract_verification(self, text: str) -> list[str]:
+        """Extract verification steps from ### Verification subsection."""
+        subsection = self._extract_subsection(text, "Verification")
+        if not subsection:
+            return []
+
+        steps = []
+        for line in subsection.split('\n'):
+            line = line.strip()
+            if line.startswith('-') or line.startswith('*'):
+                # Remove bullet and backticks from commands
+                step = line.lstrip('-* ').strip()
+                # Remove backticks for cleaner extraction
+                step = re.sub(r'^`([^`]+)`$', r'\1', step)
+                if step:
+                    steps.append(step)
+
+        return steps
 
     def _extract_prompts(self, text: str) -> list[str]:
         """Extract prompt sections.
@@ -469,21 +622,31 @@ class SpecParser:
             # ========================================
             # AIP v2.0: Embedded SEP fields
             # ========================================
-            # objective: derived from prompt or description
-            schema_step["objective"] = prompt_text if prompt_text else description
+            # If phase format, use parsed objective; otherwise derive from prompt
+            if step.get("objective"):
+                schema_step["objective"] = step["objective"]
+            else:
+                schema_step["objective"] = prompt_text if prompt_text else description
 
-            # files_to_touch: derived from suggested_paths (stub - will be enriched by LLM)
-            files_to_touch = []
-            for path in step.get("suggested_paths", []):
-                files_to_touch.append({
-                    "path": path,
-                    "action": "modify",
-                    "description": ""
-                })
-            schema_step["files_to_touch"] = files_to_touch
+            # files_to_touch: use parsed value if present (phase format)
+            # Otherwise derive from suggested_paths (legacy format)
+            if step.get("files_to_touch"):
+                schema_step["files_to_touch"] = step["files_to_touch"]
+            else:
+                files_to_touch = []
+                for path in step.get("suggested_paths", []):
+                    files_to_touch.append({
+                        "path": path,
+                        "action": "modify",
+                        "description": ""
+                    })
+                schema_step["files_to_touch"] = files_to_touch
 
-            # verification_steps: empty by default (v2 doesn't use enforced verification)
-            schema_step["verification_steps"] = []
+            # verification_steps: use parsed value if present (phase format)
+            if step.get("verification"):
+                schema_step["verification_steps"] = step["verification"]
+            else:
+                schema_step["verification_steps"] = []
 
             schema_steps.append(schema_step)
 

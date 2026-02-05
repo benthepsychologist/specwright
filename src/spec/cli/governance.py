@@ -224,16 +224,21 @@ def validate_callback(ctx: typer.Context) -> None:
 def validate_spec(
     spec_path: Path = typer.Argument(None, help="Path to spec .md file (uses current if omitted)"),
     check_only: bool = typer.Option(False, "--check", "-c", help="Check only, don't write validated flag"),
+    strict: bool = typer.Option(False, "--strict", "-s", help="Enforce build_delta and full phase structure"),
 ) -> None:
     """Validate a spec markdown file structure.
 
     Validates YAML frontmatter (required: tier, title, owner, goal),
-    plan section, and markdown structure. Writes 'validated: true'
-    to frontmatter on success.
+    phase structure, and optionally build_delta context.
+
+    Default mode warns about missing sections. Strict mode (--strict)
+    requires full schema compliance including Current Capabilities
+    and Proposed build_delta sections.
 
     Examples:
         spec validate spec ./my-feature.md
         spec validate spec ./my-feature.md --check
+        spec validate spec ./my-feature.md --strict
         spec validate spec  # uses current spec from config
     """
     if spec_path is None:
@@ -256,25 +261,50 @@ def validate_spec(
         raise typer.Exit(1)
 
     from spec.compiler.parser import SpecParser
+    from spec.governance.spec_validator import SpecValidator
 
     try:
         content = spec_path.read_text()
         parser = SpecParser(content, source_path=spec_path)
-        parser.parse()
-        typer.secho("Spec structure valid", fg=typer.colors.GREEN)
+        parsed = parser.parse()
+        typer.secho("Spec parsing OK", fg=typer.colors.GREEN)
     except ValueError as e:
         typer.secho(f"Error: Invalid spec: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
     except Exception as e:
-        typer.secho(f"Error: Failed to validate spec: {e}", fg=typer.colors.RED, err=True)
+        typer.secho(f"Error: Failed to parse spec: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
+    # Add sections to parsed result for SpecValidator
+    # The validator needs access to raw sections for build_delta validation
+    parsed["sections"] = parser.sections
+
+    # Run structural validation
+    validator = SpecValidator(parsed, strict=strict)
+    result = validator.validate()
+
+    # Print warnings
+    for w in result.warnings:
+        typer.secho(f"  Warning: {w}", fg=typer.colors.YELLOW)
+
+    # Print errors
+    for e in result.errors:
+        typer.secho(f"  Error: {e}", fg=typer.colors.RED)
+
+    if not result.passed:
+        typer.secho("Validation failed", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    if strict:
+        typer.secho("Strict validation passed", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Validation passed", fg=typer.colors.GREEN)
+
     if parser.frontmatter.get("validated"):
-        typer.secho(f"Spec already validated: {spec_path}", fg=typer.colors.GREEN)
+        typer.secho("Spec already has validated: true", fg=typer.colors.GREEN)
         return
 
     if check_only:
-        typer.secho(f"Spec is valid: {spec_path}", fg=typer.colors.GREEN)
         typer.echo("  (use without --check to write 'validated: true')")
         return
 
