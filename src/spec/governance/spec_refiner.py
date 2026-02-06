@@ -161,15 +161,65 @@ IMPORTANT: Output ONLY your analysis. Do NOT output a modified spec."""
 
 {self.original_content}
 {context_section}
+## Required Spec Structure
+
+The refined spec MUST have these sections in order:
+
+1. **YAML Frontmatter** (between `---` delimiters) with these fields:
+   - id, title, tier, owner, goal (preserve from original)
+   - status: MUST be updated to `refined` (was likely `draft` or `planned`)
+   - branch: feature branch name (e.g., `feat/spec-id`) - ADD if missing
+   - repo: object with `name` and optionally `url` - ADD if missing, infer from codebase
+   - created (preserve from original)
+   - updated: ADD this field with current ISO 8601 timestamp
+
+2. **Header** - `# spec-id: Title` with Epic/Branch/Tier metadata
+
+3. **Objective** - What this spec achieves
+
+4. **Problem** - What issues this addresses (if applicable)
+
+5. **Current Capabilities** - What already exists (explore codebase to fill this)
+
+6. **Proposed build_delta** - CRITICAL: This section MUST exist. If missing, ADD IT.
+   ```yaml
+   target: "projects/<repo>/<repo>.build.yaml"
+   adds:
+     layout:
+       - path/to/new/file.py
+     modules:
+       - name: module_name
+         type: module_type
+     kernel_surfaces:
+       - surface_name
+   modifies:
+     modules:
+       - name: existing_module
+         changes: "description of changes"
+   ```
+   The build_delta defines what structural changes this spec makes. Phases MUST
+   derive from it: adds.layout -> Files to Touch, adds.modules -> what to verify.
+
+7. **Acceptance Criteria** - Checkbox list of success conditions
+
+8. **Constraints** - Rules and limitations (if applicable)
+
+9. **Phases** - Implementation breakdown, each with:
+   - Objective
+   - Files to Touch (derived from build_delta.adds.layout)
+   - Implementation Notes
+   - Verification commands
+
 ## Refinement Guidelines
 
 1. **Preserve User Intent**: Keep the original goal and direction intact
 2. **Preserve User Content**: Maintain any custom content the user has written
 3. **Fill Gaps**: Replace TODOs with concrete details based on codebase exploration
 4. **Improve Specificity**: Make vague statements more concrete and actionable
-5. **Ensure Consistency**: Align Phases with the build_delta
-6. **Add Verification**: Ensure each Phase has concrete verification commands
-7. **Follow Patterns**: Use patterns you discover in the codebase
+5. **Add Missing Sections**: If build_delta or other required sections are missing, ADD them
+6. **Ensure Consistency**: Phases MUST align with the build_delta
+7. **Add Verification**: Ensure each Phase has concrete verification commands
+8. **Follow Patterns**: Use patterns you discover in the codebase
 
 ## Content Preservation Rules
 
@@ -178,12 +228,13 @@ IMPORTANT: Output ONLY your analysis. Do NOT output a modified spec."""
 - TODOs and placeholders CAN be replaced with real content
 - Empty sections CAN be filled based on exploration
 - Existing content CAN be enhanced but not fundamentally changed
+- Missing required sections (especially build_delta) MUST be added
 
 ## Exploration Instructions
 
 1. Explore the repository to understand current patterns
 2. Look at similar files for style/structure guidance
-3. Check build.yaml for existing capabilities
+3. Check build.yaml for existing capabilities (to inform build_delta)
 4. Identify relevant tests and verification approaches
 
 ## Output Rules
@@ -191,8 +242,9 @@ IMPORTANT: Output ONLY your analysis. Do NOT output a modified spec."""
 IMPORTANT: Do NOT use TodoWrite or Task tools. Your ONLY job is to output the spec.
 
 Output the complete refined spec markdown.
-The spec must start with `---` (YAML frontmatter) and include all sections.
-Preserve the original structure while improving content quality.
+The spec MUST start with `---` (YAML frontmatter) and include ALL required sections.
+The frontmatter MUST have `status: refined` and an `updated:` timestamp.
+The spec MUST have a `## Proposed build_delta` section with valid YAML.
 
 Output ONLY the spec markdown as your final response, nothing else."""
 
