@@ -1,150 +1,234 @@
 ---
-id: t008-01
-title: Agent Reference File Syncing Callable
+id: t008-02
+title: Run Analysis and Improvement Suggestions
 tier: B
 owner: benthepsychologist
-goal: Implement agent.sync_refs callable that syncs project architecture from build.yaml into agent-specific reference files
-status: refined
-branch: feat/agent-sync-refs
+goal: Analyze run failures and generate improvement suggestions via LLM backend
+status: planned
+branch: feat/suggest-improvements
 repo:
   name: specwright
   url: https://github.com/workspace/specwright
 created: 2026-02-05T00:00:00Z
-updated: 2026-02-06T20:30:00Z
+updated: 2026-02-12T00:00:00Z
 ---
 
-# t008-01: Agent Reference File Syncing Callable
+# t008-02: Run Analysis and Improvement Suggestions
 
 **Epic**: t008-agent-reference-syncing-and-continuous-improvement
-**Branch**: feat/agent-sync-refs
-**Tier**: 2
+**Status**: planned
+**Branch**: feat/suggest-improvements
+**Target**: specwright
+**Depends on**: (none - can be independent)
 
-## Objective
+---
 
-Implement `agent.sync_refs` callable that automatically syncs project architecture context from canonical `build.yaml` files into agent-specific reference files (CLAUDE.md, .goosehints, etc.), eliminating manual copy-paste workflows and ensuring agents have up-to-date project context.
+## Summary
 
-## Problem
+Add an LLM backend step (`prompt_type: suggest_improvements`) that analyzes run failures and generates a markdown report with categorized improvement suggestions.
 
-Currently, project architecture lives in `local-governor/projects/<project>/<project>.build.yaml` but agents working in repositories don't automatically see this context. Each agent has different file conventions for persistent reference data, and manual synchronization is error-prone and leads to stale context across coding sessions.
+## Context
 
-## Current Capabilities
+When runs fail, the knowledge gained—"we should validate X before dispatch", "add a test for Y", "timeout handling needed for Z"—is lost unless manually extracted. This feature systematically captures that knowledge in a readable format.
 
-The specwright project has established patterns for callables:
-- **Callable Contract**: Functions with signature `(*, payload: dict, repo_path: Path) -> dict` returning `{passed: bool, data: dict, summary: str}`
-- **Registration**: Via `register_callable()` in `spec.executor.backends.python`
-- **Dispatch**: Through `PythonBackend.dispatch()` with payload extraction
-- **Existing Callables**: `governance.validate_build`, `governance.validate_epic`, `governance.validate_contracts` in `/workspace/specwright/src/spec/governance/callables.py`
+## Problem Statement
 
-The build.yaml structure contains:
-- `kernel.description` - Core project purpose
-- `kernel.invariants` - Rules agents must follow
-- `boundaries` - Integration points and constraints
-- `decisions` - Architecture Decision Records (ADRs)
+1. No structured capture of lessons from run failures
+2. Same issues discovered multiple times
+3. Manual process to extract actionable insights
+4. No systematic way to track what improvements are needed
 
-## Proposed build_delta
+## Solution
+
+Create an LLM backend step with `prompt_type: suggest_improvements` that:
+1. Analyzes run outcomes, errors, and failures
+2. Generates categorized suggestions (agent rules, code improvements, build updates, test gaps)
+3. Outputs a markdown report with confidence levels
+4. User manually reviews and applies relevant suggestions
+
+## Constraints
+
+- Read-only analysis — report only, no automatic modifications
+- Must handle runs with no errors gracefully (empty suggestions)
+- Use existing LLM backend infrastructure (don't create new callables)
+- Suggestions include confidence level (high/medium/low) determined by LLM
+
+## Expectations
+
+### 1. LLM Backend Extension
+
+Add `prompt_type: suggest_improvements` support to `LlmBackend`:
+- Analyzes run artifacts: outcomes, stderr, stdout, patches
+- Calls LLM with structured analysis prompt
+- Generates JSON response with suggestions array
+
+### 2. Suggestion Categories
+
+Generated suggestions fall into:
+- **Agent Instructions**: Rules for CLAUDE.md / reference files
+  - E.g., "Always validate StepManifest.repo_path before dispatch"
+- **Code Improvements**: Refactoring or enhancement ideas
+  - E.g., "Add timeout handling to git capture"
+- **Build System Updates**: Changes to build.yaml or invariants
+  - E.g., "Add invariant: Python callables must validate required keys"
+- **Test Coverage Gaps**: Missing test cases
+  - E.g., "Add test for missing repo_path in StepManifest"
+
+### 3. Output Format
+
+Markdown report with structure:
+```markdown
+# Run Analysis: Improvement Suggestions
+
+## Run Summary
+- Run ID: {run_id}
+- Status: {success/failed/timeout}
+- Failed steps: N of M
+- Duration: Xs
+
+## Suggestions
+
+### Agent Instructions
+- **High confidence**: {suggestion text}
+  - Rationale: {why this would help}
+  - Related files: {files}
+
+### Code Improvements
+- **Medium confidence**: {suggestion}
+  - Rationale: {explanation}
+  - Related files: {files}
+
+### Build System Updates
+- **Low confidence**: {suggestion}
+  - Rationale: {explanation}
+
+### Test Coverage Gaps
+- **High confidence**: {suggestion}
+  - Rationale: {explanation}
+```
+
+### 4. Confidence Levels
+
+LLM assigns confidence based on evidence:
+- **High**: Clear root cause, actionable fix, likely to help
+- **Medium**: Probable issue, should investigate
+- **Low**: Possible issue, needs more evidence
+
+### 5. Usage in JobDef
 
 ```yaml
-target: "projects/specwright/specwright.build.yaml"
-summary: "Add agent.sync_refs callable for automated reference file syncing"
-adds:
-  layout:
-    - path: src/spec/governance/sync_refs.py
-      module: governance
-      role: "Agent reference file synchronization from build.yaml"
-  modules:
-    - name: sync_refs
-      kind: callable
-      provides: ["agent.sync_refs"]
-      depends_on: ["governance"]
-  kernel_surfaces:
-    - name: callable
-      entrypoints:
-        - callable: "agent.sync_refs"
-          usage: "Sync build.yaml architecture to agent reference files"
+steps:
+  - step_id: analyze-improvements
+    backend: llm
+    description: Analyze run and suggest improvements
+    payload:
+      prompt_type: suggest_improvements
+      run_id: "@run.run_id"
+      job_id: "@run.job_id"
+    continue_on_failure: true  # Don't block if analysis fails
+```
+
+## Implementation Notes
+
+### Prompt Design
+
+**System Prompt**:
+```
+You are analyzing a failed/timeout run to suggest improvements.
+Generate actionable suggestions across these categories:
+- Agent Instructions (for CLAUDE.md/reference files)
+- Code Improvements (refactoring, enhancements)
+- Build System Updates (invariants, boundaries, rules)
+- Test Coverage Gaps (missing test cases)
+
+For each suggestion:
+1. Confidence (high/medium/low)
+2. Clear description of what to do
+3. Rationale (why it helps)
+4. Related files (if applicable)
+```
+
+**User Prompt**:
+```
+## Run Analysis
+Run: {run_id} | Job: {job_id} | Status: {status}
+
+## Step Outcomes
+{step_summary_table}
+
+## Errors and Failures
+{error_details}
+
+## Recent Stderr (truncated to ~5K tokens)
+{stderr_snippets}
+
+## Git Changes
+{files_changed_summary}
+
+Please analyze and suggest improvements in each category.
+Response: JSON array of suggestions.
+```
+
+### JSON Response Format
+
+```json
+{
+  "suggestions": [
+    {
+      "confidence": "high|medium|low",
+      "category": "agent|code|build|test",
+      "suggestion": "Clear description of improvement",
+      "rationale": "Why this would help",
+      "related_files": ["file1.py", "file2.py"]
+    }
+  ]
+}
+```
+
+### Token Management
+
+- Target: Keep context under 50K tokens
+- Prioritize: errors > stderr > stdout > patches
+- Truncate with `... [N lines truncated] ...`
+
+## Test Cases
+
+1. Run with no errors → empty suggestions array
+2. Run with validation error → agent instruction suggestion
+3. Run with timeout → test coverage + code improvement suggestions
+4. Run with git failure → build system + code improvement suggestions
+5. Multiple failures → multiple categorized suggestions
+6. Large stderr → truncated appropriately, still analyzes errors
+
+## Build Delta
+
+```yaml
+target: projects/specwright/specwright.build.yaml
+summary: "Add suggest_improvements prompt type to LLM backend"
 modifies:
   modules:
-    - name: governance
-      changes: "Add sync_refs callable registration to register_all()"
+    - name: backends
+      note: "Add suggest_improvements prompt_type support"
+  layout:
+    - path: src/spec/executor/backends/llm.py
+      note: "Extend _build_prompt() for suggest_improvements"
 ```
 
 ## Acceptance Criteria
 
-- [ ] `agent.sync_refs` callable implemented with proper contract signature
-- [ ] AGENT_REF_TARGETS mapping supports claude-code, cursor, aider, roo-code, goose, opencode
-- [ ] Reads kernel.description, invariants, boundaries, decisions from build.yaml
-- [ ] Writes to agent-specific reference file paths with proper formatting
-- [ ] Content merging preserves existing user sections using synced block markers
-- [ ] Idempotent execution (running twice produces identical results)
-- [ ] Registered via `register_all()` pattern in governance module
-- [ ] Error handling for missing build.yaml, unknown agents, write permissions
-- [ ] Test coverage for fresh files, existing files with/without markers, error cases
-- [ ] All existing governance tests continue passing
+- [ ] `prompt_type: suggest_improvements` handled in LlmBackend._build_prompt()
+- [ ] Analyzes run outcomes, errors, and failures
+- [ ] Generates JSON suggestions with confidence levels
+- [ ] Outputs markdown report with categorized suggestions
+- [ ] Handles runs with no errors gracefully
+- [ ] Token limit strategy implemented (~5K for context)
+- [ ] Works with all step types (completed, failed, timeout, skipped)
+- [ ] Markdown output is readable and actionable
+- [ ] All tests passing
 
-## Constraints
+## Future Work (Out of Scope)
 
-- Follow existing callable pattern from `spec/governance/callables.py`
-- No agent-specific dependencies - use standard library file I/O only
-- Respect existing content through marker-based merging, never overwrite user sections
-- Agent-agnostic marker format determined by target file extension
-- Must integrate with existing PythonBackend dispatch mechanism
-
-## Phases
-
-### Phase 1: Core Callable Implementation
-**Objective**: Implement the basic sync_refs callable with file I/O operations
-
-**Files to Touch**:
-- `src/spec/governance/sync_refs.py` (new)
-- `src/spec/governance/callables.py` (modify registration)
-
-**Implementation Notes**:
-- Define AGENT_REF_TARGETS mapping with 6 agent types
-- Implement content extraction from build.yaml using PyYAML
-- Build content formatting functions for different target file types
-- Handle marker-based content merging with proper comment syntax by file extension
-
-**Verification**:
-```bash
-python -c "from src.spec.governance.sync_refs import sync_refs; print('Import successful')"
-pytest tests/governance/test_sync_refs.py::test_basic_sync -v
-```
-
-### Phase 2: Content Merging Strategy
-**Objective**: Implement robust content preservation using synced block markers
-
-**Files to Touch**:
-- `src/spec/governance/sync_refs.py` (enhance)
-- `tests/governance/test_sync_refs.py` (new)
-
-**Implementation Notes**:
-- Implement marker detection: `<!-- BEGIN/END SYNCED: project -->` for .md/.mdc files
-- Implement marker detection: `# BEGIN/END SYNCED: project` for .goosehints/.txt files
-- Content replacement algorithm that preserves user sections outside markers
-- Handle edge cases: no existing file, no markers, malformed markers
-
-**Verification**:
-```bash
-pytest tests/governance/test_sync_refs.py::test_content_merging -v
-pytest tests/governance/test_sync_refs.py::test_marker_preservation -v
-```
-
-### Phase 3: Error Handling and Registration
-**Objective**: Complete error handling and integrate with callable registration system
-
-**Files to Touch**:
-- `src/spec/governance/sync_refs.py` (complete)
-- `src/spec/governance/callables.py` (register)
-- `tests/governance/test_sync_refs.py` (complete)
-
-**Implementation Notes**:
-- Error handling: missing build.yaml, unknown agent, filesystem permissions
-- Return proper callable contract with passed/data/summary fields
-- Update `register_all()` to include `agent.sync_refs`
-- Comprehensive test coverage including error scenarios
-
-**Verification**:
-```bash
-pytest tests/governance/ -v
-python -c "from src.spec.governance.callables import register_all; register_all(); print('Registration successful')"
-spec execute --job=test-callable --payload='{"callable":"agent.sync_refs","agent":"claude-code","project":"specwright"}'
-```
+- Suggestion queue storage (YAML persistence in local-governor)
+- CLI commands to review/apply (spec suggest review/apply)
+- Auto-apply to CLAUDE.md
+- Cross-run aggregation of suggestions

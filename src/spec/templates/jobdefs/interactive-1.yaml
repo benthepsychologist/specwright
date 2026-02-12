@@ -6,6 +6,7 @@
 #   Step 3: Commit changes (best effort)
 #   Step 4: Capture artifacts (best effort)
 #   Step 5: Finalize
+#   Step 6: Suggest improvements (LLM analysis of the run)
 #
 # The interactive step is marked interactive=true, so exit codes
 # (130/SIGINT, 143/SIGTERM) are treated as telemetry, not failure.
@@ -63,4 +64,59 @@ steps:
     payload:
       command: "echo 'Interactive run finalized'"
       capture_git: false
+    continue_on_failure: true
+
+  # Step 6: Suggest improvements (LLM analysis of the run)
+  - step_id: analyze.suggest_improvements
+    backend: llm
+    description: Analyze run and suggest improvements
+    payload:
+      system: |
+        You are analyzing a software development run to suggest improvements.
+        Generate actionable suggestions across these categories:
+        - Agent Instructions (for CLAUDE.md/reference files)
+        - Code Improvements (refactoring, enhancements)
+        - Build System Updates (invariants, boundaries, rules)
+        - Test Coverage Gaps (missing test cases)
+
+        For each suggestion provide:
+        1. Confidence (high/medium/low)
+        2. Clear description of what to do
+        3. Rationale (why it helps)
+        4. Related files (if applicable)
+
+        Respond with a markdown report. If the run completed successfully with
+        no issues worth flagging, say so briefly and skip the suggestions.
+      context: |
+        # Run Analysis
+
+        ## Run Info
+        Run: @run.run_id | Branch: @run.branch
+
+        ## Step: branch.create
+        - Outcome: @run.steps.branch.create.outcome
+        - Exit code: @run.steps.branch.create.exit_code
+
+        ## Step: agent.interactive
+        - Outcome: @run.steps.agent.interactive.outcome
+        - Exit code: @run.steps.agent.interactive.exit_code
+        - Stderr:
+        ```
+        @run.steps.agent.interactive.stderr
+        ```
+        - Stdout (agent transcript):
+        ```
+        @run.steps.agent.interactive.stdout
+        ```
+
+        ## Step: commit.interactive
+        - Outcome: @run.steps.commit.interactive.outcome
+
+        ## Step: capture.bundle
+        - Outcome: @run.steps.capture.bundle.outcome
+        - Stdout:
+        ```
+        @run.steps.capture.bundle.stdout
+        ```
+      prompt: "Analyze this run and produce a markdown report with categorized improvement suggestions. Include confidence levels (high/medium/low)."
     continue_on_failure: true

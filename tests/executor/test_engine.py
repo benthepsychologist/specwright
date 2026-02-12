@@ -10,14 +10,15 @@ from spec.executor.engine import (
     CompileError,
     ExecutorError,
     VariableError,
+    _build_step_run_ctx,
     _evaluate_condition,
+    _generate_run_report,
     compile_job,
     execute,
     generate_run_id,
     has_unresolved_run_refs,
     resolve_variables,
 )
-from spec.executor.engine import _generate_run_report
 from spec.executor.jobdefs import (
     JobDefNotFoundError,
     list_job_defs,
@@ -121,6 +122,24 @@ class TestVariableResolution:
         ctx = {"my-key": "value"}
         result = resolve_variables("@ctx['my-key']", ctx, {})
         assert result == "value"
+
+    def test_dotted_keys_in_run_ref(self):
+        """@run.steps.branch.create.outcome resolves dotted step ID correctly."""
+        run = {
+            "steps": {
+                "branch.create": {"outcome": "completed", "exit_code": 0},
+                "agent.interactive": {"outcome": "failed", "stderr": "error msg"},
+            },
+        }
+        result = resolve_variables(
+            "@run.steps.branch.create.outcome", {}, {}, run=run, allow_run=True,
+        )
+        assert result == "completed"
+
+        result = resolve_variables(
+            "@run.steps.agent.interactive.stderr", {}, {}, run=run, allow_run=True,
+        )
+        assert result == "error msg"
 
     def test_passthrough_spec_md(self):
         """spec_md key is not resolved (contains user content with @-refs)."""
@@ -579,7 +598,7 @@ class TestJobDefLoader:
         """Can load interactive-1 JobDef."""
         job_def = load_job_def("interactive-1", jobdefs_dir)
         assert job_def.job_id == "interactive-1"
-        assert len(job_def.steps) == 5
+        assert len(job_def.steps) == 6
 
     def test_interactive1_step_ids(self, jobdefs_dir):
         """interactive-1 has correct step IDs."""
@@ -591,6 +610,7 @@ class TestJobDefLoader:
             "commit.interactive",
             "capture.bundle",
             "finalize.run",
+            "analyze.suggest_improvements",
         ]
 
     def test_interactive1_agent_step_is_interactive(self, jobdefs_dir):
@@ -1498,3 +1518,185 @@ class TestInteractiveExitCodePolicy:
         outcome = store.read_step_outcome(result.run_id, 1)
         assert outcome.outcome == OutcomeStatus.completed
         assert result.status == RunStatus.completed
+
+
+# =============================================================================
+# Step Run Context Tests
+# =============================================================================
+
+
+class TestBuildStepRunCtx:
+    """Tests for _build_step_run_ctx helper."""
+
+    def test_captures_stdout_and_stderr(self, tmp_path):
+        """Step artifacts (stdout, stderr) are included in run context."""
+        artifacts_dir = tmp_path / "step-001"
+        artifacts_dir.mkdir()
+        (artifacts_dir / "stdout.txt").write_text("hello world")
+        (artifacts_dir / "stderr.txt").write_text("some warning")
+
+        outcome = StepOutcome(
+            step_n=1, step_id="test.step", outcome=OutcomeStatus.completed,
+            duration_ms=100, capture_ref="steps/step-001/capture.yaml",
+        )
+        capture = StepCapture(
+            step_n=1, step_id="test.step",
+            agent=AgentCapture(
+                stdout_file="stdout.txt", stderr_file="stderr.txt", exit_code=0,
+            ),
+        )
+
+        ctx = _build_step_run_ctx(outcome, capture, artifacts_dir)
+
+        assert ctx["stdout"] == "hello world"
+        assert ctx["stderr"] == "some warning"
+        assert ctx["exit_code"] == 0
+        assert ctx["outcome"] == "completed"
+        assert ctx["error"] is None
+
+    def test_captures_assessments_data(self, tmp_path):
+        """Python backend assessments data is available via .data."""
+        artifacts_dir = tmp_path / "step-001"
+        artifacts_dir.mkdir()
+
+        outcome = StepOutcome(
+            step_n=1, step_id="test.step", outcome=OutcomeStatus.completed,
+            duration_ms=50, capture_ref="steps/step-001/capture.yaml",
+        )
+        capture = StepCapture(
+            step_n=1, step_id="test.step",
+            assessments=[{"passed": True, "score": 42}],
+        )
+
+        ctx = _build_step_run_ctx(outcome, capture, artifacts_dir)
+
+        assert ctx["data"] == {"passed": True, "score": 42}
+
+    def test_no_capture_returns_empty_defaults(self, tmp_path):
+        """When capture is None (backend error), context has safe defaults."""
+        outcome = StepOutcome(
+            step_n=1, step_id="test.step", outcome=OutcomeStatus.failed,
+            duration_ms=0, error="Backend crashed",
+        )
+
+        ctx = _build_step_run_ctx(outcome, None, tmp_path)
+
+        assert ctx["outcome"] == "failed"
+        assert ctx["error"] == "Backend crashed"
+        assert ctx["stderr"] == ""
+        assert ctx["stdout"] == ""
+        assert ctx["data"] == {}
+        assert ctx["exit_code"] is None
+
+    def test_failed_step_includes_error_and_stderr(self, tmp_path):
+        """Failed steps include error message and stderr content."""
+        artifacts_dir = tmp_path / "step-001"
+        artifacts_dir.mkdir()
+        (artifacts_dir / "stdout.txt").write_text("")
+        (artifacts_dir / "stderr.txt").write_text("Traceback: something broke\n")
+
+        outcome = StepOutcome(
+            step_n=1, step_id="test.step", outcome=OutcomeStatus.failed,
+            duration_ms=500, error="Exit code: 1",
+            capture_ref="steps/step-001/capture.yaml",
+        )
+        capture = StepCapture(
+            step_n=1, step_id="test.step",
+            agent=AgentCapture(
+                stdout_file="stdout.txt", stderr_file="stderr.txt", exit_code=1,
+            ),
+        )
+
+        ctx = _build_step_run_ctx(outcome, capture, artifacts_dir)
+
+        assert ctx["error"] == "Exit code: 1"
+        assert "Traceback" in ctx["stderr"]
+        assert ctx["exit_code"] == 1
+
+
+class TestRunCtxStepToStep:
+    """Integration: later steps can reference earlier step outputs via @run.steps.*"""
+
+    @pytest.fixture
+    def git_repo(self, tmp_path):
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        (repo_path / "test.txt").write_text("hello")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        return repo_path
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        return RunStore(root=tmp_path / "runs")
+
+    def test_step2_sees_step1_stdout_via_run_ref(self, git_repo, store):
+        """@run.steps.step1.stdout resolves to step1's stdout content."""
+        job_def = JobDef(
+            job_id="ctx-passing-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo STEP1_OUTPUT", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    payload={"command": "echo got: @run.steps.step1.stdout", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        assert result.status == RunStatus.completed
+
+        # step2's manifest should have the resolved stdout from step1
+        manifest = store.read_step_manifest(result.run_id, 2)
+        assert "STEP1_OUTPUT" in manifest.payload["command"]
+
+    def test_step2_sees_step1_outcome_via_run_ref(self, git_repo, store):
+        """@run.steps.step1.outcome resolves to step1's outcome status."""
+        job_def = JobDef(
+            job_id="ctx-outcome-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo ok", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="step2",
+                    backend=Backend.cmd,
+                    payload={"command": "echo status: @run.steps.step1.outcome", "capture_git": False},
+                ),
+            ],
+        )
+
+        envelope = {
+            "job_def": job_def.model_dump(),
+            "payload": {"repo_path": str(git_repo)},
+        }
+
+        result = execute(envelope, store=store)
+        assert result.status == RunStatus.completed
+
+        manifest = store.read_step_manifest(result.run_id, 2)
+        assert "status: completed" in manifest.payload["command"]

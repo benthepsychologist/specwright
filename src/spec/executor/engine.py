@@ -133,14 +133,35 @@ _REF_PATTERN = re.compile(
 
 
 def _get_nested(data: dict[str, Any], path: str) -> Any:
-    """Get a nested value from a dict using dot notation."""
+    """Get a nested value from a dict using dot notation.
+
+    Handles dotted keys (e.g., step IDs like "branch.create") by trying
+    progressively longer compound keys when a simple key lookup fails.
+    For path "steps.branch.create.outcome", tries:
+      steps -> branch.create -> outcome
+    """
     parts = path.split(".")
     current = data
-    for part in parts:
-        if isinstance(current, dict) and part in current:
-            current = current[part]
-        else:
-            raise KeyError(f"Key not found: {part} in path {path}")
+    i = 0
+    while i < len(parts):
+        if not isinstance(current, dict):
+            raise KeyError(f"Cannot traverse non-dict at {'.'.join(parts[:i])} in path {path}")
+        # Try simple key first
+        if parts[i] in current:
+            current = current[parts[i]]
+            i += 1
+            continue
+        # Try compound keys: parts[i].parts[i+1], parts[i].parts[i+1].parts[i+2], ...
+        found = False
+        for j in range(i + 2, len(parts) + 1):
+            compound = ".".join(parts[i:j])
+            if compound in current:
+                current = current[compound]
+                i = j
+                found = True
+                break
+        if not found:
+            raise KeyError(f"Key not found: {parts[i]} in path {path}")
     return current
 
 
@@ -1034,10 +1055,9 @@ def _run_steps(
             print(f"[{step.step_n}/{total_steps}] {step.step_id} ... failed ({duration_str})", flush=True)
 
             # Update run context even for failures
-            run_ctx["steps"][step.step_id] = {
-                "outcome": OutcomeStatus.failed.value,
-                "capture_ref": outcome.capture_ref,
-            }
+            run_ctx["steps"][step.step_id] = _build_step_run_ctx(
+                outcome, capture, step_dir,
+            )
 
             # Handle skip-to or continue-on-failure
             skip_result = _handle_step_failure(
@@ -1083,11 +1103,11 @@ def _run_steps(
 
         outcomes.append(outcome)
 
-        # Update run context with step info
-        run_ctx["steps"][step.step_id] = {
-            "outcome": outcome_status.value,
-            "capture_ref": outcome.capture_ref,
-        }
+        # Update run context with step output (structured data + artifact contents)
+        # so later steps can reference via @run.steps.{step_id}.*
+        run_ctx["steps"][step.step_id] = _build_step_run_ctx(
+            outcome, capture, step_dir,
+        )
 
         # Check if we should abort, skip, or continue
         if outcome_status != OutcomeStatus.completed:
@@ -1326,6 +1346,55 @@ LLM report generation failed before producing output.
 ```
 """
         report_path.write_text(report_content)
+
+
+def _build_step_run_ctx(
+    outcome: StepOutcome,
+    capture: Any | None,
+    artifacts_dir: Path,
+) -> dict[str, Any]:
+    """Build the run-context entry for a completed step.
+
+    Includes structured data (assessments) and artifact file contents
+    (stderr, stdout) so later steps can reference them via @run.steps.{id}.*
+    """
+    ctx: dict[str, Any] = {
+        "outcome": outcome.outcome.value,
+        "capture_ref": outcome.capture_ref,
+        "error": outcome.error,
+        "data": {},
+        "stderr": "",
+        "stdout": "",
+        "exit_code": None,
+    }
+
+    if capture is None:
+        return ctx
+
+    # Structured data from python backend callables
+    if capture.assessments:
+        ctx["data"] = (
+            capture.assessments[0]
+            if len(capture.assessments) == 1
+            else capture.assessments
+        )
+
+    # Agent output
+    if capture.agent:
+        ctx["exit_code"] = capture.agent.exit_code
+
+        for key, filename in [("stderr", capture.agent.stderr_file), ("stdout", capture.agent.stdout_file)]:
+            if not filename:
+                continue
+            fpath = artifacts_dir / filename
+            try:
+                if fpath.exists():
+                    ctx[key] = fpath.read_text()
+            except Exception as e:
+                ctx[key] = f"[error reading {filename}: {e}]"
+                print(f"Warning: failed to read {fpath} into run context: {e}", flush=True)
+
+    return ctx
 
 
 def _create_failed_outcome(
