@@ -17,7 +17,7 @@ class StepTemplate(BaseModel):
     """
 
     step_id: str = Field(description="Unique identifier for this step template")
-    backend: Backend = Field(description="Execution backend")
+    backend: Backend | str = Field(description="Execution backend")
     description: str = Field(default="", description="Human-readable description")
     condition: str | None = Field(
         default=None,

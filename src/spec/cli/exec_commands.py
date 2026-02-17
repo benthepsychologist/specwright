@@ -18,7 +18,6 @@ import typer
 import yaml
 
 from spec.executor.engine import (
-    CompileError,
     ExecutorError,
     compile_job,
     execute,
@@ -291,7 +290,10 @@ def compile_command(
             "spec_path": str(spec_path.resolve()),
             "repo_path": str(repo_path),
             "feature_branch": branch,
+            "spec_id": spec_path.stem,
             "epic_spec": None,  # No epic context when compiling from file
+            "agent": "claude-code",  # Default agent backend
+            "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
         },
         "ctx": {
             "spec_id": spec_path.stem,
@@ -301,7 +303,7 @@ def compile_command(
     # Compile to JobInstance (job_def already loaded above)
     try:
         job_instance = compile_job(job_def, envelope)
-    except CompileError as e:
+    except ExecutorError as e:
         _echo_error(f"Compilation failed: {e}")
         raise typer.Exit(1)
 
@@ -541,6 +543,8 @@ def run_command(
             "epic_id": epic_id,
             "spec_id": resolved_spec_id,
             "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
+            "agent": "claude-code",  # Default agent backend
+            "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
         },
         "ctx": {
             "spec_id": resolved_spec_id,
@@ -552,7 +556,7 @@ def run_command(
         # Compile and print without executing
         try:
             job_instance = compile_job(job_def, envelope)
-        except CompileError as e:
+        except ExecutorError as e:
             _echo_error(f"Compilation failed: {e}")
             raise typer.Exit(1)
 

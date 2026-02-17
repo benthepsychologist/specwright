@@ -73,6 +73,31 @@ def _is_truthy_env(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _resolve_backend(
+    backend: Backend | str,
+    payload: dict[str, Any],
+) -> Backend:
+    """Resolve backend variable references to Backend enum values."""
+    if isinstance(backend, Backend):
+        return backend
+
+    # Handle @payload.* variable references
+    if isinstance(backend, str) and backend.startswith("@payload."):
+        key = backend[len("@payload."):]
+        value = payload.get(key)
+        if value is None:
+            raise CompileError(
+                f"Required payload key '{key}' not found for backend variable '{backend}'"
+            )
+        backend = value
+
+    # Convert string to Backend enum (by value, e.g., "claude-code" → Backend.claude_code)
+    try:
+        return Backend(backend)
+    except ValueError:
+        raise CompileError(f"Unknown backend: '{backend}'") from None
+
+
 def _require_llm_preflight(*, run_id: str) -> None:
     """Hard gate for LLM availability.
 
@@ -120,6 +145,24 @@ def _use_llm_for_run_report(*, job_instance: JobInstance) -> bool:
         return True
     # Otherwise, only use LLM if explicitly requested.
     return _is_truthy_env(os.environ.get("SPECWRIGHT_RUN_REPORT_LLM"))
+
+
+def _preflight_backend_checks(
+    job_instance: JobInstance, *, run_id: str
+) -> None:
+    """Verify all backends are available before dispatch."""
+    if _is_truthy_env(os.environ.get("SPECWRIGHT_SKIP_BACKEND_PREFLIGHT")):
+        return
+    unique_backends = {step.backend for step in job_instance.steps}
+    for backend_enum in unique_backends:
+        backend_instance = get_backend(backend_enum.value)
+        try:
+            backend_instance.verify()
+        except BackendError as e:
+            raise ExecutorError(
+                f"Backend '{backend_enum.value}' is not available: {e}",
+                run_id=run_id,
+            ) from e
 
 
 # =============================================================================
@@ -372,10 +415,12 @@ def compile_job(
         base_commit = payload.get("base_commit", "HEAD")
         timeout_s = template.timeout_s or job_def.defaults.get("timeout_s", 300)
 
+        resolved_backend = _resolve_backend(template.backend, payload)
+
         step = Step(
             step_n=step_n,
             step_id=template.step_id,
-            backend=template.backend,
+            backend=resolved_backend,
             description=template.description,
             common=Common(
                 repo_path=Path(repo_path),
@@ -728,6 +773,9 @@ def execute(
         if job_requires_llm or use_llm_report:
             # Hard gate: require successful LLM preflight before any steps.
             _require_llm_preflight(run_id=run_id)
+
+        # Verify all backends are available before dispatch.
+        _preflight_backend_checks(job_instance, run_id=run_id)
 
         # Run step dispatch loop
         final_status, outcomes = _run_steps(

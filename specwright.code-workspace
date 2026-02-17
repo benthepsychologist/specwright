@@ -4,7 +4,11 @@
 			"path": "."
 		},
 		{
-			"path": "../../home/developer/.local/local-governor"
+			"path": ".."
+		},
+		{
+			"path": "../../home/developer"
 		}
-	]
+	],
+	"settings": {}
 }

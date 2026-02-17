@@ -13,6 +13,7 @@ from spec.executor.engine import (
     _build_step_run_ctx,
     _evaluate_condition,
     _generate_run_report,
+    _resolve_backend,
     compile_job,
     execute,
     generate_run_id,
@@ -559,7 +560,7 @@ class TestJobDefLoader:
         """Can load aip-1 JobDef."""
         job_def = load_job_def("aip-1", jobdefs_dir)
         assert job_def.job_id == "aip-1"
-        assert len(job_def.steps) == 10  # 3-pass model with commits
+        assert len(job_def.steps) == 11  # refs.sync + 3-pass model with commits
 
     def test_aip1_step_ids(self, jobdefs_dir):
         """aip-1 has correct step IDs for 3-pass model."""
@@ -567,6 +568,7 @@ class TestJobDefLoader:
         step_ids = [s.step_id for s in job_def.steps]
         assert step_ids == [
             "branch.create",
+            "refs.sync",
             "agent.run_spec",
             "commit.run1",
             "agent.drift_fix",
@@ -598,7 +600,7 @@ class TestJobDefLoader:
         """Can load interactive-1 JobDef."""
         job_def = load_job_def("interactive-1", jobdefs_dir)
         assert job_def.job_id == "interactive-1"
-        assert len(job_def.steps) == 6
+        assert len(job_def.steps) == 7
 
     def test_interactive1_step_ids(self, jobdefs_dir):
         """interactive-1 has correct step IDs."""
@@ -606,6 +608,7 @@ class TestJobDefLoader:
         step_ids = [s.step_id for s in job_def.steps]
         assert step_ids == [
             "branch.create",
+            "refs.sync",
             "agent.interactive",
             "commit.interactive",
             "capture.bundle",
@@ -1700,3 +1703,166 @@ class TestRunCtxStepToStep:
 
         manifest = store.read_step_manifest(result.run_id, 2)
         assert "status: completed" in manifest.payload["command"]
+
+
+# =============================================================================
+# Backend Variable Resolution Tests
+# =============================================================================
+
+
+class TestBackendVariableResolution:
+    """Tests for backend variable resolution in StepTemplate → Step compilation."""
+
+    def test_resolve_backend_from_payload(self):
+        """backend: '@payload.agent' + payload.agent = 'claude-code' → Backend.claude_code."""
+        job_def = JobDef(
+            job_id="agent-param-test",
+            steps=[
+                StepTemplate(
+                    step_id="agent.work",
+                    backend="@payload.agent",
+                    payload={"command": "echo hello"},
+                ),
+            ],
+        )
+        envelope = {
+            "payload": {
+                "agent": "claude-code",
+                "repo_path": "/workspace",
+            },
+        }
+        result = compile_job(job_def, envelope)
+        assert result.steps[0].backend == Backend.claude_code
+
+    def test_resolve_backend_missing_agent(self):
+        """backend: '@payload.agent' + no agent in payload → CompileError."""
+        job_def = JobDef(
+            job_id="missing-agent-test",
+            steps=[
+                StepTemplate(
+                    step_id="agent.work",
+                    backend="@payload.agent",
+                    payload={"command": "echo hello"},
+                ),
+            ],
+        )
+        envelope = {
+            "payload": {"repo_path": "/workspace"},
+        }
+        with pytest.raises(CompileError) as exc_info:
+            compile_job(job_def, envelope)
+        assert "agent" in str(exc_info.value)
+
+    def test_resolve_backend_invalid_agent(self):
+        """backend: '@payload.agent' + payload.agent = 'unknown' → CompileError."""
+        job_def = JobDef(
+            job_id="invalid-agent-test",
+            steps=[
+                StepTemplate(
+                    step_id="agent.work",
+                    backend="@payload.agent",
+                    payload={"command": "echo hello"},
+                ),
+            ],
+        )
+        envelope = {
+            "payload": {
+                "agent": "unknown",
+                "repo_path": "/workspace",
+            },
+        }
+        with pytest.raises(CompileError) as exc_info:
+            compile_job(job_def, envelope)
+        assert "Unknown backend" in str(exc_info.value)
+
+    def test_resolve_backend_static_enum(self):
+        """backend: Backend.cmd stays Backend.cmd (no regression)."""
+        job_def = JobDef(
+            job_id="static-backend-test",
+            steps=[
+                StepTemplate(
+                    step_id="step1",
+                    backend=Backend.cmd,
+                    payload={"command": "echo hello"},
+                ),
+            ],
+        )
+        envelope = {
+            "payload": {"repo_path": "/workspace"},
+        }
+        result = compile_job(job_def, envelope)
+        assert result.steps[0].backend == Backend.cmd
+
+    def test_multi_agent_workflow(self):
+        """Different steps use @payload.agent and @payload.copilot_agent independently."""
+        job_def = JobDef(
+            job_id="multi-agent-test",
+            steps=[
+                StepTemplate(
+                    step_id="primary",
+                    backend="@payload.agent",
+                    payload={"command": "echo primary"},
+                ),
+                StepTemplate(
+                    step_id="copilot",
+                    backend="@payload.copilot_agent",
+                    payload={"command": "echo copilot"},
+                ),
+            ],
+        )
+        envelope = {
+            "payload": {
+                "agent": "claude-code",
+                "copilot_agent": "codex",
+                "repo_path": "/workspace",
+            },
+        }
+        result = compile_job(job_def, envelope)
+        assert result.steps[0].backend == Backend.claude_code
+        assert result.steps[1].backend == Backend.codex
+
+    def test_aip1_requires_agent_in_payload(self):
+        """Compiling aip-1 without 'agent' in payload → ExecutorError.
+
+        The error may come from variable resolution (@payload.agent in refs.sync
+        payload) or from backend resolution, depending on step ordering. Both
+        are ExecutorError subclasses.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from spec.executor.jobdefs import install_default_jobdefs, load_job_def
+
+        with tempfile.TemporaryDirectory() as tmp:
+            gov_path = Path(tmp) / "local-governor"
+            install_default_jobdefs(gov_path)
+            job_def = load_job_def("aip-1", gov_path)
+
+        envelope = {
+            "payload": {
+                "repo_path": "/workspace",
+                "feature_branch": "feat/test",
+                "spec_md": "# Test spec",
+            },
+        }
+        with pytest.raises(ExecutorError) as exc_info:
+            compile_job(job_def, envelope)
+        assert "agent" in str(exc_info.value)
+
+    def test_resolve_backend_helper_direct(self):
+        """Direct tests for _resolve_backend() helper."""
+        # Backend enum passes through
+        assert _resolve_backend(Backend.cmd, {}) == Backend.cmd
+        assert _resolve_backend(Backend.python, {}) == Backend.python
+
+        # String variable reference resolves
+        assert _resolve_backend("@payload.agent", {"agent": "claude-code"}) == Backend.claude_code
+        assert _resolve_backend("@payload.agent", {"agent": "codex"}) == Backend.codex
+
+        # Missing key raises CompileError
+        with pytest.raises(CompileError, match="agent"):
+            _resolve_backend("@payload.agent", {})
+
+        # Invalid backend value raises CompileError
+        with pytest.raises(CompileError, match="Unknown backend"):
+            _resolve_backend("@payload.agent", {"agent": "nonexistent"})

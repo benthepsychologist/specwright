@@ -1,11 +1,11 @@
 ---
-id: t008-02
-title: Run Analysis and Improvement Suggestions
+id: t008-03
+title: JobDef Integration for Agent-Parameterized Workflows
 tier: B
 owner: benthepsychologist
-goal: Analyze run failures and generate improvement suggestions via LLM backend
+goal: Enable JobDef templates to parameterize agent selection at compile time
 status: planned
-branch: feat/suggest-improvements
+branch: feat/jobdef-agent-param
 repo:
   name: specwright
   url: https://github.com/workspace/specwright
@@ -13,222 +13,378 @@ created: 2026-02-05T00:00:00Z
 updated: 2026-02-12T00:00:00Z
 ---
 
-# t008-02: Run Analysis and Improvement Suggestions
+# t008-03: JobDef Integration for Agent-Parameterized Workflows
 
 **Epic**: t008-agent-reference-syncing-and-continuous-improvement
 **Status**: planned
-**Branch**: feat/suggest-improvements
+**Branch**: feat/jobdef-agent-param
 **Target**: specwright
-**Depends on**: (none - can be independent)
+**Depends on**: t008-01-agent-sync-refs
 
 ---
 
 ## Summary
 
-Add an LLM backend step (`prompt_type: suggest_improvements`) that analyzes run failures and generates a markdown report with categorized improvement suggestions.
+Add `refs.sync` step and agent parameterization to JobDef templates (aip-1.yaml, interactive-1.yaml), enabling the same workflow to execute with different coding agents. Agent selection is **required at compile time** via `@payload.agent` variable reference.
 
 ## Context
 
-When runs fail, the knowledge gained—"we should validate X before dispatch", "add a test for Y", "timeout handling needed for Z"—is lost unless manually extracted. This feature systematically captures that knowledge in a readable format.
+JobDefs currently hardcode `backend: claude-code` for agent execution. With t008-01 providing agent-agnostic reference syncing, we can now parameterize JobDefs via `backend: "@payload.agent"` to support multiple agents while keeping workflow logic unified. Variable resolution happens at compile time (not runtime), so the resolved backend is known before dispatch.
 
 ## Problem Statement
 
-1. No structured capture of lessons from run failures
-2. Same issues discovered multiple times
-3. Manual process to extract actionable insights
-4. No systematic way to track what improvements are needed
+1. JobDefs hardcode agent to Claude Code — can't execute with other agents
+2. Adding new agents requires duplicating entire JobDef templates
+3. No reference syncing before agent execution
+4. Can't mix agents in a single workflow (e.g., claude-code → gpt-5.2 → claude-code)
 
 ## Solution
 
-Create an LLM backend step with `prompt_type: suggest_improvements` that:
-1. Analyzes run outcomes, errors, and failures
-2. Generates categorized suggestions (agent rules, code improvements, build updates, test gaps)
-3. Outputs a markdown report with confidence levels
-4. User manually reviews and applies relevant suggestions
+1. Add `agent` as a **required** parameter in JobDef payload
+2. Add `refs.sync` step to synchronize agent reference files before execution
+3. Use `@payload.agent` variable reference in `backend` field (resolved at compile time)
+4. Update JobDef templates (aip-1.yaml, interactive-1.yaml) with agent parameterization
 
 ## Constraints
 
-- Read-only analysis — report only, no automatic modifications
-- Must handle runs with no errors gracefully (empty suggestions)
-- Use existing LLM backend infrastructure (don't create new callables)
-- Suggestions include confidence level (high/medium/low) determined by LLM
+- **NO backward compatibility** — `agent` parameter is REQUIRED in payload
+- Agent parameter is a string (e.g., "claude-code", "copilot") — not an object
+- Variable resolution happens at **compile time**, not runtime
+- BackendBase API unchanged (schema changes only in StepTemplate)
+
+## Prerequisites
+
+### Schema Changes Required
+
+The `backend` field in `StepTemplate` is currently typed as `Backend` (enum only).
+To support `backend: "@payload.agent"`, allow strings for variable references:
+
+**Files requiring changes:**
+- `src/spec/executor/schemas/shared.py` — Update Backend enum if adding new backends (e.g., `COPILOT = "copilot"` for t008-04)
+- `src/spec/executor/schemas/job_def.py` — Change `StepTemplate.backend: Backend | str`
+- `src/spec/executor/schemas/job_instance.py` — Keep `Step.backend: Backend` (enum only — receives resolved value)
+- `src/spec/executor/schemas/manifest.py` — Keep `StepManifest.backend: Backend` (enum only)
+
+**Pattern**: JobDef templates allow `str` for variable references; after compilation, Step and StepManifest always receive resolved `Backend` enum values.
+**Note**: Backend enum uses snake_case in code (`claude_code`) but kebab-case in value (`"claude-code"`).
+
+### Engine Modification Required
+
+The `compile_job()` function in `src/spec/executor/engine.py` must be extended for:
+
+#### 1. Backend Variable Resolution
+
+For each `StepTemplate.backend`:
+- If it's a string like `"@payload.agent"`, extract the variable name
+- Resolve against the provided payload dict
+- Validate the resolved value is a valid Backend enum name (case-insensitive)
+- Convert to Backend enum and assign to `Step.backend`
+
+**Validation rules**:
+- If `backend` is `"@payload.agent"` but payload doesn't have `agent` key → **compilation error**
+- If resolved value is not a valid backend name → **compilation error**
+- No fallback defaults — all must be explicit in payload
+
+**Example**:
+```python
+# JobDef template:
+step: {step_id: "agent.run", backend: "@payload.agent"}
+
+# Payload:
+{agent: "claude-code", ...}
+
+# After compile():
+step: {step_id: "agent.run", backend: Backend.CLAUDE_CODE}  # enum, resolved
+```
+
+#### 2. Preflight Agent Validation (New)
+
+After resolving backend variables, validate agent availability using existing `verify()` method:
+```python
+def _preflight_backend_checks(job_instance: JobInstance) -> None:
+    """Validate backends are available — once per unique backend, not per-step."""
+    # Collect unique backends used in the job (efficient verification)
+    unique_backends = {step.backend for step in job_instance.steps}
+
+    # Verify each backend ONCE
+    for backend_enum in unique_backends:
+        backend_instance = get_backend(backend_enum)
+        try:
+            backend_instance.verify()
+        except BackendError as e:
+            raise CompilationError(
+                f"Backend '{backend_enum.value}' is not available.\n"
+                f"Details: {str(e)}\n"
+                f"Check your environment: CLI installed? Authenticated? Models available?"
+            ) from e
+
+def compile_job(job_def, payload):
+    ...
+    # Resolve variables and build steps
+    job_instance = JobInstance(...)
+
+    # Run preflight checks for all backends (NEW)
+    _preflight_backend_checks(job_instance)
+
+    return job_instance
+```
+
+**What verify() checks** (backend-specific):
+- **claude-code**: Claude Code CLI installed via `shutil.which("claude")`
+- **copilot**: Copilot CLI installed, authenticated, model availability
+- **cmd/python**: Default verify() does nothing (always available)
+- Each backend raises `BackendError` with helpful context if unavailable
+
+**Timing**: Preflight checks run after compilation but before dispatch, following existing `_require_llm_preflight()` pattern.
 
 ## Expectations
 
-### 1. LLM Backend Extension
+1. **Agent parameter is REQUIRED** in all JobDef payloads:
+   ```yaml
+   payload:
+     spec_md: "..."
+     repo_path: "/workspace/specwright"
+     agent: "claude-code"  # REQUIRED — no defaults
+     project: "specwright" # Project to locate build.yaml for refs.sync
+   ```
 
-Add `prompt_type: suggest_improvements` support to `LlmBackend`:
-- Analyzes run artifacts: outcomes, stderr, stdout, patches
-- Calls LLM with structured analysis prompt
-- Generates JSON response with suggestions array
+2. `refs.sync` step added after branch creation in aip-1.yaml and interactive-1.yaml:
+   ```yaml
+   steps:
+     - step_id: branch.create
+       backend: cmd
+       description: Create or switch to feature branch
+       payload:
+         command: "git checkout @payload.feature_branch 2>/dev/null || git checkout -b @payload.feature_branch"
+         capture_git: true
+       continue_on_failure: false
 
-### 2. Suggestion Categories
+     # NEW: Sync reference files before agent execution
+     # Note: Depends on agent.sync_refs callable from t008-01
+     - step_id: refs.sync
+       backend: python
+       description: Sync agent reference files from build.yaml
+       payload:
+         callable: "agent.sync_refs"
+         agent: "@payload.agent"
+         project: "@payload.project"
+         sync_task: true
+         spec_md: "@payload.spec_md"
+       continue_on_failure: true  # Don't block agent if sync fails (build.yaml not found, etc.)
 
-Generated suggestions fall into:
-- **Agent Instructions**: Rules for CLAUDE.md / reference files
-  - E.g., "Always validate StepManifest.repo_path before dispatch"
-- **Code Improvements**: Refactoring or enhancement ideas
-  - E.g., "Add timeout handling to git capture"
-- **Build System Updates**: Changes to build.yaml or invariants
-  - E.g., "Add invariant: Python callables must validate required keys"
-- **Test Coverage Gaps**: Missing test cases
-  - E.g., "Add test for missing repo_path in StepManifest"
+     - step_id: agent.run_spec
+       backend: "@payload.agent"  # Resolved at compile time to Backend enum
+       description: "Run 1: Execute spec with agent"
+       payload:
+         spec_md: "@payload.spec_md"
+         repo_path: "@payload.repo_path"
+         capture_git: true
+       timeout_s: 1800
+       ...
+   ```
 
-### 3. Output Format
+   **refs.sync behavior**:
+   - Step runs immediately after branch.create (files synced before agent starts)
+   - Continues to agent step even if sync fails (continue_on_failure: true)
+   - Failure modes: build.yaml not found, project not specified, write errors
+   - Agent continues with any partial sync or no sync (graceful degradation)
 
-Markdown report with structure:
-```markdown
-# Run Analysis: Improvement Suggestions
+3. **Compile-time variable resolution**: When `compile(job_def, payload)` is called, `@payload.agent` resolves to the backend enum. Example:
+   - Payload: `{agent: "claude-code", ...}`
+   - Result: Step has `backend: Backend.CLAUDE_CODE` (enum value, not string)
 
-## Run Summary
-- Run ID: {run_id}
-- Status: {success/failed/timeout}
-- Failed steps: N of M
-- Duration: Xs
+4. **Multi-agent workflows supported**: Different steps can target different agents:
+   ```yaml
+   steps:
+     - step_id: agent.run_spec
+       backend: "@payload.agent"  # Use first agent
+     - step_id: agent.refine
+       backend: "@payload.copilot_agent"  # Use second agent (if provided)
+     - step_id: agent.verify
+       backend: "@payload.agent"  # Back to first agent
+   ```
 
-## Suggestions
-
-### Agent Instructions
-- **High confidence**: {suggestion text}
-  - Rationale: {why this would help}
-  - Related files: {files}
-
-### Code Improvements
-- **Medium confidence**: {suggestion}
-  - Rationale: {explanation}
-  - Related files: {files}
-
-### Build System Updates
-- **Low confidence**: {suggestion}
-  - Rationale: {explanation}
-
-### Test Coverage Gaps
-- **High confidence**: {suggestion}
-  - Rationale: {explanation}
-```
-
-### 4. Confidence Levels
-
-LLM assigns confidence based on evidence:
-- **High**: Clear root cause, actionable fix, likely to help
-- **Medium**: Probable issue, should investigate
-- **Low**: Possible issue, needs more evidence
-
-### 5. Usage in JobDef
-
-```yaml
-steps:
-  - step_id: analyze-improvements
-    backend: llm
-    description: Analyze run and suggest improvements
-    payload:
-      prompt_type: suggest_improvements
-      run_id: "@run.run_id"
-      job_id: "@run.job_id"
-    continue_on_failure: true  # Don't block if analysis fails
-```
+5. **Compilation fails if agent is missing or invalid**:
+   - Missing `agent` in payload → compilation error
+   - Invalid backend name → compilation error
+   - No fallback defaults
 
 ## Implementation Notes
 
-### Prompt Design
+### Updated aip-1.yaml Structure
 
-**System Prompt**:
-```
-You are analyzing a failed/timeout run to suggest improvements.
-Generate actionable suggestions across these categories:
-- Agent Instructions (for CLAUDE.md/reference files)
-- Code Improvements (refactoring, enhancements)
-- Build System Updates (invariants, boundaries, rules)
-- Test Coverage Gaps (missing test cases)
+```yaml
+job_id: aip-1
+version: "0.3"  # Bump for refs.sync addition
+description: Execute a spec with 3-pass agent verification
 
-For each suggestion:
-1. Confidence (high/medium/low)
-2. Clear description of what to do
-3. Rationale (why it helps)
-4. Related files (if applicable)
-```
+steps:
+  # Step 1: Create or switch to feature branch - must succeed
+  - step_id: branch.create
+    backend: cmd
+    description: Create or switch to feature branch
+    payload:
+      command: "git checkout @payload.feature_branch 2>/dev/null || git checkout -b @payload.feature_branch"
+      capture_git: true
+    continue_on_failure: false
 
-**User Prompt**:
-```
-## Run Analysis
-Run: {run_id} | Job: {job_id} | Status: {status}
+  # Step 2: Sync agent reference files - best effort
+  - step_id: refs.sync
+    backend: python
+    description: Sync reference files from build.yaml
+    payload:
+      callable: "agent.sync_refs"
+      agent: "@payload.agent"
+      project: "@payload.project"
+      sync_task: true
+      spec_md: "@payload.spec_md"
+    continue_on_failure: true
 
-## Step Outcomes
-{step_summary_table}
+  # Step 3: Run 1 - Execute spec
+  - step_id: agent.run_spec
+    backend: "@payload.agent"  # Dynamic backend selection
+    description: "Run 1: Execute spec with agent"
+    payload:
+      spec_md: "@payload.spec_md"
+      repo_path: "@payload.repo_path"
+      capture_git: true
+    timeout_s: 1800
+    on_failure_skip_to: capture.bundle
+    capture_patch: true
 
-## Errors and Failures
-{error_details}
-
-## Recent Stderr (truncated to ~5K tokens)
-{stderr_snippets}
-
-## Git Changes
-{files_changed_summary}
-
-Please analyze and suggest improvements in each category.
-Response: JSON array of suggestions.
-```
-
-### JSON Response Format
-
-```json
-{
-  "suggestions": [
-    {
-      "confidence": "high|medium|low",
-      "category": "agent|code|build|test",
-      "suggestion": "Clear description of improvement",
-      "rationale": "Why this would help",
-      "related_files": ["file1.py", "file2.py"]
-    }
-  ]
-}
+  # ... remaining steps unchanged
 ```
 
-### Token Management
+### Agent Backend Mapping
 
-- Target: Keep context under 50K tokens
-- Prioritize: errors > stderr > stdout > patches
-- Truncate with `... [N lines truncated] ...`
+For non-Claude agents, specwright will need backend adapters:
+
+| Agent | Backend ID | Notes |
+|---|---|---|
+| Claude Code | `claude-code` | Existing backend |
+| Cursor | `cursor` | Future: MCP or CLI |
+| Aider | `aider` | Future: CLI wrapper |
+| Roo Code | `roo-code` | Future: Extension API |
+| Goose | `goose` | Future: CLI wrapper |
+| OpenCode | `opencode` | Future: CLI wrapper |
+
+For now, only `claude-code` has a working backend. Other agents will require
+separate backend implementations (out of scope for this spec).
+
+### Compile-Time Variable Resolution
+
+Variables in the `backend` field resolve at compile time:
+```python
+def resolve_backend_variable(template: str, payload: dict) -> Backend:
+    """Resolve @payload.X references to Backend enum values."""
+    if isinstance(template, Backend):
+        return template  # Already enum
+
+    if not isinstance(template, str):
+        raise ValueError(f"backend must be Backend enum or string, got {type(template)}")
+
+    if template.startswith("@payload."):
+        key = template[9:]  # Strip "@payload."
+        value = payload.get(key)
+        if value is None:
+            raise ValueError(f"Required payload key not found: {key}")
+        # Convert string to Backend enum
+        try:
+            return Backend[value.upper()]
+        except KeyError:
+            raise ValueError(f"Unknown backend: {value}")
+
+    # Direct backend name
+    try:
+        return Backend[template.upper()]
+    except KeyError:
+        raise ValueError(f"Unknown backend: {template}")
+```
+
+### Project Parameter for refs.sync
+
+The `@payload.project` is used by `refs.sync` to locate the build.yaml:
+
+1. **Explicit**: User provides in payload → use it directly
+2. **Inferred from repo**: Use the target repo directory name as project ID
+
+If refs.sync cannot resolve the project, it fails gracefully (with `continue_on_failure: true`, execution continues to agent step):
+```python
+# Inside refs.sync callable:
+project = payload.get("project") or Path(repo_path).name
+# If build.yaml not found for project → passed=False, error in data
+```
 
 ## Test Cases
 
-1. Run with no errors → empty suggestions array
-2. Run with validation error → agent instruction suggestion
-3. Run with timeout → test coverage + code improvement suggestions
-4. Run with git failure → build system + code improvement suggestions
-5. Multiple failures → multiple categorized suggestions
-6. Large stderr → truncated appropriately, still analyzes errors
+**Variable resolution:**
+1. **Missing agent in payload** → compilation error with clear message
+2. **agent=unknown_backend** → compilation error: "Unknown backend: unknown_backend"
+3. **agent=claude-code** → resolves to Backend.CLAUDE_CODE, preflight checks pass, compilation succeeds
+4. **agent=copilot** → resolves to Backend.COPILOT, preflight checks pass, compilation succeeds
+
+**Preflight validation (NEW):**
+5. **Backend unavailable** (e.g., claude-code CLI not installed) → compilation error with helpful message
+6. **Backend requires auth** (e.g., copilot not authenticated) → compilation error with auth guidance
+7. **Models specified but unavailable** (e.g., requested model not supported) → compilation error
+8. **Backend available** → compilation succeeds, preflight checks cached for dispatch
+
+**Template execution:**
+9. **refs.sync failure** → continues to agent step (due to `continue_on_failure: true`)
+10. **refs.sync success** → reference files synced before agent step runs
+11. **Agent step executes** → with synced reference files and resolved backend
+
+**Multi-agent workflows:**
+12. **Multiple agent parameters** (agent, copilot_agent) → different steps use different backends
+13. **Same agent in multiple steps** → all steps execute with same backend
 
 ## Build Delta
 
 ```yaml
 target: projects/specwright/specwright.build.yaml
-summary: "Add suggest_improvements prompt type to LLM backend"
+summary: "JobDef support for agent-parameterized workflows"
 modifies:
-  modules:
-    - name: backends
-      note: "Add suggest_improvements prompt_type support"
   layout:
-    - path: src/spec/executor/backends/llm.py
-      note: "Extend _build_prompt() for suggest_improvements"
+    - module: jobdefs
+      kind: templates
+      path: src/spec/templates/jobdefs/
+      note: "Updated aip-1.yaml and interactive-1.yaml with refs.sync step"
 ```
 
 ## Acceptance Criteria
 
-- [ ] `prompt_type: suggest_improvements` handled in LlmBackend._build_prompt()
-- [ ] Analyzes run outcomes, errors, and failures
-- [ ] Generates JSON suggestions with confidence levels
-- [ ] Outputs markdown report with categorized suggestions
-- [ ] Handles runs with no errors gracefully
-- [ ] Token limit strategy implemented (~5K for context)
-- [ ] Works with all step types (completed, failed, timeout, skipped)
-- [ ] Markdown output is readable and actionable
-- [ ] All tests passing
+**Schema changes:**
+- [ ] `StepTemplate.backend` accepts `str | Backend` union type
+- [ ] `Step.backend` and `StepManifest.backend` remain `Backend` enum only
+
+**Compilation and resolution:**
+- [ ] `compile_job()` resolves `@payload.agent` variables to Backend enum
+- [ ] Compilation fails with clear error if agent is missing from payload
+- [ ] Compilation fails with clear error if agent backend name is invalid
+- [ ] Compilation fails with clear error if backend is unavailable (not installed, not authenticated)
+
+**Preflight validation:**
+- [ ] `compile_job()` calls `backend.verify()` for each agent step after compilation
+- [ ] Helpful error messages when agent unavailable (from BackendError exceptions)
+- [ ] Preflight checks fail fast at compile time, before dispatch
+- [ ] Works with single-agent and multi-agent workflows
+- [ ] Follows existing `_require_llm_preflight()` pattern in engine.py
+
+**Templates and integration:**
+- [ ] `refs.sync` step added to aip-1.yaml template (after branch.create)
+- [ ] `refs.sync` step added to interactive-1.yaml template (after branch.create)
+- [ ] Agent parameter is REQUIRED in JobDef payloads (no defaults)
+- [ ] Multi-agent workflows supported (different agents per step)
+
+**Testing:**
+- [ ] All test cases passing (missing agent, invalid backend, unavailable agent, multi-agent)
+- [ ] Preflight validation tests for claude-code backend
+- [ ] Future backends (copilot, etc.) plug in without engine changes
+- [ ] Documentation updated with agent parameterization examples
 
 ## Future Work (Out of Scope)
 
-- Suggestion queue storage (YAML persistence in local-governor)
-- CLI commands to review/apply (spec suggest review/apply)
-- Auto-apply to CLAUDE.md
-- Cross-run aggregation of suggestions
+- Backend adapters for Cursor, Aider, Roo, Goose, OpenCode (t008-04 starts with Copilot)
+- Agent capability detection (what each agent can do, prerequisites)
+- Agent-specific timeout tuning based on backend
+- Conditional step execution based on agent (e.g., skip steps for certain backends)

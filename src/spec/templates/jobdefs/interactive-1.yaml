@@ -2,17 +2,18 @@
 #
 # Execution model:
 #   Step 1: Create feature branch
-#   Step 2: Interactive Claude session (human in the loop)
-#   Step 3: Commit changes (best effort)
-#   Step 4: Capture artifacts (best effort)
-#   Step 5: Finalize
-#   Step 6: Suggest improvements (LLM analysis of the run)
+#   Step 2: Sync agent reference files
+#   Step 3: Interactive Claude session (human in the loop)
+#   Step 4: Commit changes (best effort)
+#   Step 5: Capture artifacts (best effort)
+#   Step 6: Finalize
+#   Step 7: Suggest improvements (LLM analysis of the run)
 #
 # The interactive step is marked interactive=true, so exit codes
 # (130/SIGINT, 143/SIGTERM) are treated as telemetry, not failure.
 
 job_id: interactive-1
-version: "0.1"
+version: "0.2"
 description: Human-guided spec execution via Claude Code TUI
 
 steps:
@@ -25,9 +26,19 @@ steps:
       capture_git: true
     continue_on_failure: false
 
-  # Step 2: Interactive Claude session
+  # Step 2: Sync agent reference files from build.yaml
+  - step_id: refs.sync
+    backend: python
+    description: Sync agent reference files from build.yaml
+    payload:
+      callable: "agent.sync_refs"
+      agents: ["@payload.agent"]
+      project: "@payload.project"
+    continue_on_failure: true
+
+  # Step 3: Interactive Claude session
   - step_id: agent.interactive
-    backend: claude-code
+    backend: "@payload.agent"
     description: Interactive Claude Code session
     payload:
       interactive: true
@@ -39,16 +50,16 @@ steps:
     on_failure_skip_to: capture.bundle
     capture_patch: true
 
-  # Step 3: Commit changes (best effort)
+  # Step 4: Commit changes (best effort)
   - step_id: commit.interactive
     backend: cmd
     description: Commit changes from interactive session
     payload:
-      command: "git add -A && git commit -m 'spec: interactive session' || true"
+      command: "git add -A && git commit -m 'spec(@payload.spec_id): interactive session' || true"
       capture_git: true
     continue_on_failure: true
 
-  # Step 4: Capture bundle (best effort)
+  # Step 5: Capture bundle (best effort)
   - step_id: capture.bundle
     backend: cmd
     description: Bundle execution artifacts
@@ -57,7 +68,7 @@ steps:
       capture_git: true
     continue_on_failure: true
 
-  # Step 5: Finalize run (best effort)
+  # Step 6: Finalize run (best effort)
   - step_id: finalize.run
     backend: cmd
     description: Finalize run
@@ -66,7 +77,7 @@ steps:
       capture_git: false
     continue_on_failure: true
 
-  # Step 6: Suggest improvements (LLM analysis of the run)
+  # Step 7: Suggest improvements (LLM analysis of the run)
   - step_id: analyze.suggest_improvements
     backend: llm
     description: Analyze run and suggest improvements

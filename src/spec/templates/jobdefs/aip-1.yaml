@@ -11,7 +11,7 @@
 #   - Commits after each successful Claude run
 
 job_id: aip-1
-version: "0.2"
+version: "0.3"
 description: Execute a spec with 3-pass agent verification
 
 steps:
@@ -24,9 +24,19 @@ steps:
       capture_git: true
     continue_on_failure: false
 
-  # Step 2: Run 1 - Execute spec
+  # Step 2: Sync agent reference files from build.yaml
+  - step_id: refs.sync
+    backend: python
+    description: Sync agent reference files from build.yaml
+    payload:
+      callable: "agent.sync_refs"
+      agents: ["@payload.agent"]
+      project: "@payload.project"
+    continue_on_failure: true
+
+  # Step 3: Run 1 - Execute spec
   - step_id: agent.run_spec
-    backend: claude-code
+    backend: "@payload.agent"
     description: "Run 1: Execute spec with agent"
     payload:
       spec_md: "@payload.spec_md"
@@ -36,18 +46,18 @@ steps:
     on_failure_skip_to: capture.bundle
     capture_patch: true
 
-  # Step 3: Commit after Run 1
+  # Step 4: Commit after Run 1
   - step_id: commit.run1
     backend: cmd
     description: Commit changes from run 1
     payload:
-      command: "git add -A && git commit -m 'spec: revision 1' || true"
+      command: "git add -A && git commit -m 'spec(@payload.spec_id): revision 1' || true"
       capture_git: true
     continue_on_failure: true
 
-  # Step 4: Run 2 - Drift inspection and fix
+  # Step 5: Run 2 - Drift inspection and fix
   - step_id: agent.drift_fix
-    backend: claude-code
+    backend: "@payload.agent"
     description: "Run 2: Inspect for drift and fix"
     payload:
       prompt_type: drift_fix
@@ -58,18 +68,18 @@ steps:
     continue_on_failure: true
     capture_patch: true
 
-  # Step 5: Commit after Run 2
+  # Step 6: Commit after Run 2
   - step_id: commit.run2
     backend: cmd
     description: Commit changes from run 2
     payload:
-      command: "git add -A && git commit -m 'spec: revision 2 - drift fix' || true"
+      command: "git add -A && git commit -m 'spec(@payload.spec_id): revision 2 - drift fix' || true"
       capture_git: true
     continue_on_failure: true
 
-  # Step 6: Run 3 - Final drift verification
+  # Step 7: Run 3 - Final drift verification
   - step_id: agent.drift_verify
-    backend: claude-code
+    backend: "@payload.agent"
     description: "Run 3: Final drift verification"
     payload:
       prompt_type: drift_verify
@@ -80,16 +90,16 @@ steps:
     continue_on_failure: true
     capture_patch: true
 
-  # Step 7: Commit after Run 3
+  # Step 8: Commit after Run 3
   - step_id: commit.run3
     backend: cmd
     description: Commit changes from run 3
     payload:
-      command: "git add -A && git commit -m 'spec: revision 3 - verification' || true"
+      command: "git add -A && git commit -m 'spec(@payload.spec_id): revision 3 - verification' || true"
       capture_git: true
     continue_on_failure: true
 
-  # Step 8: Capture bundle - best effort
+  # Step 9: Capture bundle - best effort
   - step_id: capture.bundle
     backend: cmd
     description: Bundle execution artifacts
@@ -98,7 +108,7 @@ steps:
       capture_git: true
     continue_on_failure: true
 
-  # Step 9: Assess acceptance - best effort
+  # Step 10: Assess acceptance - best effort
   - step_id: assess.acceptance
     backend: llm
     description: Assess spec acceptance criteria
@@ -109,7 +119,7 @@ steps:
       repo_path: "@payload.repo_path"
     continue_on_failure: true
 
-  # Step 10: Finalize run - always try
+  # Step 11: Finalize run - always try
   - step_id: finalize.run
     backend: cmd
     description: Finalize run and write summary
