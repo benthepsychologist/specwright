@@ -110,6 +110,69 @@ class TestCopilotVerify:
             backend.verify()
         assert "not found" in str(exc_info.value)
 
+    @patch("subprocess.run")
+    @patch("shutil.which", return_value="/usr/bin/copilot")
+    def test_verify_auth_success(self, mock_which, mock_run, backend):
+        """verify succeeds when all checks pass including auth."""
+        # Mock help check first (for --deny-tool flag)
+        # Then mock auth check (test invocation)
+        mock_run.side_effect = [
+            # First call: --help check
+            MagicMock(
+                stdout="Usage: copilot [options]\n  --deny-tool  Deny a tool\n",
+                stderr="",
+                returncode=0,
+            ),
+            # Second call: auth check
+            MagicMock(
+                stdout="",
+                stderr="",
+                returncode=0,
+            ),
+        ]
+        backend.verify()  # Should not raise
+
+    @patch("subprocess.run")
+    @patch("shutil.which", return_value="/usr/bin/copilot")
+    def test_verify_auth_failure(self, mock_which, mock_run, backend):
+        """verify raises when authentication check fails."""
+        mock_run.side_effect = [
+            # First call: --help check (passes)
+            MagicMock(
+                stdout="Usage: copilot [options]\n  --deny-tool  Deny a tool\n",
+                stderr="",
+                returncode=0,
+            ),
+            # Second call: auth check (fails)
+            MagicMock(
+                stdout="",
+                stderr="Error: authentication failed",
+                returncode=1,
+            ),
+        ]
+        with pytest.raises(BackendError) as exc_info:
+            backend.verify()
+        assert "authentication failed" in str(exc_info.value).lower()
+        assert "GH_TOKEN" in str(exc_info.value)
+
+    @patch("subprocess.run")
+    @patch("shutil.which", return_value="/usr/bin/copilot")
+    def test_verify_auth_timeout(self, mock_which, mock_run, backend):
+        """verify raises when auth check times out."""
+        mock_run.side_effect = [
+            # First call: --help check (passes)
+            MagicMock(
+                stdout="Usage: copilot [options]\n  --deny-tool  Deny a tool\n",
+                stderr="",
+                returncode=0,
+            ),
+            # Second call: auth check (timeout)
+            subprocess.TimeoutExpired(cmd="copilot", timeout=5),
+        ]
+        with pytest.raises(BackendError) as exc_info:
+            backend.verify()
+        assert "timed out" in str(exc_info.value).lower()
+
 
 # =============================================================================
 # Command Building Tests
