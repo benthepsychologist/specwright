@@ -8,6 +8,7 @@ Available backends:
 - llm: Call model APIs
 - claude-code: Spawn Claude Code agent sessions
 - codex: Spawn Codex agent sessions
+- copilot: Spawn GitHub Copilot CLI agent sessions
 """
 
 from spec.executor.backends.base import (

@@ -102,6 +102,7 @@ def _auto_register() -> None:
     from spec.executor.backends.claude_code import ClaudeCodeBackend
     from spec.executor.backends.cmd import CmdBackend
     from spec.executor.backends.codex import CodexBackend
+    from spec.executor.backends.copilot import CopilotBackend
     from spec.executor.backends.llm import LlmBackend
     from spec.executor.backends.python import PythonBackend
 
@@ -110,6 +111,7 @@ def _auto_register() -> None:
     register_backend("claude-code", ClaudeCodeBackend)
     register_backend("codex", CodexBackend)
     register_backend("python", PythonBackend)
+    register_backend("copilot", CopilotBackend)
 
     # Register python callables
     from spec.governance.callables import register_all as register_governance

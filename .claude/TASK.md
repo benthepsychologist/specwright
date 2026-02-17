@@ -1,390 +1,450 @@
 ---
-id: t008-03
-title: JobDef Integration for Agent-Parameterized Workflows
+id: t008-04-copilot-backend-adapter
+title: "t008-04-copilot-backend-adapter"
 tier: B
 owner: benthepsychologist
-goal: Enable JobDef templates to parameterize agent selection at compile time
-status: planned
-branch: feat/jobdef-agent-param
-repo:
-  name: specwright
-  url: https://github.com/workspace/specwright
-created: 2026-02-05T00:00:00Z
-updated: 2026-02-12T00:00:00Z
+goal: "Implement CopilotBackend class following BackendBase interface"
+branch: feat/copilot-backend
+status: draft
+created: 2026-02-05T18:23:41Z
 ---
 
-# t008-03: JobDef Integration for Agent-Parameterized Workflows
+# t008-04-copilot-backend-adapter: t008-04-copilot-backend-adapter
 
-**Epic**: t008-agent-reference-syncing-and-continuous-improvement
-**Status**: planned
-**Branch**: feat/jobdef-agent-param
-**Target**: specwright
-**Depends on**: t008-01-agent-sync-refs
+**Epic:** t008-agent-reference-syncing-and-continuous-improvement
+**Branch:** `feat/copilot-backend`
+**Tier:** B
 
----
+## Objective
 
-## Summary
+> Implement CopilotBackend class to execute agent steps using GitHub Copilot CLI with deterministic model selection and preflight validation
 
-Add `refs.sync` step and agent parameterization to JobDef templates (aip-1.yaml, interactive-1.yaml), enabling the same workflow to execute with different coding agents. Agent selection is **required at compile time** via `@payload.agent` variable reference.
+Create a GitHub Copilot backend that allows specwright to execute agent steps with GPT-5.2, Claude via Copilot, or other Copilot-supported models. The backend will:
 
-## Context
+- **Validate availability upfront** via deterministic preflight checks before dispatch
+- **Support model arrays** — try models in priority order, fail if none work
+- **Follow claude-code patterns** for consistency (headless + interactive modes, git capture, timeouts)
+- **Integrate with t008-03** agent parameterization to enable multi-agent workflows
 
-JobDefs currently hardcode `backend: claude-code` for agent execution. With t008-01 providing agent-agnostic reference syncing, we can now parameterize JobDefs via `backend: "@payload.agent"` to support multiple agents while keeping workflow logic unified. Variable resolution happens at compile time (not runtime), so the resolved backend is known before dispatch.
+The Copilot backend is a **first-class agent backend**, equivalent in capability to claude-code, not a fallback.
 
-## Problem Statement
+## Problem
 
-1. JobDefs hardcode agent to Claude Code — can't execute with other agents
-2. Adding new agents requires duplicating entire JobDef templates
-3. No reference syncing before agent execution
-4. Can't mix agents in a single workflow (e.g., claude-code → gpt-5.2 → claude-code)
+1. **Limited agent access**: No way to use GPT-5.2 via Copilot within specwright workflows
+2. **No Copilot integration**: Copilot CLI available but not integrated as a backend
+3. **Model selection uncertainty**: When specifying models, unclear whether they're available, installed, or properly configured
+4. **No environment validation**: Can't verify agent availability before expensive job compilation/dispatch
 
-## Solution
+## Current Capabilities
 
-1. Add `agent` as a **required** parameter in JobDef payload
-2. Add `refs.sync` step to synchronize agent reference files before execution
-3. Use `@payload.agent` variable reference in `backend` field (resolved at compile time)
-4. Update JobDef templates (aip-1.yaml, interactive-1.yaml) with agent parameterization
-
-## Constraints
-
-- **NO backward compatibility** — `agent` parameter is REQUIRED in payload
-- Agent parameter is a string (e.g., "claude-code", "copilot") — not an object
-- Variable resolution happens at **compile time**, not runtime
-- BackendBase API unchanged (schema changes only in StepTemplate)
-
-## Prerequisites
-
-### Schema Changes Required
-
-The `backend` field in `StepTemplate` is currently typed as `Backend` (enum only).
-To support `backend: "@payload.agent"`, allow strings for variable references:
-
-**Files requiring changes:**
-- `src/spec/executor/schemas/shared.py` — Update Backend enum if adding new backends (e.g., `COPILOT = "copilot"` for t008-04)
-- `src/spec/executor/schemas/job_def.py` — Change `StepTemplate.backend: Backend | str`
-- `src/spec/executor/schemas/job_instance.py` — Keep `Step.backend: Backend` (enum only — receives resolved value)
-- `src/spec/executor/schemas/manifest.py` — Keep `StepManifest.backend: Backend` (enum only)
-
-**Pattern**: JobDef templates allow `str` for variable references; after compilation, Step and StepManifest always receive resolved `Backend` enum values.
-**Note**: Backend enum uses snake_case in code (`claude_code`) but kebab-case in value (`"claude-code"`).
-
-### Engine Modification Required
-
-The `compile_job()` function in `src/spec/executor/engine.py` must be extended for:
-
-#### 1. Backend Variable Resolution
-
-For each `StepTemplate.backend`:
-- If it's a string like `"@payload.agent"`, extract the variable name
-- Resolve against the provided payload dict
-- Validate the resolved value is a valid Backend enum name (case-insensitive)
-- Convert to Backend enum and assign to `Step.backend`
-
-**Validation rules**:
-- If `backend` is `"@payload.agent"` but payload doesn't have `agent` key → **compilation error**
-- If resolved value is not a valid backend name → **compilation error**
-- No fallback defaults — all must be explicit in payload
-
-**Example**:
-```python
-# JobDef template:
-step: {step_id: "agent.run", backend: "@payload.agent"}
-
-# Payload:
-{agent: "claude-code", ...}
-
-# After compile():
-step: {step_id: "agent.run", backend: Backend.CLAUDE_CODE}  # enum, resolved
-```
-
-#### 2. Preflight Agent Validation (New)
-
-After resolving backend variables, validate agent availability using existing `verify()` method:
-```python
-def _preflight_backend_checks(job_instance: JobInstance) -> None:
-    """Validate backends are available — once per unique backend, not per-step."""
-    # Collect unique backends used in the job (efficient verification)
-    unique_backends = {step.backend for step in job_instance.steps}
-
-    # Verify each backend ONCE
-    for backend_enum in unique_backends:
-        backend_instance = get_backend(backend_enum)
-        try:
-            backend_instance.verify()
-        except BackendError as e:
-            raise CompilationError(
-                f"Backend '{backend_enum.value}' is not available.\n"
-                f"Details: {str(e)}\n"
-                f"Check your environment: CLI installed? Authenticated? Models available?"
-            ) from e
-
-def compile_job(job_def, payload):
-    ...
-    # Resolve variables and build steps
-    job_instance = JobInstance(...)
-
-    # Run preflight checks for all backends (NEW)
-    _preflight_backend_checks(job_instance)
-
-    return job_instance
-```
-
-**What verify() checks** (backend-specific):
-- **claude-code**: Claude Code CLI installed via `shutil.which("claude")`
-- **copilot**: Copilot CLI installed, authenticated, model availability
-- **cmd/python**: Default verify() does nothing (always available)
-- Each backend raises `BackendError` with helpful context if unavailable
-
-**Timing**: Preflight checks run after compilation but before dispatch, following existing `_require_llm_preflight()` pattern.
-
-## Expectations
-
-1. **Agent parameter is REQUIRED** in all JobDef payloads:
-   ```yaml
-   payload:
-     spec_md: "..."
-     repo_path: "/workspace/specwright"
-     agent: "claude-code"  # REQUIRED — no defaults
-     project: "specwright" # Project to locate build.yaml for refs.sync
-   ```
-
-2. `refs.sync` step added after branch creation in aip-1.yaml and interactive-1.yaml:
-   ```yaml
-   steps:
-     - step_id: branch.create
-       backend: cmd
-       description: Create or switch to feature branch
-       payload:
-         command: "git checkout @payload.feature_branch 2>/dev/null || git checkout -b @payload.feature_branch"
-         capture_git: true
-       continue_on_failure: false
-
-     # NEW: Sync reference files before agent execution
-     # Note: Depends on agent.sync_refs callable from t008-01
-     - step_id: refs.sync
-       backend: python
-       description: Sync agent reference files from build.yaml
-       payload:
-         callable: "agent.sync_refs"
-         agent: "@payload.agent"
-         project: "@payload.project"
-         sync_task: true
-         spec_md: "@payload.spec_md"
-       continue_on_failure: true  # Don't block agent if sync fails (build.yaml not found, etc.)
-
-     - step_id: agent.run_spec
-       backend: "@payload.agent"  # Resolved at compile time to Backend enum
-       description: "Run 1: Execute spec with agent"
-       payload:
-         spec_md: "@payload.spec_md"
-         repo_path: "@payload.repo_path"
-         capture_git: true
-       timeout_s: 1800
-       ...
-   ```
-
-   **refs.sync behavior**:
-   - Step runs immediately after branch.create (files synced before agent starts)
-   - Continues to agent step even if sync fails (continue_on_failure: true)
-   - Failure modes: build.yaml not found, project not specified, write errors
-   - Agent continues with any partial sync or no sync (graceful degradation)
-
-3. **Compile-time variable resolution**: When `compile(job_def, payload)` is called, `@payload.agent` resolves to the backend enum. Example:
-   - Payload: `{agent: "claude-code", ...}`
-   - Result: Step has `backend: Backend.CLAUDE_CODE` (enum value, not string)
-
-4. **Multi-agent workflows supported**: Different steps can target different agents:
-   ```yaml
-   steps:
-     - step_id: agent.run_spec
-       backend: "@payload.agent"  # Use first agent
-     - step_id: agent.refine
-       backend: "@payload.copilot_agent"  # Use second agent (if provided)
-     - step_id: agent.verify
-       backend: "@payload.agent"  # Back to first agent
-   ```
-
-5. **Compilation fails if agent is missing or invalid**:
-   - Missing `agent` in payload → compilation error
-   - Invalid backend name → compilation error
-   - No fallback defaults
-
-## Implementation Notes
-
-### Updated aip-1.yaml Structure
+### kernel.surfaces
 
 ```yaml
-job_id: aip-1
-version: "0.3"  # Bump for refs.sync addition
-description: Execute a spec with 3-pass agent verification
-
-steps:
-  # Step 1: Create or switch to feature branch - must succeed
-  - step_id: branch.create
-    backend: cmd
-    description: Create or switch to feature branch
-    payload:
-      command: "git checkout @payload.feature_branch 2>/dev/null || git checkout -b @payload.feature_branch"
-      capture_git: true
-    continue_on_failure: false
-
-  # Step 2: Sync agent reference files - best effort
-  - step_id: refs.sync
-    backend: python
-    description: Sync reference files from build.yaml
-    payload:
-      callable: "agent.sync_refs"
-      agent: "@payload.agent"
-      project: "@payload.project"
-      sync_task: true
-      spec_md: "@payload.spec_md"
-    continue_on_failure: true
-
-  # Step 3: Run 1 - Execute spec
-  - step_id: agent.run_spec
-    backend: "@payload.agent"  # Dynamic backend selection
-    description: "Run 1: Execute spec with agent"
-    payload:
-      spec_md: "@payload.spec_md"
-      repo_path: "@payload.repo_path"
-      capture_git: true
-    timeout_s: 1800
-    on_failure_skip_to: capture.bundle
-    capture_patch: true
-
-  # ... remaining steps unchanged
+- command: "spec compile"
+  usage: "spec compile aip-1 ./my-feature.md"
+- command: "spec execute"
+  usage: "spec execute ./job_instance.yaml"
+- command: "spec run"
+  usage: "spec run aip-1 ./my-feature.md --repo /workspace/target"
+- command: "spec status"
+  usage: "spec status [run-id]"
+- command: "spec logs"
+  usage: "spec logs <run-id>"
+- command: "spec create"
+  usage: "spec create 'feature name' --tier C"
+- command: "spec init"
+  usage: "spec init"
+- command: "spec config"
+  usage: "spec config current.spec ./my-feature.md"
+- command: "spec epic"
+  usage: "spec epic status e011"
+- command: "spec validate spec"
+  usage: "spec validate spec ./my-feature.md"
+- command: "spec validate build"
+  usage: "spec validate build specwright [--json] [--fix]"
+- command: "spec validate epic"
+  usage: "spec validate epic t004 [--json]"
+- command: "spec validate contracts"
+  usage: "spec validate contracts [--json]"
 ```
 
-### Agent Backend Mapping
-
-For non-Claude agents, specwright will need backend adapters:
-
-| Agent | Backend ID | Notes |
-|---|---|---|
-| Claude Code | `claude-code` | Existing backend |
-| Cursor | `cursor` | Future: MCP or CLI |
-| Aider | `aider` | Future: CLI wrapper |
-| Roo Code | `roo-code` | Future: Extension API |
-| Goose | `goose` | Future: CLI wrapper |
-| OpenCode | `opencode` | Future: CLI wrapper |
-
-For now, only `claude-code` has a working backend. Other agents will require
-separate backend implementations (out of scope for this spec).
-
-### Compile-Time Variable Resolution
-
-Variables in the `backend` field resolve at compile time:
-```python
-def resolve_backend_variable(template: str, payload: dict) -> Backend:
-    """Resolve @payload.X references to Backend enum values."""
-    if isinstance(template, Backend):
-        return template  # Already enum
-
-    if not isinstance(template, str):
-        raise ValueError(f"backend must be Backend enum or string, got {type(template)}")
-
-    if template.startswith("@payload."):
-        key = template[9:]  # Strip "@payload."
-        value = payload.get(key)
-        if value is None:
-            raise ValueError(f"Required payload key not found: {key}")
-        # Convert string to Backend enum
-        try:
-            return Backend[value.upper()]
-        except KeyError:
-            raise ValueError(f"Unknown backend: {value}")
-
-    # Direct backend name
-    try:
-        return Backend[template.upper()]
-    except KeyError:
-        raise ValueError(f"Unknown backend: {template}")
-```
-
-### Project Parameter for refs.sync
-
-The `@payload.project` is used by `refs.sync` to locate the build.yaml:
-
-1. **Explicit**: User provides in payload → use it directly
-2. **Inferred from repo**: Use the target repo directory name as project ID
-
-If refs.sync cannot resolve the project, it fails gracefully (with `continue_on_failure: true`, execution continues to agent step):
-```python
-# Inside refs.sync callable:
-project = payload.get("project") or Path(repo_path).name
-# If build.yaml not found for project → passed=False, error in data
-```
-
-## Test Cases
-
-**Variable resolution:**
-1. **Missing agent in payload** → compilation error with clear message
-2. **agent=unknown_backend** → compilation error: "Unknown backend: unknown_backend"
-3. **agent=claude-code** → resolves to Backend.CLAUDE_CODE, preflight checks pass, compilation succeeds
-4. **agent=copilot** → resolves to Backend.COPILOT, preflight checks pass, compilation succeeds
-
-**Preflight validation (NEW):**
-5. **Backend unavailable** (e.g., claude-code CLI not installed) → compilation error with helpful message
-6. **Backend requires auth** (e.g., copilot not authenticated) → compilation error with auth guidance
-7. **Models specified but unavailable** (e.g., requested model not supported) → compilation error
-8. **Backend available** → compilation succeeds, preflight checks cached for dispatch
-
-**Template execution:**
-9. **refs.sync failure** → continues to agent step (due to `continue_on_failure: true`)
-10. **refs.sync success** → reference files synced before agent step runs
-11. **Agent step executes** → with synced reference files and resolved backend
-
-**Multi-agent workflows:**
-12. **Multiple agent parameters** (agent, copilot_agent) → different steps use different backends
-13. **Same agent in multiple steps** → all steps execute with same backend
-
-## Build Delta
+### modules
 
 ```yaml
-target: projects/specwright/specwright.build.yaml
-summary: "JobDef support for agent-parameterized workflows"
-modifies:
+- name: cli
+  provides: ['spec command-line interface']
+- name: executor
+  provides: ['job compilation', 'step execution', 'run tracking']
+- name: backends
+  provides: ['claude-code backend', 'cmd backend', 'python backend', 'llm backend', 'codex backend']
+- name: executor_schemas
+  provides: ['StepTemplate', 'JobDef', 'JobInstance', 'StepOutcome', 'StepCapture']
+- name: epic
+  provides: ['epic loading', 'epic schema', 'DAG validation', 'epic writing']
+- name: governor
+  provides: ['governor locator', 'epic/spec resolver', 'spec reader', 'materializer']
+- name: governance
+  provides: ['build validation', 'epic validation', 'contract validation']
+- name: checks
+  provides: ['LLM check execution', 'check input resolution']
+- name: llm
+  provides: ['LLM client', 'prompt rendering', 'report generation']
+- name: compiler
+  provides: ['spec markdown parsing', 'v1 YAML compilation']
+```
+
+### layout
+
+```yaml
+- path: src/spec/cli/
+  role: "Typer CLI commands and subcommand registration"
+- path: src/spec/executor/
+  role: "v2 job engine: compile, dispatch, step execution, run tracking"
+- path: src/spec/executor/backends/
+  role: "Pluggable execution backends (claude-code, cmd, python, llm, codex)"
+- path: src/spec/executor/schemas/
+  role: "Step, job, and capture dataclasses"
+- path: src/spec/epic/
+  role: "Epic loading, schema dataclasses, DAG validation, writer"
+- path: src/spec/governor/
+  role: "Local-governor integration: locator, reader, resolver, materializer, targets"
+- path: src/spec/governance/
+  role: "Build, epic, and contract validation"
+- path: src/spec/checks/
+  role: "LLM check execution and input resolution"
+- path: src/spec/llm/
+  role: "LLM client, config, prompts, and report generation"
+- path: src/spec/compiler/
+  role: "Spec markdown parser and v1 compiler (legacy)"
+```
+
+## Proposed build_delta
+
+```yaml
+target: "projects/specwright/specwright.build.yaml"
+summary: "Add copilot backend for GitHub Copilot CLI integration"
+
+adds:
   layout:
-    - module: jobdefs
-      kind: templates
-      path: src/spec/templates/jobdefs/
-      note: "Updated aip-1.yaml and interactive-1.yaml with refs.sync step"
+    - module: copilot_backend
+      kind: backend_implementation
+      path: src/spec/executor/backends/copilot.py
+    - module: backend_enum_update
+      kind: schema_update
+      path: src/spec/executor/schemas/shared.py
+      note: "Add Backend.copilot = 'copilot' enum value"
+  modules: []
+  kernel_surfaces: []
+modifies:
+  backends:
+    provides: ["claude-code backend", "cmd backend", "python backend", "llm backend", "codex backend", "copilot backend"]
+  layout:
+    - path: src/spec/executor/backends/registry.py
+      note: "Register CopilotBackend in _auto_register()"
+removes: {}
 ```
 
 ## Acceptance Criteria
 
-**Schema changes:**
-- [ ] `StepTemplate.backend` accepts `str | Backend` union type
-- [ ] `Step.backend` and `StepManifest.backend` remain `Backend` enum only
+**Core implementation:**
+- [ ] Implement CopilotBackend class following BackendBase interface
+- [ ] Register in backend registry with ID `"copilot"`
+- [ ] Follow `claude_code.py` structure and patterns exactly
 
-**Compilation and resolution:**
-- [ ] `compile_job()` resolves `@payload.agent` variables to Backend enum
-- [ ] Compilation fails with clear error if agent is missing from payload
-- [ ] Compilation fails with clear error if agent backend name is invalid
-- [ ] Compilation fails with clear error if backend is unavailable (not installed, not authenticated)
+**Preflight validation (verify method):**
+- [ ] Implement `verify()` method in CopilotBackend (override from BackendBase)
+- [ ] Check CLI installed: `shutil.which("copilot")` succeeds
+- [ ] Check auth valid: `copilot -p "test" --model claude-sonnet-4.5` returns 0 (5s timeout)
+- [ ] Check CLI version/flag support: Verify `--deny-tool` flag exists via `copilot --help`
+- [ ] Raise `BackendError` with helpful context if any check fails
+- [ ] Error messages guide user: "Install copilot CLI", "Set GH_TOKEN", "Upgrade copilot CLI to X.Y"
 
-**Preflight validation:**
-- [ ] `compile_job()` calls `backend.verify()` for each agent step after compilation
-- [ ] Helpful error messages when agent unavailable (from BackendError exceptions)
-- [ ] Preflight checks fail fast at compile time, before dispatch
-- [ ] Works with single-agent and multi-agent workflows
-- [ ] Follows existing `_require_llm_preflight()` pattern in engine.py
+**Model handling:**
+- [ ] Support `models` array in payload (ordered, deterministic)
+- [ ] Try models in order during dispatch
+- [ ] Fail step (not fallback) if no models work
+- [ ] If no models specified, use "claude-sonnet-4.5" as default
+- [ ] Pass `--model <name>` to copilot CLI
 
-**Templates and integration:**
-- [ ] `refs.sync` step added to aip-1.yaml template (after branch.create)
-- [ ] `refs.sync` step added to interactive-1.yaml template (after branch.create)
-- [ ] Agent parameter is REQUIRED in JobDef payloads (no defaults)
-- [ ] Multi-agent workflows supported (different agents per step)
+**Execution modes:**
+- [ ] Headless mode: `copilot -p "<prompt>" --model <model> --deny-tool 'shell(git*)'`
+- [ ] Interactive mode: Launch copilot CLI with same deny-tool flags, user sees prompt
+- [ ] Both modes handle timeouts via subprocess
+- [ ] Both modes capture stdout/stderr/exit code
+
+**Tool safety (agent stays in file-change lane):**
+- [ ] Deny all git operations: git add, git commit, git push, git merge, git restore, etc.
+- [ ] Allow: file read/write/edit, tests, builds, dev tools, etc.
+- [ ] Job handles commits as separate step (after agent completes)
+- [ ] User can reset if job fails; agent's lane is file changes only
+
+**Git and artifacts:**
+- [ ] Support git state capture before/after (match claude-code)
+- [ ] Create StepCapture with stdout, stderr, patches (match claude-code)
+- [ ] Respect `capture_git` and `capture_patch` flags
+
+**Error handling:**
+- [ ] Clear messages: CLI not found, auth failure, model unavailable
+- [ ] Parse Copilot error messages for user guidance
+- [ ] Timeout handling (default 1800s, user-configurable)
+
+**Integration:**
+- [ ] Works with t008-03 agent parameterization (backend: "@payload.agent")
+- [ ] Integrates with t008-03 preflight validation framework
 
 **Testing:**
-- [ ] All test cases passing (missing agent, invalid backend, unavailable agent, multi-agent)
-- [ ] Preflight validation tests for claude-code backend
-- [ ] Future backends (copilot, etc.) plug in without engine changes
-- [ ] Documentation updated with agent parameterization examples
+- [ ] Unit tests for verify() method (CLI check, auth check, flag support)
+- [ ] Unit tests for dispatch with multiple models (success, no models work, failure)
+- [ ] Integration tests with actual Copilot CLI (if available in test env)
+- [ ] Mock tests for missing CLI, failed auth, unsupported flags, timeout scenarios
+- [ ] Preflight integration: Verify called exactly once per unique backend in job
+- [ ] Linting passes: `ruff check src/`
+- [ ] Type checking passes: `mypy src/spec/executor/backends/copilot.py`
 
-## Future Work (Out of Scope)
+## Constraints
 
-- Backend adapters for Cursor, Aider, Roo, Goose, OpenCode (t008-04 starts with Copilot)
-- Agent capability detection (what each agent can do, prerequisites)
-- Agent-specific timeout tuning based on backend
-- Conditional step execution based on agent (e.g., skip steps for certain backends)
+- Must follow same interface as claude-code backend
+- Use official Copilot CLI surface (discover at implementation)
+- No modifications to existing backend interfaces
+- Preflight validation is **deterministic** — fails if requirements not met, succeeds if all validated
+- Model selection is **deterministic** — tries models in order, fails if none available
+- Error clearly when Copilot CLI unavailable or authentication fails
+
+---
+
+## Preflight Checks
+
+Before dispatch, the Copilot backend validates in `is_available()`:
+
+1. **CLI installed**: `shutil.which("copilot")` finds the binary
+   - Error: "Copilot CLI not found. Install from: https://github.com/github/copilot-cli"
+
+2. **Authentication valid**: Test with `copilot -p "test" --model <model>` (5s timeout)
+   - Check exit code 0 = authenticated
+   - Non-zero = auth failure (missing GH_TOKEN, expired token, subscription lapsed)
+   - Error: "Copilot authentication failed. Set GH_TOKEN or GITHUB_TOKEN environment variable with valid Copilot access token"
+
+3. **Model availability**: Test model with same `copilot -p` command
+   - Model error patterns: "unknown model", "not available", "not supported"
+   - If no models specified in payload, use default (Claude Sonnet 4.5)
+   - Error: "Requested models not available: gpt-5.2, claude-opus-4.6. Available via your subscription: [detected or generic list]"
+
+**Failure behavior**: If ANY check fails, `is_available()` returns `False` and compilation fails with clear error message.
+
+**Success behavior**: If ALL checks pass, backend is ready for execution.
+
+### Model Array Support
+
+The `models` parameter (in step payload) is an **ordered array** of model preferences:
+
+```yaml
+payload:
+  models:
+    - "gpt-5.2"
+    - "claude-3.5"
+    - "gpt-4"
+```
+
+**Execution**:
+1. Try `gpt-5.2` first
+2. If not available, try `claude-3.5`
+3. If not available, try `gpt-4`
+4. If none available, **fail the step** (not fallback to default)
+
+If `models` is not provided, use backend default model (e.g., Copilot's default model).
+
+---
+
+## Phase 1: Core Backend Implementation
+
+### Objective
+Implement the CopilotBackend class with basic dispatch functionality, following the same patterns as claude-code and codex backends.
+
+### Files to Touch
+- `src/spec/executor/backends/copilot.py` (create) — Main CopilotBackend implementation with dispatch logic
+- `src/spec/executor/backends/registry.py` (modify) — Register copilot backend in _auto_register()
+
+### Implementation Notes
+
+**Preflight checks** (in `is_available()` method):
+```python
+def is_available(self) -> bool:
+    """Check if Copilot CLI backend is ready for execution."""
+    # 1. Check CLI exists
+    if not shutil.which("copilot"):
+        self._error = "Copilot CLI not installed. See: https://github.com/github/copilot-cli"
+        return False
+
+    # 2. Check authentication via test command (5s timeout)
+    try:
+        result = subprocess.run(
+            ["copilot", "-p", "test", "--model", self._get_first_model()],
+            capture_output=True,
+            timeout=5,
+            env={**os.environ, "GH_TOKEN": os.getenv("GH_TOKEN", "")}
+        )
+        if result.returncode != 0:
+            self._error = "Copilot auth failed. Set GH_TOKEN or GITHUB_TOKEN environment variable."
+            return False
+    except subprocess.TimeoutExpired:
+        self._error = "Copilot auth check timed out (5s). Network or auth issue."
+        return False
+
+    return True
+
+def availability_error(self) -> str:
+    """Return helpful error message from last is_available() check."""
+    return self._error or "Unknown error"
+```
+
+**Model selection** (during dispatch):
+```python
+def dispatch(self, step: Step) -> StepOutcome:
+    models = self.payload.get("models") or [self._get_default_model()]
+
+    for model in models:
+        try:
+            result = self._run_copilot(step.payload.get("prompt"), model)
+            if result.returncode == 0:
+                return StepOutcome(passed=True, ...)
+            # Model not available, try next
+        except Exception:
+            continue
+
+    # All models failed
+    return StepOutcome(
+        passed=False,
+        error=f"No models available: {models}. Check subscription and token."
+    )
+```
+
+**Invocation mechanism**:
+- Primary: `copilot -p "<prompt>" --model <model> --deny-tool 'shell(git*)'`
+  - Agent stays in file-change lane: read, write, edit, test, build
+  - All git operations blocked (add, commit, push, merge, restore, etc.)
+  - Job handles commits as separate step; user can reset if needed
+- NO fallback to deprecated `gh copilot`
+- Interactive mode: `copilot` with same deny-tool flags
+
+**Payload schema** (match claude-code):
+- `prompt` — agent task description (required)
+- `repo_path` — target repository path (required)
+- `models` — array of preferred models, ordered (optional, default: claude-sonnet-4.5)
+- `capture_git` — capture git state before/after (optional, default: true)
+- `interactive` — interactive mode flag (optional, default: false)
+- `timeout_s` — step timeout in seconds (optional, default: 1800)
+
+**Code patterns**:
+- Follow `claude_code.py` structure exactly
+- Use same git capture logic from claude-code
+- **Tool safety**: Agent stays out of git entirely via deny-tool flags
+  - Deny ALL git operations: `git add`, `git commit`, `git push`, `git merge`, `git restore`, etc.
+  - Agent only reads/writes files; job handles commits as separate step
+  - User can reset if something goes wrong; agent's lane is file changes only
+  - Command: `copilot -p "<prompt>" --model <model> --deny-tool 'shell(git*)'`
+  - This blocks any git command while allowing file ops, tests, builds, etc.
+- Headless: `copilot -p ...` captures stdout/stderr
+- Interactive: Launch `copilot` in subprocess, user sees prompt in terminal
+
+### Verification
+- `pytest tests/executor/backends/` → new tests pass
+- `ruff check src/` → clean
+- `python -c "from spec.executor.backends import get_backend; print(get_backend('copilot'))"` → CopilotBackend instance
+
+## Phase 2: Integration and Testing
+
+### Objective
+Complete backend registration, add comprehensive error handling, and ensure integration with the broader specwright ecosystem.
+
+### Files to Touch
+- `tests/executor/backends/test_copilot.py` (create) — Test suite for CopilotBackend
+- `src/spec/executor/backends/__init__.py` (modify) — Update docstring to include copilot backend
+
+### Implementation Notes
+- Write comprehensive tests covering both available and unavailable CLI scenarios
+- Test both headless and interactive mode execution paths
+- Verify git capture and artifact handling work correctly
+- Test timeout scenarios and process management
+- Ensure error messages are helpful when Copilot CLI is unavailable or auth fails
+- Follow the same test patterns as existing backend tests
+
+### Verification
+- `pytest tests/executor/backends/test_copilot.py -v` → all tests pass
+- `pytest tests/executor/ -k backend` → all backend tests pass
+- `spec run --backend copilot` → shows helpful error if copilot unavailable
+- Backend shows up in `list_backends()` output
+
+## Discovery Findings
+
+### CLI Interface ✓ RESEARCHED
+
+**Command invocation**:
+- Standalone `copilot` CLI (recommended, under active development)
+- ~~`gh copilot` extension (DEPRECATED as of Oct 25, 2025)~~ — do NOT use
+- Headless mode: `copilot -p "prompt text"` or `copilot --prompt "prompt text"`
+- Interactive mode: `copilot` (default, launches interactive session)
+
+**Model selection**:
+- Headless: `copilot -p "prompt" --model gpt-5.2`
+- Interactive: `/model` slash command to switch models
+- Default model: Claude Sonnet 4.5
+
+**Tool control** (for safety):
+- `--allow-all-tools` — allow any shell command
+- `--allow-tool shell` — allow any shell command with approval
+- `--deny-tool 'shell(rm)'` — deny specific commands
+
+**Other flags**:
+- `--experimental` — enable experimental features
+- `--banner` — show animated banner
+- `--allow-all-paths` — disable path verification
+
+Sources: [GitHub Copilot CLI Docs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli), [CLI Reference](https://docs.github.com/en/copilot/reference/cli-command-reference)
+
+### Available Models ✓ RESEARCHED
+
+Supported in Copilot CLI:
+- **Claude models**: Haiku 4.5, Sonnet 4.5, Sonnet 4, Opus 4.5, Opus 4.6
+- **Gemini models**: 2.5 Pro, 3 Pro, 3 Flash
+- **GPT models**: GPT-5, GPT-5.1, GPT-5.2, GPT-5.2-Codex
+
+Model naming in `--model` flag: Use model identifiers directly (e.g., `gpt-5.2`, `claude-sonnet-4.5`)
+
+⚠️ **Note**: Available models may vary by region and subscription. CLI uses what's available in your account.
+
+Sources: [Supported Models](https://docs.github.com/en/copilot/reference/ai-models/supported-models)
+
+### Authentication ✓ RESEARCHED
+
+**Requirement**: GitHub token with Copilot access
+- Environment variable: `GH_TOKEN` or `GITHUB_TOKEN`
+- Token type: Fine-grained personal access token recommended
+- Required permission: "Copilot Requests" scope
+- Scope: OAuth-like access (full account authentication)
+
+**Verification**:
+- `copilot --version` succeeds with valid token
+- Interactive mode shows login prompt if token missing/invalid
+- Can test auth with: `copilot -p "test" --model claude-sonnet-4.5` (fails if no auth)
+
+**Important**: `gh copilot` extension required OAuth via browser and is deprecated. Use standalone `copilot` CLI only.
+
+Sources: [Installation Guide](https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli), [Auth Discussion](https://github.com/orgs/community/discussions/167158)
+
+### Implementation Implications
+
+1. **No fallback to `gh copilot`** — just use standalone `copilot` CLI
+2. **Model availability not queryable** — no built-in `list-models` command; assume what's in user's token
+3. **Auth validation**: Run `copilot -p "test" --model <model>` with timeout to validate environment
+4. **Tool safety**: Use `--allow-all-tools` or `--allow-tool shell` for agent execution
+
+---
+
+## Critical Constraint: build_delta First
+
+The build_delta is the REAL constraint. Everything else derives from it:
+- **adds.layout** → drives Files to Touch (what paths to create/modify)
+- **adds.kernel_surfaces** → drives Acceptance Criteria (what commands are exposed)
+- **adds.modules** → drives what functionality is added and how to verify it
+
+Start by defining the build_delta, then derive everything else from it.
