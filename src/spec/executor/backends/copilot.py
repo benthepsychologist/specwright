@@ -51,12 +51,15 @@ class CopilotBackend(BackendBase):
         return "copilot"
 
     def verify(self) -> None:
-        """Verify Copilot CLI is available and authenticated.
+        """Verify Copilot CLI is available and supports required flags.
 
         Checks:
             1. CLI binary exists on PATH
-            2. --deny-tool flag is supported (via --help output, 2s timeout)
-            3. Authentication is valid (test invocation, 2s timeout)
+            2. --deny-tool flag is supported (via --help output)
+
+        Note: Authentication is deferred to dispatch time since it requires
+        user interaction or valid credentials. We only verify the CLI exists
+        and has the necessary safety flags.
 
         Raises:
             BackendError: If any check fails with guidance for the user.
@@ -78,14 +81,14 @@ class CopilotBackend(BackendBase):
                 backend=self.name,
             )
 
-        # 2. Check --deny-tool flag support via --help (2s timeout - fail fast)
+        # 2. Check --deny-tool flag support via --help (10s timeout - CLI startup is slow)
         try:
             result = subprocess.run(
                 ["copilot", "--help"],
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
-                timeout=2,
+                timeout=10,
             )
             help_text = result.stdout + result.stderr
             if "--deny-tool" not in help_text:
@@ -96,37 +99,7 @@ class CopilotBackend(BackendBase):
                 )
         except subprocess.TimeoutExpired:
             raise BackendError(
-                "Copilot CLI --help timed out (2s). CLI may be hung or network issue.",
-                backend=self.name,
-            )
-        except FileNotFoundError:
-            raise BackendError(
-                "Copilot CLI not found in PATH. "
-                "Install from: https://github.com/github/copilot-cli",
-                backend=self.name,
-            )
-
-        # 3. Check authentication with test command (2s timeout - fail fast)
-        try:
-            result = subprocess.run(
-                ["copilot", "-p", "test", "--model", DEFAULT_MODEL],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            if result.returncode != 0:
-                stderr_hint = result.stderr.strip() if result.stderr else "unknown error"
-                raise BackendError(
-                    "Copilot authentication failed. "
-                    "Set GH_TOKEN or GITHUB_TOKEN environment variable with valid Copilot access token. "
-                    f"Error: {stderr_hint}",
-                    backend=self.name,
-                )
-        except subprocess.TimeoutExpired:
-            raise BackendError(
-                "Copilot authentication check timed out (2s). CLI hung or network issue. "
-                "Try: copilot -p 'test' --model claude-sonnet-4.5 (manually to debug)",
+                "Copilot CLI --help timed out (10s). CLI startup is slow or network issue.",
                 backend=self.name,
             )
         except FileNotFoundError:
