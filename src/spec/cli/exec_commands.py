@@ -224,6 +224,12 @@ def compile_command(
     branch: str = typer.Option(
         None, "--branch", "-b", help="Feature branch name (default: from spec or auto-generated)"
     ),
+    agent: str = typer.Option(
+        None, "--agent", "-a", help="Agent backend (e.g., 'claude-code', 'copilot'); default: claude-code"
+    ),
+    models: str = typer.Option(
+        None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
+    ),
 ) -> None:
     """Compile a JobDef + spec into a JobInstance.
 
@@ -283,18 +289,25 @@ def compile_command(
             branch = f"feat/{title_slug}"
 
     # Build envelope (job_def is included, not just job_id)
+    payload_agent = agent or "claude-code"  # Default to claude-code if not specified
+    payload = {
+        "spec_md": spec_md,  # Full markdown content
+        "spec_path": str(spec_path.resolve()),
+        "repo_path": str(repo_path),
+        "feature_branch": branch,
+        "spec_id": spec_path.stem,
+        "epic_spec": None,  # No epic context when compiling from file
+        "agent": payload_agent,
+        "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+    }
+
+    # Add models if specified (as list)
+    if models:
+        payload["models"] = [m.strip() for m in models.split(",")]
+
     envelope = {
         "job_def": job_def.model_dump(),
-        "payload": {
-            "spec_md": spec_md,  # Full markdown content
-            "spec_path": str(spec_path.resolve()),
-            "repo_path": str(repo_path),
-            "feature_branch": branch,
-            "spec_id": spec_path.stem,
-            "epic_spec": None,  # No epic context when compiling from file
-            "agent": "claude-code",  # Default agent backend
-            "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
-        },
+        "payload": payload,
         "ctx": {
             "spec_id": spec_path.stem,
         },
@@ -395,6 +408,12 @@ def run_command(
     ),
     branch: str = typer.Option(
         None, "--branch", "-b", help="Feature branch name (default: from spec or auto-generated)"
+    ),
+    agent: str = typer.Option(
+        None, "--agent", "-a", help="Agent backend (e.g., 'claude-code', 'copilot'); default: claude-code"
+    ),
+    models: str = typer.Option(
+        None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Compile and print JobInstance without executing"
@@ -533,19 +552,26 @@ def run_command(
             branch = f"feat/{title_slug}"
 
     # Build envelope (job_def is included, not just job_id)
+    payload_agent = agent or "claude-code"  # Default to claude-code if not specified
+    payload = {
+        "spec_md": spec_md,  # Full markdown content
+        "spec_path": str(spec_path.resolve()),
+        "repo_path": str(repo_path),
+        "feature_branch": branch,
+        "epic_id": epic_id,
+        "spec_id": resolved_spec_id,
+        "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
+        "agent": payload_agent,
+        "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+    }
+
+    # Add models if specified (as list)
+    if models:
+        payload["models"] = [m.strip() for m in models.split(",")]
+
     envelope = {
         "job_def": job_def.model_dump(),
-        "payload": {
-            "spec_md": spec_md,  # Full markdown content
-            "spec_path": str(spec_path.resolve()),
-            "repo_path": str(repo_path),
-            "feature_branch": branch,
-            "epic_id": epic_id,
-            "spec_id": resolved_spec_id,
-            "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
-            "agent": "claude-code",  # Default agent backend
-            "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
-        },
+        "payload": payload,
         "ctx": {
             "spec_id": resolved_spec_id,
             "epic_id": epic_id,
