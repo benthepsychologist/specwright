@@ -132,10 +132,11 @@ class CopilotBackend(BackendBase):
                 step_id=manifest.step_id,
             )
 
-        # For interactive mode with no prompt, use spec_md as context
+        # For interactive mode with no prompt, use full spec_md as context
         if not prompt and interactive:
             spec_md = payload.get("spec_md", "(no spec provided)")
-            prompt = f"Context: {spec_md[:200]}... (Full context available in interactive session)"
+            # For interactive mode, pass the full spec as the prompt context
+            prompt = spec_md if spec_md else "(No spec provided - please specify what you'd like to work on)"
 
         repo_path = Path(payload.get("repo_path", common.repo_path))
         models = payload.get("models") or [DEFAULT_MODEL]
