@@ -169,13 +169,12 @@ class CopilotBackend(BackendBase):
         used_model: str | None = None
 
         if interactive:
-            # Interactive mode: use first model, launch TUI
+            # Interactive mode: launch TUI with spec context
             used_model = models[0]
-            cmd = self._build_interactive_command(model=used_model)
+            cmd = self._build_interactive_command(prompt=prompt)
             try:
                 exit_code = self._execute_interactive(
                     cmd=cmd,
-                    prompt=prompt,
                     repo_path=repo_path,
                     stdout_path=stdout_path,
                     stderr_path=stderr_path,
@@ -283,20 +282,21 @@ class CopilotBackend(BackendBase):
             "--deny-tool", "shell(git*)",
         ]
 
-    def _build_interactive_command(self, model: str) -> list[str]:
+    def _build_interactive_command(self, prompt: str) -> list[str]:
         """Build the copilot CLI command for interactive TUI mode.
 
         Args:
-            model: Model identifier (not used in interactive mode; user switches via /model)
+            prompt: Initial context/prompt to pass to the interactive session
 
         Returns:
             Command list for interactive execution.
 
-        Note: In interactive mode, the Copilot CLI TUI opens with a default model.
-        Users can switch models within the session using the /model slash command.
+        Note: In interactive mode, the Copilot CLI TUI opens with the provided prompt
+        as context. Users can interact with the session and switch models via /model.
         """
         return [
             "copilot",
+            "-p", prompt,
             "--deny-tool", "shell(git*)",
         ]
 
@@ -351,7 +351,6 @@ class CopilotBackend(BackendBase):
     def _execute_interactive(
         self,
         cmd: list[str],
-        prompt: str,
         repo_path: Path,
         stdout_path: Path,
         stderr_path: Path,
@@ -362,8 +361,7 @@ class CopilotBackend(BackendBase):
         No timeout — the human controls when to exit.
 
         Args:
-            cmd: The copilot command to run
-            prompt: Not used directly (interactive session)
+            cmd: The copilot command to run (includes -p with prompt context)
             repo_path: Target repository path
             stdout_path: Path to write stdout marker
             stderr_path: Path to write stderr marker

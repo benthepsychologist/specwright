@@ -142,19 +142,19 @@ class TestCopilotCommands:
         assert DEFAULT_MODEL in cmd
 
     def test_build_interactive_command(self, backend):
-        """Interactive command has --model and --deny-tool but no -p."""
-        cmd = backend._build_interactive_command(model="claude-sonnet-4.5")
+        """Interactive command has -p with prompt and --deny-tool."""
+        prompt = "Here is the spec context"
+        cmd = backend._build_interactive_command(prompt=prompt)
         assert cmd == [
             "copilot",
-            "--model", "claude-sonnet-4.5",
+            "-p", prompt,
             "--deny-tool", "shell(git*)",
         ]
-        assert "-p" not in cmd
 
     def test_deny_tool_always_present(self, backend):
         """--deny-tool 'shell(git*)' is always present in commands."""
         headless = backend._build_command(prompt="test", model="gpt-5.2")
-        interactive = backend._build_interactive_command(model="gpt-5.2")
+        interactive = backend._build_interactive_command(prompt="test context")
 
         for cmd in [headless, interactive]:
             assert "--deny-tool" in cmd
