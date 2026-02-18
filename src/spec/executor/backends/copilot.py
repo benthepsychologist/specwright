@@ -125,12 +125,17 @@ class CopilotBackend(BackendBase):
 
         # Extract payload fields
         prompt = payload.get("prompt")
-        if not prompt:
+        if not prompt and not interactive:
             raise BackendError(
-                "copilot backend requires 'prompt' in payload",
+                "copilot backend requires 'prompt' in payload (or interactive=true)",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
+
+        # For interactive mode with no prompt, use spec_md as context
+        if not prompt and interactive:
+            spec_md = payload.get("spec_md", "(no spec provided)")
+            prompt = f"Context: {spec_md[:200]}... (Full context available in interactive session)"
 
         repo_path = Path(payload.get("repo_path", common.repo_path))
         models = payload.get("models") or [DEFAULT_MODEL]
