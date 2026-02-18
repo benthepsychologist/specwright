@@ -47,8 +47,9 @@ class TestCopilotVerify:
     def backend(self):
         return CopilotBackend()
 
+    @patch("pathlib.Path.exists", return_value=False)
     @patch("shutil.which")
-    def test_verify_missing_cli(self, mock_which, backend):
+    def test_verify_missing_cli(self, mock_which, mock_path_exists, backend):
         """verify raises when copilot CLI not found."""
         mock_which.return_value = None
         with pytest.raises(BackendError) as exc_info:
