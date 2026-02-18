@@ -287,14 +287,16 @@ class CopilotBackend(BackendBase):
         """Build the copilot CLI command for interactive TUI mode.
 
         Args:
-            model: Model identifier
+            model: Model identifier (not used in interactive mode; user switches via /model)
 
         Returns:
             Command list for interactive execution.
+
+        Note: In interactive mode, the Copilot CLI TUI opens with a default model.
+        Users can switch models within the session using the /model slash command.
         """
         return [
             "copilot",
-            "--model", model,
             "--deny-tool", "shell(git*)",
         ]
 
