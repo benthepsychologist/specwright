@@ -28,6 +28,7 @@ import yaml  # type: ignore[import]
 # We use .cursorrules for backwards compatibility.
 AGENT_REF_TARGETS: dict[str, tuple[str, str]] = {
     "claude-code": ("CLAUDE.md", "markdown"),
+    "copilot": ("COPILOT.md", "markdown"),
     "cursor": (".cursorrules", "markdown"),
     "aider": (".aider.conf.yml", "aider"),
     "roo-code": (".roo/rules.md", "markdown"),
