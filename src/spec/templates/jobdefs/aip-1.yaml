@@ -127,3 +127,78 @@ steps:
       command: "echo 'Run finalized'"
       capture_git: false
     continue_on_failure: true
+
+  # Step 12: Suggest improvements (LLM analysis of the run)
+  - step_id: analyze.suggest_improvements
+    backend: llm
+    description: Analyze run and suggest improvements
+    payload:
+      system: |
+        You are analyzing a software development run to suggest improvements.
+        Generate actionable suggestions across these categories:
+        - Agent Instructions (for CLAUDE.md/reference files)
+        - Code Improvements (refactoring, enhancements)
+        - Build System Updates (invariants, boundaries, rules)
+        - Test Coverage Gaps (missing test cases)
+
+        For each suggestion provide:
+        1. Confidence (high/medium/low)
+        2. Clear description of what to do
+        3. Rationale (why it helps)
+        4. Related files (if applicable)
+
+        Respond with a markdown report. If the run completed successfully with
+        no issues worth flagging, say so briefly and skip the suggestions.
+      context: |
+        # Run Analysis
+
+        ## Run Info
+        Run: @run.run_id | Branch: @run.branch
+
+        ## Step: branch.create
+        - Outcome: @run.steps.branch.create.outcome
+        - Exit code: @run.steps.branch.create.exit_code
+
+        ## Step: agent.run_spec
+        - Outcome: @run.steps.agent.run_spec.outcome
+        - Exit code: @run.steps.agent.run_spec.exit_code
+        - Stderr:
+        ```
+        @run.steps.agent.run_spec.stderr
+        ```
+
+        ## Step: agent.drift_fix
+        - Outcome: @run.steps.agent.drift_fix.outcome
+        - Exit code: @run.steps.agent.drift_fix.exit_code
+
+        ## Step: agent.drift_verify
+        - Outcome: @run.steps.agent.drift_verify.outcome
+        - Exit code: @run.steps.agent.drift_verify.exit_code
+
+        ## Step: assess.acceptance
+        - Outcome: @run.steps.assess.acceptance.outcome
+        - Stdout (assessment):
+        ```
+        @run.steps.assess.acceptance.stdout
+        ```
+      prompt: "Analyze this run and produce a markdown report with categorized improvement suggestions. Include confidence levels (high/medium/low)."
+    continue_on_failure: true
+
+  # Step 13: Stage improvement suggestions for human review
+  - step_id: stage.improvements
+    backend: cmd
+    description: Stage improvement suggestions for human review
+    payload:
+      command: |
+        mkdir -p ~/.local/local-governor/improvements/pending
+        cat > ~/.local/local-governor/improvements/pending/@payload.spec_id"".md << 'EOF'
+        # Improvement Suggestions: @payload.spec_id
+        # Run: @run.run_id
+        # Branch: @run.branch
+        # Status: PENDING REVIEW
+
+        @run.steps.analyze.suggest_improvements.stdout
+        EOF
+        echo "Staged at: ~/.local/local-governor/improvements/pending/@payload.spec_id"".md"
+      capture_git: false
+    continue_on_failure: true
