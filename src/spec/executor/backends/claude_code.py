@@ -84,7 +84,7 @@ class ClaudeCodeBackend(BackendBase):
 
         # Handle prompt_type for drift steps - build prompt dynamically
         if prompt_type and not prompt:
-            prompt = self._build_prompt_for_type(prompt_type, epic_spec)
+            prompt = self._build_prompt_for_type(prompt_type, epic_spec, spec_md)
 
         # Use spec_md directly as prompt if no explicit prompt
         if spec_md and not prompt:
@@ -221,12 +221,14 @@ class ClaudeCodeBackend(BackendBase):
         self,
         prompt_type: str,
         epic_spec: dict | None,
+        spec_md: str | None = None,
     ) -> str:
         """Build a prompt based on type (drift_fix, drift_verify, etc.).
 
         Args:
             prompt_type: The type of prompt to build
             epic_spec: Optional epic spec expectations
+            spec_md: Optional full spec markdown
 
         Returns:
             Built prompt string
@@ -234,9 +236,9 @@ class ClaudeCodeBackend(BackendBase):
         from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
 
         if prompt_type == "drift_fix":
-            return _build_drift_fix_prompt(epic_spec)
+            return _build_drift_fix_prompt(epic_spec, spec_md)
         elif prompt_type == "drift_verify":
-            return _build_drift_verify_prompt(epic_spec)
+            return _build_drift_verify_prompt(epic_spec, spec_md)
         else:
             raise BackendError(
                 f"Unknown prompt_type: {prompt_type}",
@@ -463,9 +465,10 @@ class ClaudeCodeBackend(BackendBase):
 
     def _extract_transcript(self, repo_path: Path, transcript_path: Path) -> None:
         """Try to extract conversation transcript if available."""
-        # Claude Code stores conversation in ~/.claude/conversations/
-        # This is best-effort - may not always be available
-        claude_dir = Path.home() / ".claude" / "conversations"
+        # Claude Code stores sessions in ~/.claude/projects/<cwd-slug>/
+        # cwd slug: forward slashes → hyphens, leading slash stripped
+        cwd_slug = str(repo_path).replace("/", "-").lstrip("-")
+        claude_dir = Path.home() / ".claude" / "projects" / cwd_slug
         if not claude_dir.exists():
             return
 

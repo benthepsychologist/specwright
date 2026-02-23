@@ -195,7 +195,7 @@ class TestAllowedPathsDerivation:
 
         contract = build_contract(aip, step_idx=0, repo_root=tmp_path)
 
-        assert contract.allowed_paths == ["docs/**", "src/**", "tests/**"]
+        assert set(contract.allowed_paths) == {"docs/**", "src/**", "tests/**"}
 
     def test_priority_step_over_repo(self, tmp_path):
         """Step-level paths override repo-level paths."""

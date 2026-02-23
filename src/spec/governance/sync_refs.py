@@ -321,6 +321,8 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         agents: list[str] — agent types to sync (claude-code, cursor, aider,
                             roo-code, goose, opencode)
         project: str — project name to read build.yaml from
+        spec_md: str | None — optional full spec markdown content to inject
+        spec_id: str | None — optional spec ID for marker identification
 
     Returns:
         Callable contract dict with passed, data, summary
@@ -328,6 +330,8 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     # Extract payload parameters
     agents = payload.get("agents")
     project = payload.get("project")
+    spec_md = payload.get("spec_md")
+    spec_id = payload.get("spec_id")
 
     # Validate required parameters
     if agents is None:
@@ -406,6 +410,22 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             line += f" ({r['error']})"
         summary_lines.append(line)
 
+    # Optionally inject spec into CLAUDE.md
+    spec_synced = None
+    if spec_md and spec_id:
+        try:
+            claude_md_path = repo_path / "CLAUDE.md"
+            existing = claude_md_path.read_text() if claude_md_path.exists() else ""
+            begin = f"<!-- BEGIN SPEC: {spec_id} -->"
+            end = f"<!-- END SPEC: {spec_id} -->"
+            spec_section = f"## Current Spec: {spec_id}\n\n{spec_md}"
+            merged = _merge_content(existing, spec_section, begin, end)
+            claude_md_path.write_text(merged)
+            spec_synced = str(claude_md_path)
+            summary_lines.append(f"  [OK] spec (id={spec_id}): {spec_synced}")
+        except OSError as e:
+            summary_lines.append(f"  [FAIL] spec (id={spec_id}): {e}")
+
     return {
         "passed": len(failures) == 0,
         "data": {
@@ -415,6 +435,8 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "synced_count": len(successes),
             "failed_count": len(failures),
             "context_sections": [k for k, v in context.items() if v],
+            "spec_synced": spec_synced,
+            "spec_id": spec_id,
         },
         "summary": "\n".join(summary_lines),
     }

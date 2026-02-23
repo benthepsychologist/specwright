@@ -179,6 +179,7 @@ class LlmBackend(BackendBase):
                 aip_data=payload.get("aip"),
                 epic_spec=payload.get("epic_spec"),
                 repo_path=common.repo_path if common else None,
+                spec_md=payload.get("spec_md"),
             )
 
         if not prompt:
@@ -313,6 +314,7 @@ class LlmBackend(BackendBase):
         aip_data: dict | None,
         epic_spec: dict | None,
         repo_path: Path | None,
+        spec_md: str | None = None,
     ) -> str:
         """Build a prompt based on type.
 
@@ -321,12 +323,13 @@ class LlmBackend(BackendBase):
             aip_data: Optional AIP data
             epic_spec: Optional epic spec expectations
             repo_path: Optional repo path for reading the diff
+            spec_md: Optional full spec markdown content
 
         Returns:
             Built prompt string
         """
         if prompt_type == "acceptance_review":
-            return self._build_acceptance_review_prompt(aip_data, epic_spec, repo_path)
+            return self._build_acceptance_review_prompt(aip_data, epic_spec, repo_path, spec_md)
         else:
             raise BackendError(
                 f"Unknown prompt_type: {prompt_type}",
@@ -338,6 +341,7 @@ class LlmBackend(BackendBase):
         aip_data: dict | None,
         epic_spec: dict | None,
         repo_path: Path | None,
+        spec_md: str | None = None,
     ) -> str:
         """Build the acceptance review prompt with diff and expectations."""
         import subprocess
@@ -361,6 +365,12 @@ class LlmBackend(BackendBase):
                 for i, exp in enumerate(epic_expectations, 1):
                     parts.append(f"{i}. {exp}")
                 parts.append("")
+
+        # Add full spec if provided
+        if spec_md:
+            parts.append("## Full Spec (Acceptance Criteria Ground Truth)\n")
+            parts.append(spec_md)
+            parts.append("")
 
         # Get the diff from the repo
         if repo_path and repo_path.exists():

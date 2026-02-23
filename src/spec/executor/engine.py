@@ -493,11 +493,12 @@ def _evaluate_condition(condition: str, ctx: dict[str, Any], payload: dict[str, 
         return False
 
 
-def _build_drift_fix_prompt(epic_spec: dict | None = None) -> str:
+def _build_drift_fix_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 2: drift inspection and fix.
 
     Args:
         epic_spec: Optional epic spec expectations to include as ground truth
+        spec_md: Optional full spec markdown to include as ground truth
     """
     prompt = """# Drift Inspection and Fix
 
@@ -527,6 +528,13 @@ Check `git log` and `git diff` to see what was implemented.
 Focus on correctness and spec adherence, not on style or refactoring.
 """
 
+    # Add full spec as ground truth if provided
+    if spec_md:
+        prompt += "\n\n## Full Spec (Ground Truth)\n\n"
+        prompt += "The following is the COMPLETE spec. Use the Acceptance Criteria section as a checklist — every item must be verified implemented.\n\n"
+        prompt += spec_md
+        prompt += "\n"
+
     # Add epic expectations as ground truth if provided
     if epic_spec:
         prompt += _format_epic_expectations(epic_spec)
@@ -534,11 +542,12 @@ Focus on correctness and spec adherence, not on style or refactoring.
     return prompt
 
 
-def _build_drift_verify_prompt(epic_spec: dict | None = None) -> str:
+def _build_drift_verify_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 3: final drift verification.
 
     Args:
         epic_spec: Optional epic spec expectations to include as ground truth
+        spec_md: Optional full spec markdown to include as ground truth
     """
     prompt = """# Final Drift Verification
 
@@ -566,6 +575,13 @@ This is the FINAL pass - focus on making sure everything is correct and complete
 
 Do not make unnecessary changes. Only fix actual issues.
 """
+
+    # Add full spec as ground truth if provided
+    if spec_md:
+        prompt += "\n\n## Full Spec (Ground Truth)\n\n"
+        prompt += "The following is the COMPLETE spec. Systematically verify every acceptance criterion.\n\n"
+        prompt += spec_md
+        prompt += "\n"
 
     # Add epic expectations as ground truth if provided
     if epic_spec:

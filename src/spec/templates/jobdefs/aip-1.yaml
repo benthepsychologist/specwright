@@ -32,6 +32,8 @@ steps:
       callable: "agent.sync_refs"
       agents: ["@payload.agent"]
       project: "@payload.project"
+      spec_md: "@payload.spec_md"
+      spec_id: "@payload.spec_id"
     continue_on_failure: true
 
   # Step 3: Run 1 - Execute spec
@@ -61,6 +63,7 @@ steps:
     description: "Run 2: Inspect for drift and fix"
     payload:
       prompt_type: drift_fix
+      spec_md: "@payload.spec_md"
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       capture_git: true
@@ -83,6 +86,7 @@ steps:
     description: "Run 3: Final drift verification"
     payload:
       prompt_type: drift_verify
+      spec_md: "@payload.spec_md"
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       capture_git: true
