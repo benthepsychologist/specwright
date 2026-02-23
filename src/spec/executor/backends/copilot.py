@@ -81,6 +81,24 @@ class CopilotBackend(BackendBase):
                 backend=self.name,
             )
 
+    def _build_prompt_for_type(
+        self,
+        prompt_type: str,
+        epic_spec: dict | None,
+        spec_md: str | None = None,
+    ) -> str:
+        """Build a prompt based on type (drift_fix, drift_verify, etc.)."""
+        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
+
+        if prompt_type == "drift_fix":
+            return _build_drift_fix_prompt(epic_spec, spec_md)
+        if prompt_type == "drift_verify":
+            return _build_drift_verify_prompt(epic_spec, spec_md)
+        raise BackendError(
+            f"Unknown prompt_type: {prompt_type}",
+            backend=self.name,
+        )
+
         # 2. Check --deny-tool flag support via --help (10s timeout - CLI startup is slow)
         try:
             result = subprocess.run(
@@ -125,18 +143,28 @@ class CopilotBackend(BackendBase):
 
         # Extract payload fields
         prompt = payload.get("prompt")
+        prompt_type = payload.get("prompt_type")
+        spec_md = payload.get("spec_md")
+        epic_spec = payload.get("epic_spec")
+
+        # Handle prompt_type for drift steps - build prompt dynamically
+        if prompt_type and not prompt:
+            prompt = self._build_prompt_for_type(prompt_type, epic_spec, spec_md)
+
+        # Use spec_md directly as prompt if no explicit prompt
+        if spec_md and not prompt:
+            prompt = spec_md
+
+        # For interactive mode with no prompt/spec, provide a minimal starter
+        if interactive and not prompt:
+            prompt = "(No spec provided - please specify what you'd like to work on)"
+
         if not prompt and not interactive:
             raise BackendError(
-                "copilot backend requires 'prompt' in payload (or interactive=true)",
+                "copilot backend requires 'prompt', 'prompt_type', or 'spec_md' in payload (or interactive=true)",
                 backend=self.name,
                 step_id=manifest.step_id,
             )
-
-        # For interactive mode with no prompt, use full spec_md as context
-        if not prompt and interactive:
-            spec_md = payload.get("spec_md", "(no spec provided)")
-            # For interactive mode, pass the full spec as the prompt context
-            prompt = spec_md if spec_md else "(No spec provided - please specify what you'd like to work on)"
 
         repo_path = Path(payload.get("repo_path", common.repo_path))
         models = payload.get("models") or [DEFAULT_MODEL]
@@ -218,6 +246,7 @@ class CopilotBackend(BackendBase):
                 except Exception as e:
                     errors.append(f"{model}: {e}")
                     continue
+
 
             # If no model succeeded
             if exit_code is None or (exit_code != 0 and used_model is None):

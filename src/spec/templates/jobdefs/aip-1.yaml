@@ -43,6 +43,7 @@ steps:
     payload:
       spec_md: "@payload.spec_md"
       repo_path: "@payload.repo_path"
+      models: "@payload.models"
       capture_git: true
     timeout_s: 1800
     on_failure_skip_to: capture.bundle
@@ -66,6 +67,7 @@ steps:
       spec_md: "@payload.spec_md"
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
+      models: "@payload.models"
       capture_git: true
     timeout_s: 1800
     continue_on_failure: true
@@ -89,6 +91,7 @@ steps:
       spec_md: "@payload.spec_md"
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
+      models: "@payload.models"
       capture_git: true
     timeout_s: 1800
     continue_on_failure: true

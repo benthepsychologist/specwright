@@ -30,7 +30,7 @@ The v2 executor uses a job-based architecture: `compile(JobDef, envelope) → Jo
 │                                                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │  1. BUILD StepManifest (step_n, backend, payload, common)       │    │
-│  │  2. DISPATCH to backend (cmd, claude-code, codex, llm)          │    │
+│  │  2. DISPATCH to backend (cmd, claude-code, codex, copilot, llm) │    │
 │  │  3. CAPTURE results (git state, stdout/stderr, exit code)       │    │
 │  │  4. RECORD StepOutcome + StepCapture                            │    │
 │  │  5. CHECK continue_on_failure policy                            │    │
@@ -72,7 +72,7 @@ Run artifacts are stored under `~/.local/local-governor/runs/`, never inside the
 
 ### 4. Backend Dispatches Are Isolated
 
-Each backend (cmd, claude-code, codex, llm) is responsible for:
+Each backend (cmd, claude-code, codex, copilot, llm) is responsible for:
 - Executing its payload
 - Capturing stdout/stderr
 - Returning exit code and any agent-specific data
@@ -159,6 +159,27 @@ Note: `gate.md`, `policy_report.json`, and `verification_report.json` are no lon
 - Verify backend is available (`claude` CLI for claude-code)
 - Check payload format matches backend expectations
 - Look at stderr for specific error messages
+
+### Copilot Backend (Headless)
+
+The `copilot` backend runs GitHub Copilot CLI in **non-interactive** mode.
+
+**Payload requirements (headless):**
+- Provide one of: `prompt`, `prompt_type`, or `spec_md`.
+  - `prompt_type` is used for drift passes (`drift_fix`, `drift_verify`) to build a prompt dynamically.
+  - If `prompt` is omitted, `spec_md` is used as the prompt by default.
+- Provide `models` (optional) as a priority-ordered list, e.g. from CLI `--models`.
+
+**Common failure mode:**
+- Error like "copilot backend requires 'prompt' ..." indicates the step payload did not include `prompt`, `prompt_type`, or `spec_md`.
+
+**Recommended CLI usage:**
+```bash
+spec run aip-1 ./my-spec.md --repo /path/to/repo --agent copilot --models gpt-5.3-codex
+```
+
+**JobDef note:**
+- Ensure your JobDef passes `models: @payload.models` into agent steps if you want `--models` to apply to `copilot`.
 
 ## Step Summary Format
 

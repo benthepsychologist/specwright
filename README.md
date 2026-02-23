@@ -215,6 +215,11 @@ spec create "Add Feature" --autogov myproject --tier B
 spec compile .specwright/specs/add-oauth-login.md
 spec validate .specwright/aips/add-oauth-login.yaml
 spec run .specwright/aips/add-oauth-login.yaml
+
+# Run with GitHub Copilot CLI (headless)
+# Note: Copilot runs require one of: payload.prompt, payload.prompt_type, or payload.spec_md.
+# The built-in aip-1 template uses spec_md as the default prompt.
+spec run aip-1 .specwright/specs/add-oauth-login.md --repo /path/to/your/project --agent copilot --models gpt-5.3-codex
 ```
 
 ---
