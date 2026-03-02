@@ -8,9 +8,12 @@ multiple providers: OpenAI, Gemini, Anthropic, local models, etc.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+log = logging.getLogger(__name__)
 
 from spec.executor.backends.base import BackendBase, BackendError
 
@@ -20,6 +23,7 @@ if TYPE_CHECKING:
 # Default model - can be overridden in payload or env.
 # Use the short alias form accepted by `llm --model ...`.
 DEFAULT_MODEL = "gemini-3-pro-preview"
+FALLBACK_MODEL = "azure-gpt52"
 
 
 class LlmBackend(BackendBase):
@@ -42,14 +46,12 @@ class LlmBackend(BackendBase):
     def verify(self) -> None:
         """Verify llm is installed and a usable model+key are configured.
 
-        This is intentionally a *non-network* preflight: it checks that the
-        model can be resolved and that required keys are present (via llm's
-        standard key lookup), but does not make a provider API call.
+        Tries the primary model first.  If any check fails (resolution, key,
+        or network preflight), falls back to FALLBACK_MODEL.  If the fallback
+        also fails, the *primary* error is raised.
         """
-        import sys
-
         try:
-            import llm
+            import llm  # noqa: F401
         except ImportError as e:
             raise BackendError(
                 "llm package not installed. Install it in the active environment.",
@@ -58,93 +60,94 @@ class LlmBackend(BackendBase):
 
         model_name = os.environ.get("SPECWRIGHT_LLM_MODEL") or DEFAULT_MODEL
         model_name = self._normalize_model_name(model_name)
+        fallback_name = os.environ.get("SPECWRIGHT_LLM_FALLBACK") or FALLBACK_MODEL
+        do_network = self._is_truthy(os.environ.get("SPECWRIGHT_LLM_NETWORK_PREFLIGHT"))
 
-        # Validate model exists
+        # Try primary model
+        primary_err = self._verify_model(model_name, network=do_network)
+        if primary_err is None:
+            return
+
+        # Primary failed — try fallback
+        if model_name == fallback_name:
+            raise primary_err
+
+        log.warning(
+            "Primary model %s failed verification (%s), trying fallback %s",
+            model_name,
+            primary_err,
+            fallback_name,
+        )
+
+        fallback_err = self._verify_model(fallback_name, network=do_network)
+        if fallback_err is None:
+            # Fallback verified — pin it so dispatch uses it too.
+            os.environ["SPECWRIGHT_LLM_MODEL"] = fallback_name
+            log.info("Fallback model %s verified; set as active model", fallback_name)
+            return
+
+        # Both failed — raise the primary error (more informative).
+        raise primary_err
+
+    def _verify_model(self, model_name: str, *, network: bool = False) -> BackendError | None:
+        """Verify a single model.  Returns None on success, BackendError on failure."""
+        import sys
+
+        import llm
+
+        # --- resolve model ---
         try:
             model = llm.get_model(model_name)
         except Exception as e:
-            # Provide actionable context without requiring external commands.
             available = []
             try:
-                models = list(llm.get_models())
-                available = sorted({getattr(m, "model_id", str(m)) for m in models})
+                available = sorted(
+                    {getattr(m, "model_id", str(m)) for m in llm.get_models()}
+                )
             except Exception:
-                available = []
+                pass
 
-            gemini_like = [m for m in available if "gemini" in m.lower()]
-            hint_lines = []
-            if gemini_like:
-                hint_lines.append("Gemini-like models visible to this env:")
-                hint_lines.extend(f"- {m}" for m in gemini_like[:10])
-            elif available:
-                hint_lines.append("Some models visible to this env:")
-                hint_lines.extend(f"- {m}" for m in available[:10])
-            else:
-                hint_lines.append("No models could be enumerated from llm.get_models().")
-
-            user_dir = None
-            try:
-                user_dir = str(llm.user_dir())
-            except Exception:
-                user_dir = None
-
-            details = [
-                f"Requested model: {model_name}",
-                f"Python: {sys.executable}",
-            ]
-            if user_dir:
-                details.append(f"llm user dir: {user_dir}")
-
-            msg = (
-                "LLM model is not available in the active Python environment.\n"
-                + "\n".join(details)
-                + "\n\n"
-                + "\n".join(hint_lines)
-                + "\n\n"
-                + "Fix: install the provider plugin in this environment and/or set SPECWRIGHT_LLM_MODEL to one of the visible models."
+            hint = available[:10] if available else ["(none enumerated)"]
+            return BackendError(
+                f"Model {model_name!r} not available.\n"
+                f"  Python: {sys.executable}\n"
+                f"  visible models: {', '.join(hint)}",
+                backend=self.name,
             )
-            raise BackendError(msg, backend=self.name) from e
 
-        # Validate key exists if needed
+        # --- check key ---
         needs_key = getattr(model, "needs_key", None)
         if needs_key:
             try:
-                # Many llm provider plugins implement model.get_key()
                 get_key = getattr(model, "get_key", None)
                 key = get_key() if callable(get_key) else llm.get_key(alias=str(needs_key))
             except Exception:
                 key = None
-
             if not key:
                 env_var = getattr(model, "key_env_var", None) or "(provider-specific env var)"
-                raise BackendError(
-                    (
-                        f"Missing LLM key for provider '{needs_key}'.\n"
-                        f"Python: {sys.executable}\n"
-                        f"Fix: set {env_var} or configure keys for '{needs_key}' via the llm key store in this environment."
-                    ),
+                return BackendError(
+                    f"Missing LLM key for provider {needs_key!r} (model {model_name}).\n"
+                    f"  Fix: set {env_var} or configure via llm key store.",
                     backend=self.name,
                 )
 
-        # Optional network preflight (disabled by default): performs a minimal
-        # prompt to validate that the provider is reachable and credentials work.
-        # Enable with: SPECWRIGHT_LLM_NETWORK_PREFLIGHT=1
-        if self._is_truthy(os.environ.get("SPECWRIGHT_LLM_NETWORK_PREFLIGHT")):
+        # --- optional network preflight ---
+        if network:
             try:
                 resp = model.prompt("Reply with exactly: OK")
                 text = resp.text().strip() if resp is not None else ""
                 if not text.startswith("OK"):
-                    raise BackendError(
-                        f"LLM network preflight returned unexpected output: {text[:80]!r}",
+                    return BackendError(
+                        f"Network preflight for {model_name} returned unexpected output: {text[:80]!r}",
                         backend=self.name,
                     )
-            except BackendError:
-                raise
             except Exception as e:
-                raise BackendError(
-                    f"LLM network preflight failed: {e}",
+                return BackendError(
+                    f"Network preflight failed for {model_name}: {e}",
                     backend=self.name,
-                ) from e
+                )
+
+        return None
 
     def _is_truthy(self, value: str | None) -> bool:
         if value is None:
@@ -234,7 +237,7 @@ class LlmBackend(BackendBase):
         except Exception as e:
             exit_code = 1
             stdout_path.write_text("")
-            stderr_path.write_text(f"LLM error: {e}\n")
+            stderr_path.write_text(str(e))
 
         return StepCapture(
             step_n=manifest.step_n,
@@ -292,11 +295,33 @@ class LlmBackend(BackendBase):
         # Add any model-specific options
         prompt_kwargs.update(options)
 
-        # Execute prompt
-        response = model.prompt(prompt, **prompt_kwargs)
+        # Build request context for error reporting
+        model_id = getattr(model, "model_id", model_name)
+        api_url = None
+        try:
+            # Gemini models build their URL from gemini_model_id
+            gemini_id = getattr(model, "gemini_model_id", None)
+            if gemini_id:
+                api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_id}:streamGenerateContent"
+            # OpenAI-compatible models expose api_base
+            if not api_url:
+                api_base = getattr(model, "api_base", None)
+                if isinstance(api_base, str):
+                    api_url = api_base
+        except Exception:
+            pass
 
-        # Get response text
-        response_text = response.text()
+        # Execute prompt with fallback
+        response_text = self._call_with_fallback(
+            model=model,
+            model_name=model_name,
+            model_id=model_id,
+            api_url=api_url,
+            prompt=prompt,
+            prompt_kwargs=prompt_kwargs,
+            system=system,
+            options=options,
+        )
 
         # If schema requested, try to parse as JSON
         if schema:
@@ -307,6 +332,91 @@ class LlmBackend(BackendBase):
                 return response_text
 
         return response_text
+
+    def _call_with_fallback(
+        self,
+        *,
+        model: Any,
+        model_name: str,
+        model_id: str,
+        api_url: str | None,
+        prompt: str,
+        prompt_kwargs: dict[str, Any],
+        system: str | None,
+        options: dict[str, Any],
+    ) -> str:
+        """Try the primary model; on failure, retry with FALLBACK_MODEL."""
+        import llm
+
+        try:
+            response = model.prompt(prompt, **prompt_kwargs)
+            return response.text()
+        except Exception as primary_err:
+            # If we're already on the fallback model, don't recurse.
+            fallback_name = os.environ.get("SPECWRIGHT_LLM_FALLBACK") or FALLBACK_MODEL
+            if model_name == fallback_name:
+                self._raise_llm_error(primary_err, model_id, api_url, prompt, system, options)
+
+            log.warning(
+                "Primary model %s failed (%s), falling back to %s",
+                model_name,
+                primary_err,
+                fallback_name,
+            )
+
+            try:
+                fallback = llm.get_model(fallback_name)
+            except Exception:
+                # Fallback model not available — raise original error.
+                self._raise_llm_error(primary_err, model_id, api_url, prompt, system, options)
+
+            try:
+                response = fallback.prompt(prompt, **prompt_kwargs)
+                text = response.text()
+                log.info("Fallback model %s succeeded", fallback_name)
+                return text
+            except Exception as fallback_err:
+                # Both failed — report both errors.
+                prompt_preview = prompt[:300] + "..." if len(prompt) > 300 else prompt
+                error_lines = [
+                    f"Primary model ({model_name}) and fallback ({fallback_name}) both failed.",
+                    "",
+                    f"--- primary error ({model_name}) ---",
+                    f"  {primary_err}",
+                    "",
+                    f"--- fallback error ({fallback_name}) ---",
+                    f"  {fallback_err}",
+                    "",
+                    "--- request context ---",
+                    f"  prompt_length: {len(prompt)}",
+                    f"  prompt_preview: {prompt_preview!r}",
+                ]
+                raise RuntimeError("\n".join(error_lines)) from fallback_err
+
+    def _raise_llm_error(
+        self,
+        err: Exception,
+        model_id: str,
+        api_url: str | None,
+        prompt: str,
+        system: str | None,
+        options: dict[str, Any],
+    ) -> None:
+        """Raise a RuntimeError with detailed request context."""
+        prompt_preview = prompt[:300] + "..." if len(prompt) > 300 else prompt
+        error_lines = [
+            f"LLM error: {err}",
+            "",
+            "--- request context ---",
+            f"  model: {model_id}",
+            f"  endpoint: {api_url or 'unknown'}",
+            f"  exception: {type(err).__module__}.{type(err).__qualname__}",
+            f"  system: {system[:200]!r}" if system else "  system: None",
+            f"  options: {options!r}",
+            f"  prompt_length: {len(prompt)}",
+            f"  prompt_preview: {prompt_preview!r}",
+        ]
+        raise RuntimeError("\n".join(error_lines)) from err
 
     def _build_prompt_for_type(
         self,

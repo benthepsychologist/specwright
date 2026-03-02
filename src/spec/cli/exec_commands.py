@@ -230,6 +230,9 @@ def compile_command(
     models: str = typer.Option(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
+    review_model: str = typer.Option(
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
+    ),
 ) -> None:
     """Compile a JobDef + spec into a JobInstance.
 
@@ -304,6 +307,8 @@ def compile_command(
     # Add models if specified (as list)
     if models:
         payload["models"] = [m.strip() for m in models.split(",")]
+    if review_model:
+        payload["review_model"] = review_model
 
     envelope = {
         "job_def": job_def.model_dump(),
@@ -414,6 +419,9 @@ def run_command(
     ),
     models: str = typer.Option(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
+    ),
+    review_model: str = typer.Option(
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Compile and print JobInstance without executing"
@@ -568,6 +576,8 @@ def run_command(
     # Add models if specified (as list)
     if models:
         payload["models"] = [m.strip() for m in models.split(",")]
+    if review_model:
+        payload["review_model"] = review_model
 
     envelope = {
         "job_def": job_def.model_dump(),

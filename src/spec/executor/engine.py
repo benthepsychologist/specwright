@@ -98,12 +98,17 @@ def _resolve_backend(
         raise CompileError(f"Unknown backend: '{backend}'") from None
 
 
-def _require_llm_preflight(*, run_id: str) -> None:
+def _require_llm_preflight(*, run_id: str, review_model: str | None = None) -> None:
     """Hard gate for LLM availability.
 
     Called before executing any steps for runs that require LLM (LLM steps and/or
     LLM-backed run report). This prevents partially-executed runs when the LLM
     backend is misconfigured.
+
+    Args:
+        run_id: Current run ID for error context.
+        review_model: Optional model override for LLM review steps.
+            If set, preflight validates this model instead of the default.
 
     Escape hatch:
     - If `SPECWRIGHT_SKIP_LLM_PREFLIGHT` is truthy, this check is skipped.
@@ -120,7 +125,10 @@ def _require_llm_preflight(*, run_id: str) -> None:
     # We want preflight to be a *real* preflight: when LLM is required, verify()
     # should also make a minimal provider call so we fail before step 1.
     old_network_flag = os.environ.get("SPECWRIGHT_LLM_NETWORK_PREFLIGHT")
+    old_model_flag = os.environ.get("SPECWRIGHT_LLM_MODEL")
     os.environ["SPECWRIGHT_LLM_NETWORK_PREFLIGHT"] = "1"
+    if review_model:
+        os.environ["SPECWRIGHT_LLM_MODEL"] = review_model
     try:
         LlmBackend().verify()
     except Exception as e:
@@ -130,6 +138,11 @@ def _require_llm_preflight(*, run_id: str) -> None:
             os.environ.pop("SPECWRIGHT_LLM_NETWORK_PREFLIGHT", None)
         else:
             os.environ["SPECWRIGHT_LLM_NETWORK_PREFLIGHT"] = old_network_flag
+        if review_model:
+            if old_model_flag is None:
+                os.environ.pop("SPECWRIGHT_LLM_MODEL", None)
+            else:
+                os.environ["SPECWRIGHT_LLM_MODEL"] = old_model_flag
 
 
 def _job_requires_llm(job_instance: JobInstance) -> bool:
@@ -788,7 +801,7 @@ def execute(
         use_llm_report = _use_llm_for_run_report(job_instance=job_instance)
         if job_requires_llm or use_llm_report:
             # Hard gate: require successful LLM preflight before any steps.
-            _require_llm_preflight(run_id=run_id)
+            _require_llm_preflight(run_id=run_id, review_model=payload.get("review_model"))
 
         # Verify all backends are available before dispatch.
         _preflight_backend_checks(job_instance, run_id=run_id)
@@ -1066,6 +1079,12 @@ def _run_steps(
             # Variable errors are always fatal - can't continue without resolved payload
             return RunStatus.failed, outcomes
 
+        # Inject review_model into LLM step payloads if set and step doesn't override
+        if step.backend == Backend.llm and "model" not in resolved_payload:
+            review_model = payload.get("review_model")
+            if review_model:
+                resolved_payload["model"] = review_model
+
         # Create manifest
         manifest = StepManifest(
             step_n=step.step_n,
@@ -1327,6 +1346,12 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
             verify()
 
         # Create a minimal manifest for the LLM call
+        report_payload: dict[str, Any] = {"prompt": prompt}
+        # Use review_model from envelope if available
+        envelope_payload = (run_record.envelope or {}).get("payload", {})
+        if envelope_payload.get("review_model"):
+            report_payload["model"] = envelope_payload["review_model"]
+
         manifest = StepManifest(
             step_n=report_step_n,
             step_id="run_report",
@@ -1336,9 +1361,7 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
                 branch=run_record.repo.branch,
                 base_commit=run_record.repo.base_commit,
             ),
-            payload={
-                "prompt": prompt,
-            },
+            payload=report_payload,
         )
 
         capture = backend.dispatch(
