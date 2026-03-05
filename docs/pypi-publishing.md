@@ -109,8 +109,8 @@ setup(
     version="0.0.1",
     description="Recursive scaffolding for Specwright ecosystem - Coming Soon",
     author="Benjamin Armstrong",
-    author_email="bfarmstrong@example.com",
-    url="https://github.com/bfarmstrong/dogfold",
+    author_email="ben@benthepsychologist.com",
+    url="https://github.com/benthepsychologist/dogfold",
     py_modules=[],
     classifiers=[
         "Development Status :: 1 - Planning",

@@ -176,12 +176,12 @@ See `artifacts/docs/migration-guide.md` for step-by-step migration from legacy v
 
 ---
 
-[Unreleased]: https://github.com/bfarmstrong/specwright/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.6.0
-[0.5.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.5.0
-[0.4.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.4.0
-[0.3.2]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.2
-[0.3.1]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.1
-[0.3.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.3.0
-[0.1.0]: https://github.com/bfarmstrong/specwright/releases/tag/v0.1.0
+[Unreleased]: https://github.com/benthepsychologist/specwright/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/benthepsychologist/specwright/releases/tag/v0.6.0
+[0.5.0]: https://github.com/benthepsychologist/specwright/releases/tag/v0.5.0
+[0.4.0]: https://github.com/benthepsychologist/specwright/releases/tag/v0.4.0
+[0.3.2]: https://github.com/benthepsychologist/specwright/releases/tag/v0.3.2
+[0.3.1]: https://github.com/benthepsychologist/specwright/releases/tag/v0.3.1
+[0.3.0]: https://github.com/benthepsychologist/specwright/releases/tag/v0.3.0
+[0.1.0]: https://github.com/benthepsychologist/specwright/releases/tag/v0.1.0
 

@@ -86,8 +86,18 @@ class LlmBackend(BackendBase):
             log.info("Fallback model %s verified; set as active model", fallback_name)
             return
 
-        # Both failed — raise the primary error (more informative).
-        raise primary_err
+        # Both failed — log fallback error, raise combined error.
+        log.warning(
+            "Fallback model %s also failed verification: %s",
+            fallback_name,
+            fallback_err,
+        )
+        raise BackendError(
+            f"Primary model ({model_name}) and fallback ({fallback_name}) both failed.\n"
+            f"  Primary: {primary_err}\n"
+            f"  Fallback: {fallback_err}",
+            backend=self.name,
+        )
 
     def _verify_model(self, model_name: str, *, network: bool = False) -> BackendError | None:
         """Verify a single model.  Returns None on success, BackendError on failure."""

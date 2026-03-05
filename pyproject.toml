@@ -7,9 +7,9 @@ name = "specwright"
 version = "0.6.0"
 description = "The architect of agentic workflows. Defines, validates, and executes AIPs."
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
-    {name = "Benjamin Armstrong", email = "bfarmstrong@example.com"}
+    {name = "Benjamin Armstrong", email = "ben@benthepsychologist.com"}
 ]
 requires-python = ">=3.12"
 keywords = [
@@ -28,7 +28,7 @@ keywords = [
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Quality Assurance",
     "Topic :: Software Development :: Code Generators",
@@ -54,10 +54,10 @@ dev = [
 ]
 
 [project.urls]
-Repository = "https://github.com/bfarmstrong/specwright"
-Issues = "https://github.com/bfarmstrong/specwright/issues"
-Documentation = "https://specwright.dev"
-Homepage = "https://specwright.dev"
+Repository = "https://github.com/benthepsychologist/specwright"
+Issues = "https://github.com/benthepsychologist/specwright/issues"
+Documentation = "https://github.com/benthepsychologist/specwright"
+Homepage = "https://github.com/benthepsychologist/specwright"
 
 [project.scripts]
 spec = "spec.cli.spec:app"

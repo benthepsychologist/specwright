@@ -1,4 +1,4 @@
-"""Core utilities for spec-core."""
+"""Core utilities for specwright."""
 
 from spec.core.loader import deep_merge, load_defaults, merge_aip_with_defaults
 

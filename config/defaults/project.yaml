@@ -4,7 +4,7 @@ schema_url: "https://specplatform.org/schemas/aip-v0.1.schema.json"
 lifecycle_scope: ["planning", "coding", "testing"]
 
 repo:
-  url: "git@github.com:org/spec-core.git"
+  url: "git@github.com:org/specwright.git"
   default_branch: "main"
 
 models_tools:

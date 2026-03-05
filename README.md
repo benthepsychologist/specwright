@@ -4,193 +4,7 @@
 
 Specwright defines, validates, and executes **Agentic Implementation Plans (AIPs)** — human-in-the-loop governance for AI-assisted software development.
 
----
-
-## LLM Orientation
-
-> This section helps AI assistants understand this codebase quickly.
-
-### What This Repo Does
-
-Specwright is a **CLI tool** that governs AI-assisted development through structured specs:
-
-1. **`spec create`** - Create a Markdown spec from a template (Tier A/B/C)
-2. **`spec compile`** - Parse Markdown to validated YAML AIP
-3. **`spec validate`** - Schema-validate the compiled AIP
-4. **`spec run`** - Execute steps with agent adapters (Claude, Codex)
-5. **`spec epic`** - Manage multi-spec epics with dependencies and LLM checks (see [docs/epics.md](docs/epics.md))
-
-### Key Architecture (v0.6+)
-
-**Four-Layer Model:**
-```
-L3: Ephemeral     → Claude sessions, temporary workspaces
-L2: Target Repos  → Multiple repos receiving AIP execution
-L1: Specwright    → CLI, compiler, executor, adapters
-L0: Local Governor → Centralized storage (~/.local/local-governor/)
-```
-
-**Source Layout:**
-```
-src/spec/
-├── cli/spec.py              # Typer CLI - all commands defined here
-├── cli/epic.py              # Epic management commands
-├── compiler/                # Markdown → YAML compilation
-│   ├── parser.py            # Token-based MD parser (markdown-it-py)
-│   └── compiler.py          # Deterministic YAML generator
-├── executor/                # Step execution engine
-│   ├── runner.py            # StepRunner
-│   ├── contract.py          # StepContract dataclass
-│   └── adapters/            # Agent adapters
-│       ├── base.py          # AdapterResult, BaseAdapter
-│       └── claude_adapter.py # Claude CLI integration
-├── governor/                # L0 integration (NEW in v0.6)
-│   ├── locator.py           # Find/validate governor path
-│   ├── reader.py            # Read specs/AIPs from governor
-│   ├── writer.py            # Write errors/provenance
-│   ├── materializer.py      # Copy AIPs to repo workspace
-│   ├── targets.py           # Multi-repo target resolution
-│   ├── splitter.py          # Split specs into repo-scoped AIPs
-│   └── coordinator.py       # Cross-repo execution
-├── autogov/                 # Governance context integration
-│   ├── loader.py            # Loads project.build.yaml
-│   ├── context_builder.py   # Builds template context
-│   └── exceptions.py        # AutogovNotInstalledError, etc.
-├── epic/                    # Epic management
-│   ├── schema.py            # Epic dataclasses (Epic, SpecRef, Check, etc.)
-│   ├── loader.py            # Load/validate epics from governor
-│   ├── writer.py            # Create/update epics
-│   └── dag.py               # Dependency graph utilities
-├── llm/                     # LLM integration for checks
-│   ├── config.py            # LLM configuration
-│   └── client.py            # LLM client wrapper
-├── templates/               # Jinja2 spec templates (tier-a/b/c-template.md)
-└── core/                    # Shared utilities
-    └── loader.py            # YAML loading + defaults merging
-```
-
-### Core Data Flows
-
-**Spec Creation with Autogov:**
-```
-spec create "Feature" --autogov <project> --tier B
-    ↓
-GovernanceLoader.load_all(project)
-    ↓ reads ~/.local/local-governor/projects/<project>/<project>.build.yaml
-GovernanceBundle (decisions, rules, policies, patterns, invariants, frozen_paths)
-    ↓
-SpecContextBuilder.merge_with_template_context()
-    ↓
-Jinja2 renders tier-b-template.md with governance context
-    ↓
-.specwright/specs/<slug>.md (with governance section)
-```
-
-**Step Execution:**
-```
-spec run aip-1 ./my-feature.aip.yaml
-    ↓
-compile_job(JobDef, envelope) → JobInstance
-    ↓
-execute(JobInstance) → runs steps via backends
-    ↓
-StepCapture records git state, agent output
-    ↓
-RunRecord (completed/failed/...)
-```
-
-### Key Types (v2 Executor)
-
-```python
-# src/spec/executor/schemas.py
-@dataclass
-class JobDef:
-    job_id: str               # e.g., "aip-1"
-    steps: list[StepTemplate] # Step templates with variable refs
-
-@dataclass
-class JobInstance:
-    job_id: str
-    steps: list[Step]         # Materialized steps with resolved values
-    common: Common            # Shared context (repo_path, branch, etc.)
-
-@dataclass
-class StepCapture:
-    step_n: int
-    step_id: str
-    git: GitCapture | None    # Patch, changed files
-    agent: AgentCapture       # stdout/stderr files (relative paths)
-
-# src/spec/autogov/loader.py
-@dataclass
-class GovernanceBundle:
-    project: str              # e.g., "injest"
-    source: str               # e.g., "patterns"
-    version: str              # e.g., "0.1.0"
-    description: str          # Kernel description
-    decisions: list[Decision] # ADRs from decisions section
-    rules: list[Rule]         # Placement/semantic rules
-    policies: list[AppliedPolicy]   # From applies.policies
-    patterns: list[AppliedPattern]  # From applies.patterns
-    invariants: list[str]     # Kernel invariants
-    frozen_paths: list[str]   # Files that shouldn't be modified
-    verification_output: str
-    error: str | None
-```
-
-### Configuration
-
-**`.specwright.yaml`** in project root (v0.6 - Governor Mode):
-```yaml
-version: "0.6"
-governor:
-  path: ~/.local/local-governor
-autogov:
-  enabled: true
-  source: patterns  # or "org"
-```
-
-**Legacy Config (v0.1 - Repo-Local Mode):**
-```yaml
-version: "0.1"
-paths:
-  specs: .specwright/specs
-  aips: .specwright/aips
-user:
-  default_owner: myname
-  default_tier: B
-```
-
-**Governance Source:** Project build files are loaded from:
-- `$LOCAL_GOVERNOR_HOME/projects/<project>/<project>.build.yaml`
-- Default: `~/.local/local-governor/projects/...`
-
-### Exit Codes
-
-| Code | Meaning | Exception |
-|------|---------|-----------|
-| 0 | Success | - |
-| 1 | Autogov not installed | `AutogovNotInstalledError` |
-| 2 | Governance not found | `GovernanceNotFoundError` |
-| 3 | Invalid governance | `GovernanceInvalidError` |
-| 4 | Missing config | `RegistryConfigError` |
-| 5 | CLI usage error | `CLIUsageError` |
-
-### Testing
-
-```bash
-# Run all tests
-pytest tests/ -q
-
-# Run specific test files
-pytest tests/autogov/test_loader.py -v
-pytest tests/cli/test_spec_create.py -v
-pytest tests/integration/ -v
-
-# Linting and type checking
-ruff check src tests
-mypy src --ignore-missing-imports
-```
+Write specs in Markdown. Compile them to structured YAML. Execute them through pluggable agent backends (Claude Code, GitHub Copilot, shell commands, Python callables, LLMs). Every step is captured, every artifact stored outside the target repo.
 
 ---
 
@@ -201,30 +15,29 @@ mypy src --ignore-missing-imports
 pip install uv
 uv pip install specwright
 
-# Initialize config in your project
+# Initialize in your project
 cd /path/to/your/project
 spec init
 
-# Create a new spec
-spec create "Add OAuth login" --tier B
+# Draft a spec from an epic entry
+spec draft t004/t004-01 --llm
 
-# With governance from local-governor project
-spec create "Add Feature" --autogov myproject --tier B
-
-# Edit the generated Markdown spec, then:
-spec compile .specwright/specs/add-oauth-login.md
-spec validate .specwright/aips/add-oauth-login.yaml
-spec run .specwright/aips/add-oauth-login.yaml
-
-# Run with GitHub Copilot CLI (headless)
-# Note: Copilot runs require one of: payload.prompt, payload.prompt_type, or payload.spec_md.
-# The built-in aip-1 template uses spec_md as the default prompt.
-spec run aip-1 .specwright/specs/add-oauth-login.md --repo /path/to/your/project --agent copilot --models gpt-5.3-codex
+# Or compile and run directly
+spec compile aip-1 ./my-feature.md
+spec run aip-1 ./my-feature.md --repo . --agent claude-code
 ```
 
 ---
 
-## Core Concepts
+## What It Does
+
+Specwright manages the full lifecycle of AI-assisted development:
+
+1. **Author** — Write specs in Markdown using tiered templates (A/B/C risk levels)
+2. **Compile** — Parse Markdown to validated YAML AIPs, then compile against job definitions
+3. **Execute** — Run materialized steps through pluggable backends with policy enforcement
+4. **Capture** — Record git state, agent output, and assessments for every step
+5. **Govern** — Epic-level dependency tracking, LLM checks, and build delta management
 
 ### Three Risk Tiers
 
@@ -238,135 +51,337 @@ spec run aip-1 .specwright/specs/add-oauth-login.md --repo /path/to/your/project
 
 All tiers follow the same workflow with different rigor:
 
-1. **G0: Plan Approval** - WBS, file-touch map
-2. **G1: Code Readiness** - Implementation prompts
-3. **G2: Pre-Release** - Test coverage, verification
-4. **G3: Deployment Approval** - Release readiness
-5. **G4: Post-Implementation** - Decision log, compliance
-
-### Autogov Integration
-
-When `--autogov <project>` is specified, Specwright loads governance from `~/.local/local-governor/projects/<project>/<project>.build.yaml` and injects it into the spec:
-
-- **Applied Policies** - Organization security policies
-- **Applied Patterns** - Architectural patterns to follow
-- **Architecture Decisions** - ADRs with rationale
-- **Rules** - Placement and semantic constraints
-- **Invariants** - Kernel invariants that must hold
-- **Frozen Paths** - Files that should not be modified
-
-This creates a governance-enriched spec that guides AI agents toward compliant implementations.
+1. **G0: Plan Approval** — WBS, file-touch map
+2. **G1: Code Readiness** — Implementation prompts
+3. **G2: Pre-Release** — Test coverage, verification
+4. **G3: Deployment Approval** — Release readiness
+5. **G4: Post-Implementation** — Decision log, compliance
 
 ---
 
-## CLI Commands
+## CLI Reference
 
-### `spec init`
-
-Initialize specwright in a project:
+### Core Workflow
 
 ```bash
-spec init                    # Create .specwright.yaml
-spec init --autogov          # Enable autogov (prompts for source)
-spec init --no-claude        # Skip Claude slash command installation
+spec init                                     # Initialize .specwright.yaml + JobDefs
+  --force                                     #   overwrite existing
+  --no-claude                                 #   skip Claude slash commands
+  --governor ~/.local/local-governor          #   custom governor path
+
+spec compile aip-1 ./spec.md                  # Compile JobDef + spec to JobInstance
+  --repo /path --branch main                  #   target repo and branch
+  --agent claude-code                         #   agent backend
+  --models gpt-5.3-codex                      #   model priority list
+  --output ./instance.yaml                    #   output path
+
+spec run aip-1 ./spec.md                      # Compile and execute in one step
+  --repo /path --branch main                  #   target repo and branch
+  --agent copilot --models gpt-5.3-codex      #   agent and model selection
+  --dry-run                                   #   preview without executing
+  --run-id custom-run-id                      #   custom run identifier
+  --epic e008 --spec e008-01                  #   resolve spec from epic
+
+spec execute ./instance.yaml                  # Execute a pre-compiled JobInstance
+  --run-id custom-run-id
+
+spec status                                   # Show recent run statuses
+  --limit 10
+
+spec logs <run_id>                            # Show run logs
+  --patch                                     #   show patch diffs
+  --stderr                                    #   show stderr output
+
+spec config --show                            # Display current config
 ```
 
-### `spec create`
-
-Create a new spec from template:
+### Spec Lifecycle
 
 ```bash
-spec create "Feature Title"                    # Uses defaults
-spec create "Feature" --tier C --owner alice
-spec create "Feature" --autogov myproject      # With governance
+spec draft t004/t004-01                       # Draft spec from epic entry
+  --context "additional context"              #   extra context for drafting
+  --phases 3                                  #   number of AIP phases
+  --llm --model gemini-3-pro-preview          #   LLM-assisted drafting
+  --dry-run                                   #   preview without writing
+
+spec refine ./spec.md                         # Iteratively improve spec with LLM
+  --context "focus on error handling"
+  --apply                                     #   apply changes directly
+  --model gemini-3-pro-preview
+
+spec finish t004-01                           # Apply build delta and close lifecycle
+  --dry-run --json                            #   preview in JSON format
+
+spec delta generate t004-01                   # Generate build delta via LLM
+  --model gemini-3-pro-preview --yes          #   auto-approve
 ```
 
-### `spec compile`
-
-Compile Markdown spec to YAML AIP:
+### Epic Management
 
 ```bash
-spec compile .specwright/specs/my-feature.md
-spec compile specs/*.md                        # Batch compile
+spec epic create "Feature Title"              # Create epic
+  --id e008 --goal "One-line goal"
+  --category feature --owner ben
+  --llm --context "background info"           #   LLM-assisted creation
+
+spec epic add-target e008                     # Add target repository
+  --id myrepo --repo-path /path/to/repo
+  --branch main --governor-project myproject
+
+spec epic add-spec e008                       # Add spec to epic
+  --id e008-01 --repo myrepo
+  --path specs/feature.md
+  --depends-on e008-00                        #   dependency tracking
+  --expectation "implement auth"
+  --constraint "no breaking changes"
+
+spec epic add-spec e008 "describe feature"    # LLM-assisted spec creation
+  --llm --target myrepo --context "details"
+
+spec epic set-current e008 --spec e008-01     # Set active spec
+spec epic mark-done e008 --spec e008-01       # Mark spec complete
+spec epic status e008                         # Show status with DAG
+spec epic list                                # List all epics
+spec epic validate e008                       # Validate structure
+spec epic check e008                          # Run LLM checks
+  --check CHK-001                             #   run specific check
 ```
 
-### `spec validate`
-
-Validate AIP against schema:
+### Validation
 
 ```bash
-spec validate .specwright/aips/my-feature.yaml
-```
+spec validate spec ./my-feature.md            # Validate spec structure
+  --check --strict
 
-### `spec run`
+spec validate build myproject                 # Validate build.yaml vs filesystem
+  --json --fix                                #   output JSON, auto-fix issues
 
-Execute an AIP:
+spec validate epic e008                       # Validate epic consistency
+  --json
 
-```bash
-spec run                          # Run current AIP
-spec run --step 1                 # Run specific step
-spec run --step 1 --dry-run       # Preview without executing
-spec run --step 1 --allow-dirty   # Allow dirty worktree
-```
-
-### `spec set`
-
-Set current spec/AIP:
-
-```bash
-spec set spec .specwright/specs/my-feature.md
-spec set aip .specwright/aips/my-feature.yaml
-```
-
-### `spec epic`
-
-Manage multi-spec epics with dependency tracking. See [docs/epics.md](docs/epics.md) for full documentation.
-
-```bash
-spec epic create "Feature" --goal "One-line goal"     # Create epic
-spec epic add-target <epic-id> --id repo --repo-path /path  # Add target repo
-spec epic add-spec <epic-id> --id spec-01 --repo repo ...   # Add spec
-spec epic status <epic-id>                            # Show status with DAG
-spec epic set-current <epic-id> --spec spec-01        # Set active spec
-spec epic mark-done <epic-id> --spec spec-01          # Mark spec done
-spec epic check <epic-id>                             # Run LLM checks
-spec epic validate <epic-id>                          # Validate structure
-spec epic list                                        # List all epics
+spec validate contracts                       # Validate op-catalog vs code
+  --json
 ```
 
 ---
 
-## Project Structure
+## Execution Backends
+
+| Backend | Description | Use Case |
+|---------|-------------|----------|
+| **claude-code** | Claude Code CLI (headless or interactive) | Primary agent for code generation |
+| **copilot** | GitHub Copilot CLI (headless or interactive) | Alternative agent backend |
+| **cmd** | Shell command execution with sandbox enforcement | Build steps, verification commands |
+| **python** | In-process Python callable execution | Validators, assessments, custom logic |
+| **llm** | LLM API calls via `llm` package (multi-provider) | Checks, verification, drafting |
+| **codex** | OpenAI Codex CLI | Experimental agent backend |
+
+---
+
+## Architecture
+
+### Four-Layer Model
 
 ```
-specwright/
-├── src/spec/                    # Core implementation
-│   ├── cli/spec.py             # CLI commands (Typer)
-│   ├── compiler/               # Markdown→YAML compiler
-│   ├── executor/               # Step execution engine
-│   │   ├── executor.py         # Main loop
-│   │   ├── contract.py         # StepContract
-│   │   └── adapters/           # Claude, Codex adapters
-│   ├── autogov/                # Governance integration
-│   │   ├── loader.py           # Loads project.build.yaml
-│   │   ├── context_builder.py  # Template context
-│   │   └── exceptions.py       # Error types
-│   └── templates/              # Jinja2 templates
-│
-├── config/                      # Configuration
-│   ├── templates/              # Tier templates
-│   ├── defaults/               # Tier defaults
-│   └── schemas/                # JSON Schema
-│
-├── tests/                       # Test suite
-│   ├── autogov/                # Loader, context tests
-│   ├── cli/                    # CLI command tests
-│   ├── compiler/               # Parser, compiler tests
-│   ├── executor/               # Executor tests
-│   └── integration/            # E2E tests
-│
-└── docs/                        # Documentation
+L3: Ephemeral     → Claude/Copilot sessions, temporary workspaces
+L2: Target Repos  → Multiple repos receiving AIP execution
+L1: Specwright    → CLI, compiler, executor, backends
+L0: Local Governor → Centralized storage (~/.local/local-governor/)
 ```
+
+### Execution Model
+
+```
+spec run aip-1 ./my-feature.md
+    ↓
+compile(JobDef, envelope) → JobInstance
+    ↓
+execute(JobInstance) → runs steps via backends
+    ↓
+StepCapture records git state, agent output
+    ↓
+RunRecord (completed/failed/partial)
+```
+
+### Source Layout
+
+```
+src/spec/
+├── cli/                   # Typer CLI
+│   ├── spec.py            # Main commands (init, compile, run, execute, status, logs)
+│   ├── epic.py            # Epic management subcommands
+│   ├── draft.py           # Spec drafting
+│   ├── refine.py          # Spec refinement
+│   ├── finish.py          # Spec lifecycle completion
+│   ├── delta.py           # Build delta management
+│   ├── governance.py      # Governance commands
+│   └── interactive.py     # Interactive UI components
+├── compiler/              # Markdown → YAML compilation
+│   ├── parser.py          # Token-based MD parser (markdown-it-py)
+│   └── compiler.py        # Deterministic YAML generator
+├── executor/              # v2 job-based executor
+│   ├── engine.py          # Main execution loop
+│   ├── jobdefs.py         # Built-in job definitions (aip-1)
+│   ├── store.py           # Run artifact storage
+│   ├── backends/          # Pluggable backends
+│   │   ├── claude_code.py # Claude Code CLI adapter
+│   │   ├── copilot.py     # GitHub Copilot CLI adapter
+│   │   ├── cmd.py         # Shell command backend
+│   │   ├── python.py      # In-process callable backend
+│   │   ├── llm.py         # LLM API backend (multi-provider)
+│   │   └── codex.py       # OpenAI Codex adapter
+│   ├── schemas/           # Pydantic models
+│   │   ├── job_def.py     # JobDef, StepTemplate
+│   │   ├── job_instance.py # JobInstance, Step, Common
+│   │   ├── capture.py     # StepCapture, GitCapture, AgentCapture
+│   │   ├── outcome.py     # StepOutcome, OutcomeStatus
+│   │   ├── run.py         # RunRecord
+│   │   └── manifest.py    # StepManifest
+│   └── sandbox/           # Policy enforcement
+│       ├── capture.py     # Git state capture
+│       └── enforcer.py    # Sandbox policy enforcer
+├── governance/            # Governance operations
+│   ├── spec_drafter.py    # LLM-assisted spec drafting
+│   ├── spec_refiner.py    # Iterative spec improvement
+│   ├── spec_validator.py  # Spec structure validation
+│   ├── delta_generator.py # Build delta generation
+│   ├── delta_applicator.py # Build delta application
+│   ├── epic_drafter.py    # Epic creation
+│   ├── epic_updater.py    # Epic updates
+│   ├── epic_validator.py  # Epic validation
+│   ├── build_validator.py # Build.yaml validation
+│   └── contract_validator.py # Contract validation
+├── governor/              # L0 local-governor integration
+│   ├── locator.py         # Find/validate governor path
+│   ├── reader.py          # Read specs/AIPs from governor
+│   ├── writer.py          # Write specs, errors, provenance
+│   ├── materializer.py    # Copy AIPs to repo workspace
+│   ├── targets.py         # Multi-repo target resolution
+│   ├── splitter.py        # Split specs into repo-scoped AIPs
+│   └── coordinator.py     # Cross-repo execution
+├── epic/                  # Epic management
+│   ├── schema.py          # Epic, SpecRef, Check dataclasses
+│   ├── loader.py          # Load/validate epics
+│   ├── writer.py          # Create/update epics
+│   └── dag.py             # Dependency graph utilities
+├── checks/                # LLM-powered checks
+│   ├── executor.py        # Check execution engine
+│   ├── inputs.py          # Check input resolution
+│   └── resolver.py        # Check file resolution
+├── llm/                   # LLM integration
+│   ├── client.py          # LLM client wrapper
+│   ├── config.py          # LLM configuration
+│   ├── prompts.py         # Prompt templates
+│   └── reporter.py        # LLM output reporting
+├── artifacts/             # Artifact collection and storage
+├── audit/                 # Execution logging
+├── runner/                # Background and interactive runners
+├── core/                  # Config, exceptions, YAML loading
+└── templates/             # Jinja2 spec templates (tier-a/b/c)
+```
+
+### Configuration
+
+**`.specwright.yaml`** in project root:
+```yaml
+version: "0.6"
+governor:
+  path: ~/.local/local-governor
+```
+
+### Storage
+
+All run artifacts are stored outside the target repo:
+```
+~/.local/local-governor/runs/{run_id}/
+├── run.yaml               # RunRecord
+└── steps/
+    └── step-001/
+        ├── manifest.yaml  # Step dispatch record
+        ├── outcome.yaml   # StepOutcome (status, duration, error)
+        ├── capture.yaml   # StepCapture (git state, agent output)
+        └── changes.patch  # Git diff (if capture_patch enabled)
+```
+
+---
+
+<details>
+<summary><strong>LLM Orientation</strong></summary>
+
+> This section helps AI assistants understand this codebase quickly.
+
+### Key Types (v2 Executor)
+
+```python
+# src/spec/executor/schemas/job_def.py
+class JobDef(BaseModel):
+    job_id: str               # e.g., "aip-1"
+    version: str              # Template version
+    steps: list[StepTemplate] # Step templates with @ref expressions
+    defaults: dict[str, Any]  # Default values for @payload.* refs
+
+# src/spec/executor/schemas/job_instance.py
+class JobInstance(BaseModel):
+    job_id: str               # Template this was compiled from
+    job_hash: str             # Instance hash for deduplication
+    steps: list[Step]         # Materialized steps (no @refs remain)
+
+class Step(BaseModel):
+    step_n: int               # Step number (1-indexed)
+    step_id: str              # Unique identifier
+    backend: Backend          # claude-code, copilot, cmd, python, llm, codex
+    common: Common            # repo_path, branch, base_commit, timeout_s
+    payload: dict[str, Any]   # Backend-specific payload (fully resolved)
+
+# src/spec/executor/schemas/capture.py
+class StepCapture(BaseModel):
+    step_n: int
+    step_id: str
+    git: GitCapture | None    # base_commit, patch_file, changed_files
+    agent: AgentCapture | None # stdout_file, stderr_file, exit_code
+    assessments: list[dict]   # Structured LLM assessments
+
+# src/spec/executor/schemas/outcome.py
+class StepOutcome(BaseModel):
+    step_n: int
+    step_id: str
+    outcome: OutcomeStatus    # completed, failed, timeout, cancelled, skipped
+    duration_ms: int
+    error: str | None
+```
+
+### Core Data Flow
+
+```
+spec run aip-1 ./my-feature.md --repo /path --agent claude-code
+    ↓
+1. Load JobDef template ("aip-1") from jobdefs.py
+2. Build envelope from spec file + CLI args
+3. compile(JobDef, envelope) → resolve @aip.* and @payload.* refs
+4. Produce JobInstance with materialized Steps
+    ↓
+5. For each Step in JobInstance:
+   a. Build StepManifest (step_n, backend, payload, common)
+   b. Dispatch to backend (claude_code, copilot, cmd, python, llm)
+   c. Capture results (git state, stdout/stderr, exit code)
+   d. Record StepOutcome + StepCapture
+   e. Check continue_on_failure policy
+    ↓
+6. Write RunRecord to store
+7. Exit: 0=completed, 1=failed, 2=partial
+```
+
+### Testing
+
+```bash
+pytest tests/ -q                    # All tests
+pytest tests/executor/ -v           # Executor tests
+pytest tests/integration/ -v        # E2E tests
+ruff check src/ tests/              # Lint
+mypy src/ --ignore-missing-imports  # Type check
+```
+
+</details>
 
 ---
 
@@ -374,16 +389,15 @@ specwright/
 
 ```bash
 # Setup
-git clone <repo>
+git clone https://github.com/benthepsychologist/specwright.git
 cd specwright
-uv venv
-source .venv/bin/activate
+uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 
 # Test
 pytest tests/ -q
-ruff check src tests
-mypy src --ignore-missing-imports
+ruff check src/ tests/
+mypy src/ --ignore-missing-imports
 
 # Run CLI
 spec --help
@@ -391,20 +405,9 @@ spec --help
 
 ---
 
-## Related Projects
-
-| Project | Purpose |
-|---------|---------|
-| **local-governor** | Governance registry (project.build.yaml files) |
-| **autogov** | Governance SDK (patterns, policies, contracts) |
-| **life** | CLI orchestrator using specwright |
-| **injest** | Data ingestion with specwright governance |
-
----
-
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+Apache License 2.0 — see [LICENSE](LICENSE) file.
 
 ---
 

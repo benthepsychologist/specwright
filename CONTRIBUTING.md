@@ -9,8 +9,8 @@ Thanks for your interest in contributing to Specwright! This guide will help you
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/yourusername/spec-core.git
-cd spec-core
+git clone https://github.com/benthepsychologist/specwright.git
+cd Specwright
 
 # Install uv (if not already installed)
 pip install uv
@@ -23,7 +23,7 @@ uv pip install -e ".[dev]"
 
 ```bash
 spec --help
-spec new --tier C --title "Test" --owner you --goal "Verify setup"
+spec draft t001/t001-01 --dry-run
 spec compile specs/test.md
 ```
 
@@ -277,7 +277,7 @@ What should have happened.
 **Environment**
 - OS: [e.g., Ubuntu 22.04]
 - Python version: [e.g., 3.12.0]
-- spec-core version: [e.g., 0.3.0]
+- Specwright version: [e.g., 0.3.0]
 
 **Additional context**
 Paste error output, relevant file contents.
@@ -450,16 +450,16 @@ Before creating a release, ensure:
 
 ## 📜 License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
 ## 💬 Questions?
 
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/spec-core/discussions)
-- **Email**: bfarmstrong@example.com
-- **Issues**: [GitHub Issues](https://github.com/yourusername/spec-core/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/benthepsychologist/specwright/discussions)
+- **Email**: ben@benthepsychologist.com
+- **Issues**: [GitHub Issues](https://github.com/benthepsychologist/specwright/issues)
 
 ---
 
-**Thank you for contributing to spec-core!** 🚀
+**Thank you for contributing to Specwright!** 🚀
