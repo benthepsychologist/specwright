@@ -247,6 +247,98 @@ class TestRunCommand:
         # depending on whether branch.create step exists
         assert result.exit_code in [0, 1, 2]
 
+    def test_run_writes_consolidated_output_when_projection_configured(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+    ):
+        """Default run output is consolidated when projection repo is configured."""
+        import yaml as yaml_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        projection_repo = tmp_path / "projection-repo"
+        projection_repo.mkdir(parents=True)
+        monkeypatch.setenv("SPECWRIGHT_PROJECTION_REPO", str(projection_repo))
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "test-simple",
+                str(spec_file),
+                "--repo",
+                str(git_repo),
+            ],
+        )
+
+        assert result.exit_code in [0, 1, 2]
+        runs_root = projection_repo / "runs" / "adhoc"
+        run_dirs = [d for d in runs_root.iterdir() if d.is_dir()]
+        assert run_dirs
+        run_dir = run_dirs[0]
+        assert (run_dir / "run.yaml").exists()
+        assert (run_dir / "run_report.yaml").exists()
+        step_yaml = run_dir / "steps" / "step-001.yaml"
+        assert step_yaml.exists()
+
+        raw_step = yaml_module.safe_load(step_yaml.read_text())
+        assert raw_step["kind"] == "run_step"
+        raw_run = yaml_module.safe_load((run_dir / "run.yaml").read_text())
+        assert raw_run["kind"] == "run"
+
+    def test_run_legacy_output_flag_preserves_legacy_layout(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+    ):
+        """--legacy-output keeps legacy artifacts even when projection repo is configured."""
+        import yaml as yaml_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        projection_repo = tmp_path / "projection-repo"
+        projection_repo.mkdir(parents=True)
+        monkeypatch.setenv("SPECWRIGHT_PROJECTION_REPO", str(projection_repo))
+
+        store_path = tmp_path / "legacy-runs"
+        monkeypatch.setattr(
+            "spec.cli.exec_commands.RunStore",
+            lambda *args, **kwargs: RunStore(root=store_path),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "test-simple",
+                str(spec_file),
+                "--repo",
+                str(git_repo),
+                "--legacy-output",
+            ],
+        )
+
+        assert result.exit_code in [0, 1, 2]
+        run_dirs = [d for d in store_path.iterdir() if d.is_dir()]
+        assert run_dirs
+        run_dir = run_dirs[0]
+        assert (run_dir / "run.yaml").exists()
+        assert (run_dir / "run_report.md").exists()
+        assert not (run_dir / "run_report.yaml").exists()
+
 
 # =============================================================================
 # spec status Tests

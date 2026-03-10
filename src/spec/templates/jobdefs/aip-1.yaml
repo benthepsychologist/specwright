@@ -12,6 +12,9 @@
 
 job_id: aip-1
 version: "0.3"
+kind: jobdef
+artifact_id: 84deda0d-ff64-5ffc-a5d2-a5dea2c6d7d6
+name: aip-1
 description: Execute a spec with 3-pass agent verification
 
 steps:

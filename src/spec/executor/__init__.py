@@ -26,6 +26,7 @@ from spec.executor.jobdefs import (
     list_job_defs,
     load_job_def,
 )
+from spec.executor.run_writers import ConsolidatedRunWriter
 from spec.executor.sandbox import (
     PolicyViolation,
     SandboxEnforcer,
@@ -94,4 +95,5 @@ __all__ = [
     "GitCapture",
     # Store
     "RunStore",
+    "ConsolidatedRunWriter",
 ]

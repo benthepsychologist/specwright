@@ -30,6 +30,7 @@ from spec.executor.jobdefs import (
     list_job_defs,
     load_job_def,
 )
+from spec.executor.run_writers import ConsolidatedRunWriter
 from spec.executor.schemas import (
     JobInstance,
     OutcomeStatus,
@@ -164,7 +165,7 @@ def _extract_check_paths(epic: Any, spec_id: str) -> list[str]:
     Returns:
         List of file paths that checks will verify
     """
-    paths = []
+    paths: list[str] = []
 
     spec = epic.get_spec(spec_id)
     if not spec:
@@ -293,7 +294,7 @@ def compile_command(
 
     # Build envelope (job_def is included, not just job_id)
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
-    payload = {
+    payload: dict[str, Any] = {
         "spec_md": spec_md,  # Full markdown content
         "spec_path": str(spec_path.resolve()),
         "repo_path": str(repo_path),
@@ -435,6 +436,11 @@ def run_command(
     spec_id: str = typer.Option(
         None, "--spec", "-s", help="Spec ID to load from (use with --epic)"
     ),
+    legacy_output: bool = typer.Option(
+        False,
+        "--legacy-output",
+        help="Use legacy multi-file output layout in governor storage",
+    ),
 ) -> None:
     """Compile and execute a job in one step.
 
@@ -561,12 +567,12 @@ def run_command(
 
     # Build envelope (job_def is included, not just job_id)
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
-    payload = {
+    payload: dict[str, Any] = {
         "spec_md": spec_md,  # Full markdown content
         "spec_path": str(spec_path.resolve()),
         "repo_path": str(repo_path),
         "feature_branch": branch,
-        "epic_id": epic_id,
+        "epic_id": epic_id or frontmatter.get("epic"),
         "spec_id": resolved_spec_id,
         "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         "agent": payload_agent,
@@ -584,7 +590,7 @@ def run_command(
         "payload": payload,
         "ctx": {
             "spec_id": resolved_spec_id,
-            "epic_id": epic_id,
+            "epic_id": epic_id or frontmatter.get("epic"),
         },
     }
 
@@ -602,9 +608,11 @@ def run_command(
         print(yaml.dump(instance_dict, default_flow_style=False, allow_unicode=True, sort_keys=False))
         return
 
+    effective_epic_id = epic_id or frontmatter.get("epic") or "adhoc"
+
     # Generate run_id if not provided
     if run_id is None:
-        run_id = generate_run_id(spec_id=resolved_spec_id)
+        run_id = generate_run_id(spec_id=f"{effective_epic_id}-{resolved_spec_id}")
 
     typer.echo(f"Running job: {job_def.job_id}")
     typer.echo(f"  Run ID:   {run_id}")
@@ -618,7 +626,16 @@ def run_command(
     typer.echo("")
 
     # Execute
-    store = _new_store(_infer_runs_root(spec_path))
+    store: Any
+    if legacy_output:
+        store = _new_store(_infer_runs_root(spec_path))
+    else:
+        projection_repo = _resolve_projection_repo_path()
+        if projection_repo is None:
+            _echo_warning("Projection repo not configured; falling back to legacy output root")
+            store = _new_store(_infer_runs_root(spec_path))
+        else:
+            store = ConsolidatedRunWriter(root=projection_repo / "runs" / effective_epic_id)
 
     try:
         result = execute(envelope, store=store, run_id=run_id)
@@ -781,7 +798,7 @@ def _status_color(status: RunStatus) -> str:
         return typer.colors.WHITE
 
 
-def _show_run_summary(result, store: RunStore) -> None:
+def _show_run_summary(result, store: Any) -> None:
     """Show run summary after execution."""
     typer.echo("")
     typer.echo("=" * 50)
@@ -789,6 +806,28 @@ def _show_run_summary(result, store: RunStore) -> None:
     status_color = _status_color(result.status)
     typer.echo("Run completed: ", nl=False)
     typer.secho(result.status.value, fg=status_color)
+    typer.echo(f"  Run ID:     {result.run_id}")
+    typer.echo(f"  Job:        {result.job_id}")
+
+    # Show step summary
+    steps = store.list_steps(result.run_id)
+    completed = 0
+    failed = 0
+    for step_n in steps:
+        try:
+            outcome = store.read_step_outcome(result.run_id, step_n)
+            if outcome.outcome == OutcomeStatus.completed:
+                completed += 1
+            else:
+                failed += 1
+        except Exception:
+            pass
+
+    typer.echo(f"  Steps:      {completed} completed, {failed} failed")
+    typer.echo(f"  Artifacts:  {store.get_run_path(result.run_id)}")
+
+    if result.error:
+        _echo_error(f"Error: {result.error}")
 
 
 def _find_epic_dir_for_spec_path(spec_path: Path) -> Path | None:
@@ -842,6 +881,44 @@ def _infer_runs_root(spec_path: Path | None = None) -> Path:
     return DEFAULT_RUNS_ROOT
 
 
+def _load_workspace_config() -> dict[str, Any]:
+    """Load .specwright.yaml via existing config discovery helper."""
+    from spec.cli.spec import find_config
+
+    _, cfg = find_config()
+    return cfg
+
+
+def _resolve_projection_repo_path() -> Path | None:
+    """Resolve projection repo path for consolidated run output."""
+    import os
+
+    env_path = os.environ.get("SPECWRIGHT_PROJECTION_REPO")
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    cfg = _load_workspace_config()
+    for key in ("projection_repo", "projection"):
+        section = cfg.get(key)
+        if isinstance(section, dict):
+            value = section.get("path")
+            if isinstance(value, str) and value.strip():
+                return Path(value).expanduser().resolve()
+
+    governor_cfg = Path("~/.local/local-governor/config.yaml").expanduser()
+    if governor_cfg.exists():
+        raw = yaml.safe_load(governor_cfg.read_text(encoding="utf-8")) or {}
+        if isinstance(raw, dict):
+            for key in ("projection_repo", "projection"):
+                section = raw.get(key)
+                if isinstance(section, dict):
+                    value = section.get("path")
+                    if isinstance(value, str) and value.strip():
+                        return Path(value).expanduser().resolve()
+
+    return None
+
+
 def _new_store(root: Path | None = None) -> RunStore:
     """Create a RunStore, resilient to test monkeypatching.
 
@@ -860,7 +937,7 @@ def _new_store(root: Path | None = None) -> RunStore:
         return RunStore()
 
 
-def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> RunStore | None:
+def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> Any | None:
     """Find which RunStore contains a run_id.
 
     Tries hinted root, then legacy default root, then scans local-governor epics.
@@ -874,6 +951,17 @@ def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> RunSto
         store = _new_store(root)
         if store.run_exists(run_id):
             return store
+
+    projection_repo = _resolve_projection_repo_path()
+    if projection_repo is not None:
+        projection_runs = projection_repo / "runs"
+        if projection_runs.exists():
+            for epic_runs_root in projection_runs.iterdir():
+                if not epic_runs_root.is_dir():
+                    continue
+                consolidated_store = ConsolidatedRunWriter(root=epic_runs_root)
+                if consolidated_store.run_exists(run_id):
+                    return consolidated_store
 
     # Scan epics for <epic_dir>/runs/<run_id>/run.yaml
     epics_root = Path.home() / ".local" / "local-governor" / "epics"
@@ -892,29 +980,6 @@ def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> RunSto
             pass
 
     return None
-
-    typer.echo(f"  Run ID:     {result.run_id}")
-    typer.echo(f"  Job:        {result.job_id}")
-
-    # Show step summary
-    steps = store.list_steps(result.run_id)
-    completed = 0
-    failed = 0
-    for step_n in steps:
-        try:
-            outcome = store.read_step_outcome(result.run_id, step_n)
-            if outcome.outcome == OutcomeStatus.completed:
-                completed += 1
-            else:
-                failed += 1
-        except Exception:
-            pass
-
-    typer.echo(f"  Steps:      {completed} completed, {failed} failed")
-    typer.echo(f"  Artifacts:  {store.get_run_path(result.run_id)}")
-
-    if result.error:
-        _echo_error(f"Error: {result.error}")
 
 
 def _show_run_details(record, store: RunStore) -> None:

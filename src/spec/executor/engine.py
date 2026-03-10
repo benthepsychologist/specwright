@@ -1218,7 +1218,7 @@ def _generate_run_artifacts(
     store: RunStore,
 ) -> None:
     """
-    Generate final run artifacts: changes_final.patch and run_report.md.
+    Generate final run artifacts: changes_final.patch and run report.
 
     Called after all steps complete (success or failure).
     """
@@ -1245,7 +1245,7 @@ def _generate_run_artifacts(
             use_llm=_use_llm_for_run_report(job_instance=job_instance),
         )
     except Exception as e:
-        print(f"Warning: Failed to generate run_report.md: {e}", flush=True)
+        print(f"Warning: Failed to generate run report artifact: {e}", flush=True)
 
 
 def _generate_run_report(
@@ -1269,6 +1269,18 @@ def _generate_run_report(
             f"- Step {outcome.step_n} ({outcome.step_id}): {outcome.outcome.value}"
             + (f" - {outcome.error}" if outcome.error else "")
         )
+    issues = [
+        {
+            "description": (
+                f"Step {outcome.step_n} ({outcome.step_id}) "
+                f"{outcome.outcome.value}"
+                + (f": {outcome.error}" if outcome.error else "")
+            ),
+            "severity": "warning",
+        }
+        for outcome in (attempt.step_outcomes or [])
+        if outcome.outcome != OutcomeStatus.completed
+    ]
 
     # StepManifest enforces step_n >= 1. This report isn't a real job step, but
     # we still need a valid, non-colliding step number for backend dispatch.
@@ -1286,7 +1298,6 @@ def _generate_run_report(
             patch_content = patch_content[:50000] + "\n... (truncated)"
 
     if not use_llm:
-        report_path = run_dir / "run_report.md"
         report_content = f"""# Run Report: {run_record.run_id}
 
 **Generated**: {datetime.now(UTC).isoformat()}
@@ -1303,8 +1314,30 @@ def _generate_run_report(
 {patch_content if patch_content else "(no changes)"}
 ```
 """
-        report_path.write_text(report_content)
-        print(f"Generated: {report_path.name}", flush=True)
+        report_data = {
+            "run_id": run_record.run_id,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "status": run_record.status.value,
+            "job_id": run_record.job_id,
+            "summary": (
+                "Automated run completed. "
+                f"{len(attempt.step_outcomes or [])} step(s) executed."
+            ),
+            "assessment": (
+                "Run completed successfully."
+                if run_record.status == RunStatus.completed
+                else f"Run completed with status: {run_record.status.value}."
+            ),
+            "issues": issues,
+            "recommendation": (
+                "Proceed with normal review and merge process."
+                if run_record.status == RunStatus.completed
+                else "Review failed/timed-out steps before merging."
+            ),
+        }
+        store.write_run_report(run_record.run_id, report_data, report_content)
+        report_name = "run_report.yaml" if (run_dir / "run_report.yaml").exists() else "run_report.md"
+        print(f"Generated: {report_name}", flush=True)
         return
 
     from spec.executor.backends.llm import LlmBackend
@@ -1385,7 +1418,6 @@ Be direct and actionable. Focus on what matters for the person reviewing this ru
             if stderr_path.exists():
                 stderr_text = stderr_path.read_text().strip()
 
-        report_path = run_dir / "run_report.md"
         if stdout_text:
             report_body = stdout_text
         else:
@@ -1408,14 +1440,31 @@ This usually means the LLM backend failed immediately (model not available, prov
 
 {report_body}
 """
-        report_path.write_text(report_content)
-        print(f"Generated: {report_path.name}", flush=True)
+        report_data = {
+            "run_id": run_record.run_id,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "status": run_record.status.value,
+            "job_id": run_record.job_id,
+            "summary": report_body,
+            "assessment": (
+                "LLM-generated report produced."
+                if stdout_text
+                else "LLM generated no summary output."
+            ),
+            "issues": issues,
+            "recommendation": (
+                "Review this run report and proceed with merge if acceptable."
+                if run_record.status == RunStatus.completed
+                else "Review issues before proceeding."
+            ),
+        }
+        store.write_run_report(run_record.run_id, report_data, report_content)
+        report_name = "run_report.yaml" if (run_dir / "run_report.yaml").exists() else "run_report.md"
+        print(f"Generated: {report_name}", flush=True)
 
     except Exception as e:
         # Log but don't fail the run; still write a diagnostic report artifact.
         print(f"Warning: LLM report generation failed: {e}", flush=True)
-
-        report_path = run_dir / "run_report.md"
         report_content = f"""# Run Report: {run_record.run_id}
 
 **Generated**: {datetime.now(UTC).isoformat()}
@@ -1432,7 +1481,20 @@ LLM report generation failed before producing output.
 {e}
 ```
 """
-        report_path.write_text(report_content)
+        report_data = {
+            "run_id": run_record.run_id,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "status": run_record.status.value,
+            "job_id": run_record.job_id,
+            "summary": "LLM report generation failed before producing output.",
+            "assessment": "Run report fallback artifact generated from failure path.",
+            "issues": [
+                *issues,
+                {"description": f"LLM report generation failed: {e}", "severity": "warning"},
+            ],
+            "recommendation": "Check LLM backend configuration and rerun report generation.",
+        }
+        store.write_run_report(run_record.run_id, report_data, report_content)
 
 
 def _build_step_run_ctx(

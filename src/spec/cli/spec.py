@@ -78,7 +78,8 @@ def get_default_config() -> dict:
             "path": "~/.local/local-governor"
         },
         "jobdefs": {
-            "path": "~/.local/local-governor/jobdefs/specwright"
+            "path": "~/.local/local-governor/jobdefs/specwright",
+            "fallback": "bundled",
         },
         "defaults": {
             "jobs": {

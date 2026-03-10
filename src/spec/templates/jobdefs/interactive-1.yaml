@@ -14,6 +14,9 @@
 
 job_id: interactive-1
 version: "0.2"
+kind: jobdef
+artifact_id: 6b65a22a-eeaa-54ca-af78-4025537820ad
+name: interactive-1
 description: Human-guided spec execution via Claude Code TUI
 
 steps:

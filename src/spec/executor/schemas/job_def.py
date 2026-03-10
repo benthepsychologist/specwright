@@ -62,6 +62,9 @@ class JobDef(BaseModel):
 
     job_id: str = Field(description="Unique identifier for this job template")
     version: str = Field(default="1.0", description="Job template version")
+    kind: str = Field(default="jobdef", description="Artifact kind for registrar")
+    artifact_id: str = Field(default="", description="Registrar artifact UUID")
+    name: str = Field(default="", description="Registrar artifact name")
     description: str = Field(default="", description="Human-readable description")
     steps: list[StepTemplate] = Field(
         description="Ordered list of step templates to execute"

@@ -1,17 +1,19 @@
-"""JobDef loader: Load JobDef YAML files from local-governor.
+"""JobDef loader: load JobDef YAML files with configurable lookup + fallback.
 
-JobDefs are stored in ~/.local/local-governor/jobdefs/specwright/*.yaml
-and loaded by the CLI before calling execute().
+Lookup order:
+1. `.specwright.yaml` -> `jobdefs.path` (if configured)
+2. Bundled templates (`src/spec/templates/jobdefs`)
+3. Governor defaults (`~/.local/local-governor/jobdefs/specwright` or explicit governor_path)
+   when no explicit/configured jobdefs path is set
 
-The execute() function expects the full JobDef in the envelope,
-not a job_id reference. This separation keeps the executor library
-stateless and configuration-free.
+The execute() function expects the full JobDef in the envelope, not a
+job_id reference. This separation keeps the executor library stateless.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml  # type: ignore[import]
 
@@ -56,7 +58,75 @@ def get_jobdefs_dir(governor_path: Path | None = None) -> Path:
     return governor_path / "jobdefs" / "specwright"
 
 
-def load_job_def(job_id: str, governor_path: Path | None = None) -> JobDef:
+def _find_local_config(start_path: Path | None = None) -> dict[str, Any] | None:
+    """Find and parse `.specwright.yaml` by walking up from start_path."""
+    current = (start_path or Path.cwd()).resolve()
+    for parent in [current, *current.parents]:
+        config_path = parent / ".specwright.yaml"
+        if not config_path.exists():
+            continue
+        with open(config_path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+        if not isinstance(raw, dict):
+            return None
+        return raw
+    return None
+
+
+def _configured_jobdefs_dir(start_path: Path | None = None) -> Path | None:
+    """Return configured jobdefs.path from `.specwright.yaml` if present."""
+    config = _find_local_config(start_path)
+    if not config:
+        return None
+
+    jobdefs_cfg = config.get("jobdefs")
+    if not isinstance(jobdefs_cfg, dict):
+        return None
+
+    path_value = jobdefs_cfg.get("path")
+    if not isinstance(path_value, str) or not path_value.strip():
+        return None
+
+    return Path(path_value).expanduser().resolve()
+
+
+def _jobdef_search_dirs(
+    *,
+    governor_path: Path | None = None,
+    jobdefs_path: Path | None = None,
+) -> list[Path]:
+    """Build ordered search directories for JobDef files."""
+    dirs: list[Path] = []
+
+    if jobdefs_path is not None:
+        dirs.append(jobdefs_path.expanduser().resolve())
+    else:
+        configured = _configured_jobdefs_dir()
+        if configured is not None:
+            dirs.append(configured)
+        else:
+            dirs.append(get_jobdefs_dir(governor_path))
+
+    bundled = _find_default_jobdefs_dir()
+    if bundled is not None:
+        dirs.append(bundled)
+
+    # Preserve order; remove duplicates.
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for d in dirs:
+        if d in seen:
+            continue
+        seen.add(d)
+        deduped.append(d)
+    return deduped
+
+
+def load_job_def(
+    job_id: str,
+    governor_path: Path | None = None,
+    jobdefs_path: Path | None = None,
+) -> JobDef:
     """Load a JobDef by ID from the jobdefs directory.
 
     Args:
@@ -70,13 +140,19 @@ def load_job_def(job_id: str, governor_path: Path | None = None) -> JobDef:
         JobDefNotFoundError: If the JobDef file doesn't exist
         JobDefError: If the JobDef file is invalid
     """
-    jobdefs_dir = get_jobdefs_dir(governor_path)
-    jobdef_path = jobdefs_dir / f"{job_id}.yaml"
+    searched_paths: list[Path] = []
+    filename = f"{job_id}.yaml"
 
-    if not jobdef_path.exists():
-        raise JobDefNotFoundError(job_id, [jobdef_path])
+    for search_dir in _jobdef_search_dirs(
+        governor_path=governor_path,
+        jobdefs_path=jobdefs_path,
+    ):
+        candidate = search_dir / filename
+        searched_paths.append(candidate)
+        if candidate.exists():
+            return load_job_def_from_path(candidate)
 
-    return load_job_def_from_path(jobdef_path)
+    raise JobDefNotFoundError(job_id, searched_paths)
 
 
 def load_job_def_from_path(path: Path) -> JobDef:
@@ -116,14 +192,14 @@ def list_job_defs(governor_path: Path | None = None) -> list[str]:
     Returns:
         List of JobDef IDs (without .yaml extension)
     """
-    jobdefs_dir = get_jobdefs_dir(governor_path)
-
-    if not jobdefs_dir.exists():
-        return []
-
-    return sorted(
-        p.stem for p in jobdefs_dir.glob("*.yaml") if p.is_file()
-    )
+    names: set[str] = set()
+    for search_dir in _jobdef_search_dirs(governor_path=governor_path):
+        if not search_dir.exists():
+            continue
+        for path in search_dir.glob("*.yaml"):
+            if path.is_file():
+                names.add(path.stem)
+    return sorted(names)
 
 
 def install_default_jobdefs(

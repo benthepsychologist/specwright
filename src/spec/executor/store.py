@@ -215,3 +215,15 @@ class RunStore:
     def run_exists(self, run_id: str) -> bool:
         """Check if a run exists."""
         return (self.get_run_path(run_id) / "run.yaml").exists()
+
+    def write_run_report(
+        self,
+        run_id: str,
+        report_data: dict,
+        markdown_content: str,
+    ) -> None:
+        """Write run_report.md (legacy output)."""
+        _ = report_data
+        path = self.get_run_path(run_id) / "run_report.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(markdown_content)

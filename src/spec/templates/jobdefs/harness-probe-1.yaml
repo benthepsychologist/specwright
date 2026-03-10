@@ -1,0 +1,20 @@
+# harness-probe-1: simple harness connectivity probe
+#
+# Execution model:
+#   Step 1: emit a probe marker to confirm backend execution wiring.
+
+job_id: harness-probe-1
+version: "0.1"
+kind: jobdef
+artifact_id: 6845382e-9e27-5cd3-b45b-f3d7782d4451
+name: harness-probe-1
+description: Minimal probe job for executor harness validation
+
+steps:
+  - step_id: probe.echo
+    backend: cmd
+    description: Emit probe marker
+    payload:
+      command: "echo SPECWRIGHT_HARNESS_PROBE_OK"
+      capture_git: false
+    continue_on_failure: false
