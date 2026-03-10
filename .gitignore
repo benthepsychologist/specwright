@@ -66,3 +66,5 @@ aips/*.yaml
 *.pdf
 # Specwright ephemeral artifacts
 .specwright/tmp/
+
+specwright.code.workspace
