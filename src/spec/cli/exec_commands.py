@@ -294,6 +294,7 @@ def compile_command(
 
     # Build envelope (job_def is included, not just job_id)
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
+    payload_models = [m.strip() for m in models.split(",") if m.strip()] if models else []
     payload: dict[str, Any] = {
         "spec_md": spec_md,  # Full markdown content
         "spec_path": str(spec_path.resolve()),
@@ -303,11 +304,10 @@ def compile_command(
         "epic_spec": None,  # No epic context when compiling from file
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "models": payload_models,
     }
 
-    # Add models if specified (as list)
-    if models:
-        payload["models"] = [m.strip() for m in models.split(",")]
+    # Add model overrides if specified
     if review_model:
         payload["review_model"] = review_model
 
@@ -567,6 +567,7 @@ def run_command(
 
     # Build envelope (job_def is included, not just job_id)
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
+    payload_models = [m.strip() for m in models.split(",") if m.strip()] if models else []
     payload: dict[str, Any] = {
         "spec_md": spec_md,  # Full markdown content
         "spec_path": str(spec_path.resolve()),
@@ -577,11 +578,10 @@ def run_command(
         "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "models": payload_models,
     }
 
-    # Add models if specified (as list)
-    if models:
-        payload["models"] = [m.strip() for m in models.split(",")]
+    # Add model overrides if specified
     if review_model:
         payload["review_model"] = review_model
 
