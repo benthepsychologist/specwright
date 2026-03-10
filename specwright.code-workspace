@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "../../home/developer"
+		},
+		{
+			"path": "../../tmp/domain-projection-test"
 		}
 	],
 	"settings": {}
