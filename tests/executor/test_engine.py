@@ -560,7 +560,7 @@ class TestJobDefLoader:
         """Can load aip-1 JobDef."""
         job_def = load_job_def("aip-1", jobdefs_dir)
         assert job_def.job_id == "aip-1"
-        assert len(job_def.steps) == 11  # refs.sync + 3-pass model with commits
+        assert len(job_def.steps) == 13  # refs.sync + 3-pass model with commits + improvement cycle
 
     def test_aip1_step_ids(self, jobdefs_dir):
         """aip-1 has correct step IDs for 3-pass model."""
@@ -578,6 +578,8 @@ class TestJobDefLoader:
             "capture.bundle",
             "assess.acceptance",
             "finalize.run",
+            "analyze.suggest_improvements",
+            "stage.improvements",
         ]
 
     def test_aip1_on_failure_skip_to(self, jobdefs_dir):

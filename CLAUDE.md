@@ -123,7 +123,7 @@ tier: C
 title: "Specwright Consolidated Output Format + JobDef Registrar Fields"
 owner: benthepsychologist
 goal: Update specwright run output to consolidated YAML format. Add registrar fields to JobDef model.
-validated: false
+validated: true
 version: '3.0'
 labels:
 - specwright

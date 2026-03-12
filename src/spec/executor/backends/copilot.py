@@ -81,24 +81,6 @@ class CopilotBackend(BackendBase):
                 backend=self.name,
             )
 
-    def _build_prompt_for_type(
-        self,
-        prompt_type: str,
-        epic_spec: dict | None,
-        spec_md: str | None = None,
-    ) -> str:
-        """Build a prompt based on type (drift_fix, drift_verify, etc.)."""
-        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
-
-        if prompt_type == "drift_fix":
-            return _build_drift_fix_prompt(epic_spec, spec_md)
-        if prompt_type == "drift_verify":
-            return _build_drift_verify_prompt(epic_spec, spec_md)
-        raise BackendError(
-            f"Unknown prompt_type: {prompt_type}",
-            backend=self.name,
-        )
-
         # 2. Check --deny-tool flag support via --help (10s timeout - CLI startup is slow)
         try:
             result = subprocess.run(
@@ -126,6 +108,24 @@ class CopilotBackend(BackendBase):
                 "Install from: https://github.com/github/copilot-cli",
                 backend=self.name,
             )
+
+    def _build_prompt_for_type(
+        self,
+        prompt_type: str,
+        epic_spec: dict | None,
+        spec_md: str | None = None,
+    ) -> str:
+        """Build a prompt based on type (drift_fix, drift_verify, etc.)."""
+        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
+
+        if prompt_type == "drift_fix":
+            return _build_drift_fix_prompt(epic_spec, spec_md)
+        if prompt_type == "drift_verify":
+            return _build_drift_verify_prompt(epic_spec, spec_md)
+        raise BackendError(
+            f"Unknown prompt_type: {prompt_type}",
+            backend=self.name,
+        )
 
     def dispatch(
         self,

@@ -141,10 +141,10 @@ def _derive_allowed_paths(step: dict[str, Any], aip: dict[str, Any]) -> list[str
     3. Spec repo.paths + safe defaults
     4. Extended safe defaults (src/**, tests/**, docs/**)
     """
-    # Rule 1: Explicit step declaration
+    # Rule 1: Explicit step declaration (empty list = intentional, triggers escalation)
     if "allowed_paths" in step:
         paths = step["allowed_paths"]
-        if isinstance(paths, list) and paths:
+        if isinstance(paths, list):
             return list(paths)
 
     # Rule 2: Derive from step outputs
