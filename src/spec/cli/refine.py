@@ -58,10 +58,11 @@ def spec_refine(
 
     \b
     Examples:
-        spec refine specs/my-feature.md                    # Show diff of changes
-        spec refine specs/my-feature.md --dry-run          # Preview suggestions
-        spec refine specs/my-feature.md --apply            # Apply refinements
-        spec refine specs/my-feature.md --context notes.md # Include feedback
+        spec refine specs/my-feature.yaml                    # Show diff of changes
+        spec refine specs/my-feature.yaml --dry-run          # Preview suggestions
+        spec refine specs/my-feature.yaml --apply            # Apply refinements
+        spec refine specs/my-feature.yaml --context notes.md # Include feedback
+        spec refine specs/legacy-feature.md                  # Legacy markdown spec
     """
     # Validate mutually exclusive options
     if dry_run and apply:

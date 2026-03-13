@@ -66,7 +66,7 @@ class SpecScaffolder:
         return None
 
     def scaffold(self, num_phases: int = 2) -> str:
-        """Generate scaffolded spec as YAML (spec-v2 format)."""
+        """Generate scaffolded spec as YAML (spec-v2.1 format)."""
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         branch = self.intent.branch or f"feat/{self.intent.id}"
         tier = (self.intent.tier or "B").upper()

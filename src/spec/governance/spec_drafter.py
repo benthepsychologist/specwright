@@ -108,7 +108,7 @@ The following additional context was provided to guide your drafting:
 
 """
 
-        return f"""You have a scaffolded spec in YAML (spec-v2 format) that needs to be completed.
+        return f"""You have a scaffolded spec in YAML (spec-v2.1 format) that needs to be completed.
 Your job is to explore the codebase and fill in TODO fields.
 
 ## Scaffolded Spec
