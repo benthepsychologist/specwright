@@ -133,6 +133,16 @@ class TestGovernorWriter:
         assert result is True
         assert not (mock_paths.specs / "legacy.md").exists()
 
+    def test_delete_spec_handles_yml_extension(self, mock_paths: GovernorPaths) -> None:
+        """delete_spec removes .yml files for compatibility."""
+        (mock_paths.specs / "legacy-yml.yml").write_text("content")
+
+        writer = GovernorWriter(mock_paths)
+        result = writer.delete_spec("legacy-yml")
+
+        assert result is True
+        assert not (mock_paths.specs / "legacy-yml.yml").exists()
+
     def test_delete_spec_returns_false_if_missing(
         self, mock_paths: GovernorPaths
     ) -> None:

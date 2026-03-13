@@ -10,15 +10,40 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import typer
 import yaml  # type: ignore[import]
+from typer.core import TyperGroup
 
 from spec.governance.models import Severity, ValidationReport
 from spec.governor.locator import GovernorLocator
 
+
+class _ValidateGroup(TyperGroup):
+    """Preserve legacy `spec validate <path>` while supporting subcommands."""
+
+    def resolve_command(self, ctx: click.Context, args: list[str]):
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError:
+            if not args:
+                raise
+
+            candidate = args[0]
+            if candidate.startswith("-") or not candidate.endswith((".md", ".yaml", ".yml")):
+                raise
+
+            legacy_cmd = self.get_command(ctx, "_legacy")
+            if legacy_cmd is None:
+                raise
+            return "_legacy", legacy_cmd, args
+
+
 validate_app = typer.Typer(
     help="Validate specs, build files, epics, and contracts.",
     invoke_without_command=True,
+    cls=_ValidateGroup,
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
 
 
@@ -218,6 +243,17 @@ def validate_callback(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
         raise typer.Exit(0)
+
+
+@validate_app.command("_legacy", hidden=True)
+def validate_legacy(
+    spec_path: Path = typer.Argument(None, help="Path to spec .yaml or .md file (uses current if omitted)"),
+    check_only: bool = typer.Option(False, "--check", "-c", help="Check only, don't write validated flag"),
+) -> None:
+    """Legacy shorthand alias for `spec validate <file>`."""
+    from spec.cli.exec_commands import validate_command
+
+    validate_command(spec_path=spec_path, check_only=check_only)
 
 
 @validate_app.command("spec")

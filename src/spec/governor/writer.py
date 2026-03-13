@@ -137,7 +137,7 @@ class GovernorWriter:
         Returns:
             True if deleted, False if didn't exist
         """
-        for ext in (".yaml", ".md"):
+        for ext in (".yaml", ".yml", ".md"):
             spec_path = self._paths.specs / f"{slug}{ext}"
             if spec_path.exists():
                 spec_path.unlink()

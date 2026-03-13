@@ -201,6 +201,24 @@ class TestValidateSpecCommand:
         assert result.exit_code == 0
         assert "YAML spec metadata valid" in result.stdout
 
+    def test_validate_legacy_shorthand_yaml_passes(self, tmp_path: Path) -> None:
+        """Legacy `spec validate <file>` works for .yaml files."""
+        spec_file = tmp_path / "test-spec.yaml"
+        spec_file.write_text(VALID_YAML_SPEC)
+
+        result = runner.invoke(app, ["validate", str(spec_file), "--check"])
+        assert result.exit_code == 0
+        assert "YAML spec metadata valid" in result.stdout
+
+    def test_validate_legacy_shorthand_md_passes(self, tmp_path: Path) -> None:
+        """Legacy `spec validate <file>` still works for .md files."""
+        spec_file = tmp_path / "test-spec.md"
+        spec_file.write_text(VALID_SPEC_PHASE_FORMAT)
+
+        result = runner.invoke(app, ["validate", str(spec_file), "--check"])
+        assert result.exit_code == 0
+        assert "Spec structure valid" in result.stdout
+
     def test_validate_writes_validated_flag(self, tmp_path: Path) -> None:
         """Without --check, writes validated: true to frontmatter."""
         spec_file = tmp_path / "test-spec.md"

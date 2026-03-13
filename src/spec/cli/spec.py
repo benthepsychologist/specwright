@@ -43,8 +43,8 @@ app.command("run")(run_command)
 app.command("status")(status_command)
 app.command("logs")(logs_command)
 
-# Register validate as a Typer subgroup (supports subcommands: build, epic, contracts)
-# The callback handles the existing `spec validate <file.md>` behavior
+# Register validate as a Typer subgroup (supports subcommands: spec, build, epic, contracts)
+# The validate group preserves legacy `spec validate <file.yaml/.md>` behavior.
 from spec.cli.governance import validate_app  # noqa: E402
 
 app.add_typer(validate_app, name="validate")
