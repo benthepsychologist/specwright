@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from spec.cli.spec import app
@@ -106,6 +105,15 @@ goal: Test goal for the feature
 Just some content without proper subsections.
 """
 
+VALID_YAML_SPEC = """\
+tier: B
+title: YAML Feature
+owner: test@example.com
+goal: Validate yaml path
+repo:
+  working_branch: feat/yaml-feature
+"""
+
 
 class TestValidateSpecCommand:
     """Test spec validate spec CLI command."""
@@ -175,14 +183,23 @@ class TestValidateSpecCommand:
         assert "not found" in output
 
     def test_validate_non_md_file(self, tmp_path: Path) -> None:
-        """Non-.md file produces error."""
+        """Non-.md/.yaml file produces error."""
         txt_file = tmp_path / "test.txt"
         txt_file.write_text("not a spec")
 
         result = runner.invoke(app, ["validate", "spec", str(txt_file)])
         assert result.exit_code == 1
         output = result.stdout + (result.stderr or "")
-        assert ".md file" in output
+        assert ".md or .yaml file" in output
+
+    def test_validate_yaml_spec_passes(self, tmp_path: Path) -> None:
+        """YAML spec passes metadata validation."""
+        spec_file = tmp_path / "test-spec.yaml"
+        spec_file.write_text(VALID_YAML_SPEC)
+
+        result = runner.invoke(app, ["validate", "spec", str(spec_file), "--check"])
+        assert result.exit_code == 0
+        assert "YAML spec metadata valid" in result.stdout
 
     def test_validate_writes_validated_flag(self, tmp_path: Path) -> None:
         """Without --check, writes validated: true to frontmatter."""

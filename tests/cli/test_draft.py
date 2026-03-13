@@ -1,9 +1,7 @@
 """Tests for spec draft CLI command."""
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from spec.cli.spec import app
@@ -71,9 +69,9 @@ class TestSpecDraftFromEpic:
 
         result = runner.invoke(app, ["draft", "t004/t004-01", "--dry-run"])
         assert result.exit_code == 0
-        assert "id: t004-01-test" in result.output
-        assert "## Objective" in result.output
-        assert "## Acceptance Criteria" in result.output
+        assert "name: t004-01-test" in result.output
+        assert "kind: spec" in result.output
+        assert "acceptance_criteria:" in result.output
 
     @patch("spec.cli.draft._load_epic_spec")
     def test_draft_writes_to_epic_spec_path(self, mock_load, tmp_path):
@@ -125,7 +123,7 @@ class TestSpecDraftFromEpic:
         output_file = epic_dir / "specs" / "t004-01-test.md"
         assert output_file.exists()
         content = output_file.read_text()
-        assert "id: t004-01-test" in content
+        assert "name: t004-01-test" in content
 
     @patch("spec.cli.draft._load_epic_spec")
     def test_draft_output_override(self, mock_load, tmp_path):
@@ -173,6 +171,49 @@ class TestSpecDraftFromEpic:
         assert custom_output.exists()
 
     @patch("spec.cli.draft._load_epic_spec")
+    def test_draft_defaults_to_yaml_path_without_spec_entry_path(self, mock_load, tmp_path):
+        """Without spec_entry.path, draft writes specs/<id>.yaml by default."""
+        from datetime import datetime
+
+        from spec.epic.schema import Epic, Intent, SpecRef, Target
+
+        epic_dir = tmp_path / "epic"
+        epic_dir.mkdir()
+
+        epic = Epic(
+            version="1.0",
+            kind="epic",
+            id="t004-test",
+            title="Test Epic",
+            owner="testuser",
+            created=datetime.now(),
+            updated=datetime.now(),
+            intent=Intent(goal="Test goal"),
+            targets=[
+                Target(
+                    id="myrepo",
+                    repo_path=str(tmp_path / "myrepo"),
+                    default_branch="main",
+                )
+            ],
+            specs=[
+                SpecRef(
+                    id="t004-01-test",
+                    repo="myrepo",
+                    branch="feat/test",
+                    expectations=["It should work"],
+                )
+            ],
+        )
+
+        (tmp_path / "myrepo").mkdir()
+        mock_load.return_value = (epic, epic.specs[0], epic_dir)
+
+        result = runner.invoke(app, ["draft", "t004/t004-01"])
+        assert result.exit_code == 0
+        assert (epic_dir / "specs" / "t004-01-test.yaml").exists()
+
+    @patch("spec.cli.draft._load_epic_spec")
     def test_draft_phases_parameter(self, mock_load, tmp_path):
         """--phases controls number of phase sections."""
         from datetime import datetime
@@ -214,11 +255,11 @@ class TestSpecDraftFromEpic:
             app, ["draft", "t004/t004-01", "--dry-run", "--phases", "4"]
         )
         assert result.exit_code == 0
-        assert "## Phase 1:" in result.output
-        assert "## Phase 2:" in result.output
-        assert "## Phase 3:" in result.output
-        assert "## Phase 4:" in result.output
-        assert "## Phase 5:" not in result.output
+        assert "phase_number: 1" in result.output
+        assert "phase_number: 2" in result.output
+        assert "phase_number: 3" in result.output
+        assert "phase_number: 4" in result.output
+        assert "phase_number: 5" not in result.output
 
 
 class TestSpecDraftContext:

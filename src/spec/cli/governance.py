@@ -210,7 +210,7 @@ def validate_callback(ctx: typer.Context) -> None:
     """Validate specs, build files, epics, and contracts.
 
     Subcommands:
-      spec validate spec <file.md>     — validate spec markdown structure
+      spec validate spec <file.yaml>   — validate spec metadata (.yaml/.md)
       spec validate build <project>    — build.yaml vs filesystem
       spec validate epic <epic-id>     — epic cross-reference checks
       spec validate contracts           — op-catalog vs code catalog
@@ -222,22 +222,25 @@ def validate_callback(ctx: typer.Context) -> None:
 
 @validate_app.command("spec")
 def validate_spec(
-    spec_path: Path = typer.Argument(None, help="Path to spec .md file (uses current if omitted)"),
+    spec_path: Path = typer.Argument(None, help="Path to spec .yaml or .md file (uses current if omitted)"),
     check_only: bool = typer.Option(False, "--check", "-c", help="Check only, don't write validated flag"),
     strict: bool = typer.Option(False, "--strict", "-s", help="Enforce build_delta and full phase structure"),
 ) -> None:
-    """Validate a spec markdown file structure.
+    """Validate a spec file structure.
 
-    Validates YAML frontmatter (required: tier, title, owner, goal),
-    phase structure, and optionally build_delta context.
+    For `.yaml` specs, validates required metadata fields used by the
+    executor (`tier`, `title`, `owner`, `goal`) and exits.
+
+    For `.md` specs, validates YAML frontmatter, phase structure, and
+    optionally build_delta context.
 
     Default mode warns about missing sections. Strict mode (--strict)
     requires full schema compliance including Current Capabilities
     and Proposed build_delta sections.
 
     Examples:
-        spec validate spec ./my-feature.md
-        spec validate spec ./my-feature.md --check
+        spec validate spec ./my-feature.yaml
+        spec validate spec ./my-feature.yaml --check
         spec validate spec ./my-feature.md --strict
         spec validate spec  # uses current spec from config
     """
@@ -247,7 +250,7 @@ def validate_spec(
         current_spec = cfg.get("current", {}).get("spec")
         if not current_spec:
             typer.secho("Error: No spec path provided and no current spec set.", fg=typer.colors.RED, err=True)
-            typer.echo("  Run: spec config current.spec <path-to-spec.md>")
+            typer.echo("  Run: spec config current.spec <path-to-spec.yaml>")
             raise typer.Exit(1)
         spec_path = Path(current_spec)
         typer.echo(f"Using current spec: {spec_path}")
@@ -256,8 +259,27 @@ def validate_spec(
         typer.secho(f"Error: Spec file not found: {spec_path}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
+    if spec_path.suffix in (".yaml", ".yml"):
+        from spec.cli.exec_commands import _load_spec
+
+        try:
+            _load_spec(spec_path)
+            typer.secho("YAML spec metadata valid", fg=typer.colors.GREEN)
+            typer.echo("YAML specs are schema-validated externally; no validated flag is written.")
+            return
+        except ValueError as e:
+            typer.secho(f"Error: Invalid spec: {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+        except Exception as e:
+            typer.secho(f"Error: Failed to parse spec: {e}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1)
+
     if spec_path.suffix != ".md":
-        typer.secho(f"Error: Spec must be a .md file (got {spec_path.suffix})", fg=typer.colors.RED, err=True)
+        typer.secho(
+            f"Error: Spec must be a .md or .yaml file (got {spec_path.suffix})",
+            fg=typer.colors.RED,
+            err=True,
+        )
         raise typer.Exit(1)
 
     from spec.compiler.parser import SpecParser

@@ -36,7 +36,7 @@ class TestGovernorWriter:
 
         assert path.exists()
         assert path.read_text() == content
-        assert path == mock_paths.specs / "test-feature.md"
+        assert path == mock_paths.specs / "test-feature.yaml"
 
     def test_write_aip_creates_file(self, mock_paths: GovernorPaths) -> None:
         """Writes AIP to governor/aips/."""
@@ -111,17 +111,27 @@ class TestGovernorWriter:
         writer = GovernorWriter(mock_paths)
         writer.write_spec("nested/deep/spec", "content")
 
-        assert (mock_paths.specs / "nested/deep/spec.md").exists()
+        assert (mock_paths.specs / "nested/deep/spec.yaml").exists()
 
     def test_delete_spec_removes_file(self, mock_paths: GovernorPaths) -> None:
         """delete_spec removes the file."""
-        (mock_paths.specs / "to-delete.md").write_text("content")
+        (mock_paths.specs / "to-delete.yaml").write_text("content")
 
         writer = GovernorWriter(mock_paths)
         result = writer.delete_spec("to-delete")
 
         assert result is True
-        assert not (mock_paths.specs / "to-delete.md").exists()
+        assert not (mock_paths.specs / "to-delete.yaml").exists()
+
+    def test_delete_spec_falls_back_to_md(self, mock_paths: GovernorPaths) -> None:
+        """delete_spec removes legacy .md file when yaml doesn't exist."""
+        (mock_paths.specs / "legacy.md").write_text("content")
+
+        writer = GovernorWriter(mock_paths)
+        result = writer.delete_spec("legacy")
+
+        assert result is True
+        assert not (mock_paths.specs / "legacy.md").exists()
 
     def test_delete_spec_returns_false_if_missing(
         self, mock_paths: GovernorPaths
@@ -144,7 +154,7 @@ class TestGovernorWriter:
 
     def test_overwrite_existing_spec(self, mock_paths: GovernorPaths) -> None:
         """Overwrites existing spec file."""
-        spec_path = mock_paths.specs / "overwrite.md"
+        spec_path = mock_paths.specs / "overwrite.yaml"
         spec_path.write_text("original content")
 
         writer = GovernorWriter(mock_paths)

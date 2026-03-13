@@ -60,12 +60,10 @@ def spec_draft(
     """Draft a spec from an epic entry.
 
     Loads the spec entry from the epic, resolves the target repo, and generates
-    a scaffolded spec with:
-    - Valid frontmatter (tier, title, owner, goal)
-    - Current Capabilities from target build.yaml
-    - Proposed build_delta section
-    - Acceptance criteria from epic expectations
+    a scaffolded YAML spec with:
+    - Required metadata fields (tier, title, owner, goal)
     - Placeholder phases ready to fill in
+    - Acceptance criteria from epic expectations
 
     The output is written to the epic's spec.path by default.
 
@@ -103,7 +101,7 @@ def spec_draft(
     elif spec_entry.path:
         output_path = epic_dir / spec_entry.path
     else:
-        output_path = epic_dir / "specs" / f"{spec_entry.id}.md"
+        output_path = epic_dir / "specs" / f"{spec_entry.id}.yaml"
 
     # Load additional context if provided
     context_content: str | None = None

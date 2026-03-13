@@ -251,7 +251,7 @@ def _apply_epic_patch(epic, patch: dict) -> None:
                     repo=s.get("repo", epic.targets[0].id if epic.targets else "default"),
                     branch=s.get("branch", f"feat/{s['id']}"),
                     title=s.get("title"),
-                    path=s.get("path", f"specs/{s['id']}.md"),
+                    path=s.get("path", f"specs/{s['id']}.yaml"),
                     status=SpecStatus.PLANNED,
                     depends_on=s.get("depends_on", []),
                     expectations=s.get("expectations", []),
@@ -338,8 +338,8 @@ def add_spec(
 
     Examples:
         # Manual mode (all fields required)
-        spec epic add-spec e001-auth --id spec-01 --repo myrepo --branch feat/auth --path specs/auth.md
-        spec epic add-spec e001-auth --id spec-02 --repo myrepo --branch feat/auth --path specs/tokens.md --depends-on spec-01
+        spec epic add-spec e001-auth --id spec-01 --repo myrepo --branch feat/auth --path specs/auth.yaml
+        spec epic add-spec e001-auth --id spec-02 --repo myrepo --branch feat/auth --path specs/tokens.yaml --depends-on spec-01
 
         # LLM mode (description required)
         spec epic add-spec t004 "add caching layer" --llm
@@ -407,7 +407,7 @@ def add_spec(
                     repo=entry.get("repo", epic.targets[0].id if epic.targets else "default"),
                     branch=entry.get("branch", f"feat/{entry['id']}"),
                     title=entry.get("title"),
-                    path=entry.get("path", f"specs/{entry['id']}.md"),
+                    path=entry.get("path", f"specs/{entry['id']}.yaml"),
                     status=SpecStatus.PLANNED,
                     depends_on=entry.get("depends_on", []),
                     expectations=entry.get("expectations", []),

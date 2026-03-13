@@ -361,3 +361,77 @@ class TestEpicMarkDone:
         assert result.exit_code == 0
         assert "Marked spec" in result.output
         assert "done" in result.output.lower()
+
+
+class TestEpicYamlDefaultPaths:
+    """Tests for YAML default spec path behavior."""
+
+    def test_apply_epic_patch_defaults_to_yaml_path(self):
+        """LLM patch merge defaults missing spec.path to .yaml."""
+        from datetime import UTC, datetime
+        from unittest.mock import patch
+
+        from spec.cli.epic import _apply_epic_patch
+        from spec.epic.schema import Epic, Intent, Target
+
+        epic = Epic(
+            version="1.0",
+            kind="epic",
+            id="e100-test",
+            title="Test Epic",
+            owner="test",
+            created=datetime.now(UTC),
+            updated=datetime.now(UTC),
+            intent=Intent(goal="Test"),
+            targets=[Target(id="myrepo", repo_path="/workspace/myrepo", default_branch="main")],
+            specs=[],
+        )
+
+        with patch("spec.epic.writer.save_epic"):
+            _apply_epic_patch(epic, {"specs": [{"id": "e100-01", "title": "S1"}]})
+
+        assert epic.specs[0].path == "specs/e100-01.yaml"
+
+    def test_add_spec_llm_defaults_to_yaml_path(self, runner: CliRunner, temp_governor: Path):
+        """epic add-spec --llm defaults missing generated path to .yaml."""
+        from datetime import UTC, datetime
+        from unittest.mock import patch
+
+        from spec.epic.schema import Epic, Intent, Target
+
+        epic = Epic(
+            version="1.0",
+            kind="epic",
+            id="test-epic",
+            title="Test Epic",
+            owner="test",
+            created=datetime.now(UTC),
+            updated=datetime.now(UTC),
+            intent=Intent(goal="Test"),
+            targets=[Target(id="myrepo", repo_path="/workspace/myrepo", default_branch="main")],
+            specs=[],
+        )
+
+        with (
+            patch("spec.epic.loader.load_epic", return_value=epic),
+            patch("spec.governance.spec_entry_drafter.SpecEntryDrafter") as drafter_cls,
+            patch("spec.epic.writer.add_spec") as add_spec_mock,
+        ):
+            drafter = drafter_cls.return_value
+            drafter.draft.return_value = [
+                {
+                    "id": "e100-02",
+                    "title": "Generated Spec",
+                    "repo": "myrepo",
+                    "branch": "feat/e100-02",
+                }
+            ]
+
+            result = runner.invoke(
+                app,
+                ["epic", "add-spec", "test-epic", "generated spec", "--llm"],
+            )
+
+            assert result.exit_code == 0
+            added_spec = add_spec_mock.call_args_list[0].args[1]
+            assert added_spec.path == "specs/e100-02.yaml"

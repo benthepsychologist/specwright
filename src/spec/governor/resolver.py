@@ -2,11 +2,11 @@
 
 The local-governor layout is epic-centric:
   epics/{epic_id}/epic.yaml
-  epics/{epic_id}/specs/{spec_id}.md
+  epics/{epic_id}/specs/{spec_id}.yaml|.md
 
 Naming convention is hierarchical:
   Epic dirs:  t004-specwright-governance
-  Spec files: t004-01-validation-commands.md
+  Spec files: t004-01-validation-commands.yaml
 
 A short prefix like "t004" resolves to the epic, "t004-01" resolves to
 the spec within it. This module provides prefix-based resolution with
@@ -186,25 +186,34 @@ def resolve_spec(query: str, governor_root: Path | None = None) -> ResolvedSpec:
     if not specs_dir.exists():
         raise ResolveError(query)
 
-    spec_candidates: list[Path] = []
+    spec_candidates: dict[str, Path] = {}
+    ext_priority = {".yaml": 0, ".yml": 1, ".md": 2}
     for f in sorted(specs_dir.iterdir()):
-        if f.is_file() and f.suffix == ".md" and f.stem.startswith(query):
-            spec_candidates.append(f)
+        if not f.is_file() or f.suffix not in ext_priority or not f.stem.startswith(query):
+            continue
+        current = spec_candidates.get(f.stem)
+        if current is None or ext_priority[f.suffix] < ext_priority[current.suffix]:
+            spec_candidates[f.stem] = f
 
-    if len(spec_candidates) == 0:
+    candidates = [spec_candidates[k] for k in sorted(spec_candidates)]
+
+    if len(candidates) == 0:
         # List available specs for the error message
-        available = [f.stem for f in sorted(specs_dir.glob("*.md")) if f.stem != "README"]
+        available = sorted({
+            f.stem for f in specs_dir.iterdir()
+            if f.is_file() and f.suffix in ext_priority and f.stem != "README"
+        })
         raise ResolveError(query, available)
-    if len(spec_candidates) == 1:
-        f = spec_candidates[0]
+    if len(candidates) == 1:
+        f = candidates[0]
         return ResolvedSpec(epic=epic_resolved, spec_id=f.stem, spec_path=f)
 
     # Exact match takes priority
-    for f in spec_candidates:
+    for f in candidates:
         if f.stem == query:
             return ResolvedSpec(epic=epic_resolved, spec_id=f.stem, spec_path=f)
 
-    raise ResolveError(query, [f.stem for f in spec_candidates])
+    raise ResolveError(query, [f.stem for f in candidates])
 
 
 def list_epics(governor_root: Path | None = None) -> list[str]:
@@ -235,7 +244,7 @@ def list_specs_in_epic(
     specs_dir = epic.epic_dir / "specs"
     if not specs_dir.exists():
         return []
-    return sorted(
-        f.stem for f in specs_dir.glob("*.md")
-        if f.is_file() and f.stem != "README"
-    )
+    return sorted({
+        f.stem for f in specs_dir.iterdir()
+        if f.is_file() and f.suffix in (".md", ".yaml", ".yml") and f.stem != "README"
+    })

@@ -62,6 +62,24 @@ class TestSpecFileValidation:
         report = EpicValidator(epic, {}, epic_dir=epic_dir).validate()
         assert any(f.category == Category.missing_path for f in report.findings)
 
+    def test_default_spec_path_prefers_yaml(self, epic_dir: Path) -> None:
+        (epic_dir / "specs" / "e001-04-yaml.yaml").write_text("kind: spec\nname: e001-04-yaml\n")
+        epic = _make_epic(specs=[
+            {"id": "e001-04-yaml", "repo": "myrepo", "branch": "feat/yaml"},
+        ])
+        report = EpicValidator(epic, {}, epic_dir=epic_dir).validate()
+        missing = [f for f in report.findings if f.category == Category.missing_path]
+        assert len(missing) == 0
+
+    def test_default_spec_path_falls_back_to_md(self, epic_dir: Path) -> None:
+        (epic_dir / "specs" / "e001-05-legacy.md").write_text("# legacy\n")
+        epic = _make_epic(specs=[
+            {"id": "e001-05-legacy", "repo": "myrepo", "branch": "feat/legacy"},
+        ])
+        report = EpicValidator(epic, {}, epic_dir=epic_dir).validate()
+        missing = [f for f in report.findings if f.category == Category.missing_path]
+        assert len(missing) == 0
+
 
 class TestDependsOnValidation:
     def test_valid_deps(self, epic_dir: Path) -> None:

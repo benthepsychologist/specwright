@@ -23,6 +23,7 @@ def gov(tmp_path: Path) -> Path:
     s1 = e1 / "specs"
     s1.mkdir(parents=True)
     (e1 / "epic.yaml").write_text("id: t004-specwright-governance\n")
+    (s1 / "t004-01-validation-commands.yaml").write_text("kind: spec\nname: t004-01-validation-commands\n")
     (s1 / "t004-01-validation-commands.md").write_text("# spec 01\n")
     (s1 / "t004-03-interactive-execution.md").write_text("# spec 03\n")
 
@@ -78,6 +79,7 @@ class TestResolveSpec:
         assert r.spec_id == "t004-01-validation-commands"
         assert r.epic.epic_id == "t004-specwright-governance"
         assert r.spec_path.exists()
+        assert r.spec_path.suffix == ".yaml"
 
     def test_full_spec_name(self, gov: Path) -> None:
         r = resolve_spec("t004-01-validation-commands", gov)
@@ -116,6 +118,7 @@ class TestListFunctions:
         specs = list_specs_in_epic("t004", gov)
         assert "t004-01-validation-commands" in specs
         assert "t004-03-interactive-execution" in specs
+        assert specs.count("t004-01-validation-commands") == 1
 
 
 @pytest.fixture

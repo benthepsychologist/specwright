@@ -139,7 +139,7 @@ patch:
       title: <spec-title>
       repo: <target-id>
       branch: feat/<slug>
-      path: specs/<spec-id>.md
+      path: specs/<spec-id>.yaml
       depends_on: []
       mode: headless  # or interactive
       expectations:

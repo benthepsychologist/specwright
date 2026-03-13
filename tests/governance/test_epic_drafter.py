@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -65,6 +65,7 @@ class TestEpicDrafter:
         assert "dev" in prompt
         assert "patch:" in prompt
         assert "mode: headless" in prompt
+        assert "path: specs/<spec-id>.yaml" in prompt
 
     def test_build_prompt_with_context(self):
         """Test prompt building with additional context."""

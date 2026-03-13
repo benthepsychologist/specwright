@@ -1,7 +1,6 @@
 """Tests for spec drafter (LLM-assisted drafting)."""
 
 import subprocess
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,7 +62,7 @@ class TestSpecDrafter:
         assert "explore the codebase" in prompt.lower()
         assert "fill in" in prompt.lower()
         assert "TODO" in prompt
-        assert "Output ONLY the spec markdown" in prompt
+        assert "Output ONLY the spec YAML" in prompt
 
     @patch("spec.governance.spec_drafter.shutil.which")
     def test_claude_not_found_raises(self, mock_which, scaffolder):

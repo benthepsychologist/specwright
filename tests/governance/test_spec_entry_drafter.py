@@ -169,6 +169,7 @@ class TestSpecEntryDrafter:
         assert "t001-01" in prompt  # Existing spec
         assert "Add logging functionality" in prompt
         assert "mode: headless" in prompt
+        assert "path: specs/<spec-id>.yaml" in prompt
 
     def test_build_prompt_includes_context(self):
         """Test prompt includes additional context."""
@@ -189,12 +190,12 @@ class TestSpecEntryDrafter:
         drafter = SpecEntryDrafter(epic=epic, description="test")
 
         response = """```yaml
-specs:
+    specs:
   - id: t001-03
     title: Logging Spec
     repo: myrepo
     branch: feat/logging
-    path: specs/t001-03.md
+    path: specs/t001-03.yaml
     mode: headless
     expectations:
       - Add structured logging

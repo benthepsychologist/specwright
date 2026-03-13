@@ -37,12 +37,12 @@ class GovernorWriter:
 
         Args:
             slug: The spec slug (filename without extension)
-            content: The spec content (Markdown)
+            content: The spec content (YAML or Markdown)
 
         Returns:
             Path to the written file
         """
-        spec_path = self._paths.specs / f"{slug}.md"
+        spec_path = self._paths.specs / f"{slug}.yaml"
         self._atomic_write(spec_path, content)
         return spec_path
 
@@ -137,10 +137,11 @@ class GovernorWriter:
         Returns:
             True if deleted, False if didn't exist
         """
-        spec_path = self._paths.specs / f"{slug}.md"
-        if spec_path.exists():
-            spec_path.unlink()
-            return True
+        for ext in (".yaml", ".md"):
+            spec_path = self._paths.specs / f"{slug}{ext}"
+            if spec_path.exists():
+                spec_path.unlink()
+                return True
         return False
 
     def delete_aip(self, aip_id: str) -> bool:

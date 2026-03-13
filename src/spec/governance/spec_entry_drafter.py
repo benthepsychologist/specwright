@@ -178,7 +178,7 @@ specs:
     title: <title>
     repo: <target-id>
     branch: feat/<slug>
-    path: specs/<spec-id>.md
+    path: specs/<spec-id>.yaml
     status: planned
     depends_on: [<existing-spec-ids-if-any>]
     mode: headless  # or interactive

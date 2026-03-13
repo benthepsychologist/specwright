@@ -69,7 +69,7 @@ class TestGovernorReader:
     ) -> None:
         """Successfully reads spec from governor."""
         # Create spec file
-        spec_path = mock_paths.specs / "test-feature.md"
+        spec_path = mock_paths.specs / "test-feature.yaml"
         spec_path.write_text(sample_spec_content)
 
         reader = GovernorReader(mock_paths)
@@ -137,8 +137,8 @@ class TestGovernorReader:
     ) -> None:
         """Lists all spec slugs."""
         (mock_paths.specs / "feature-a.md").write_text("# A")
-        (mock_paths.specs / "feature-b.md").write_text("# B")
-        (mock_paths.specs / "feature-c.md").write_text("# C")
+        (mock_paths.specs / "feature-b.yaml").write_text("# B")
+        (mock_paths.specs / "feature-c.yml").write_text("# C")
 
         reader = GovernorReader(mock_paths)
         specs = reader.list_specs()
@@ -190,7 +190,17 @@ class TestGovernorReader:
         reader = GovernorReader(mock_paths)
         path = reader.get_spec_path("test-feature")
 
-        assert path == mock_paths.specs / "test-feature.md"
+        assert path == mock_paths.specs / "test-feature.yaml"
+
+    def test_get_spec_path_prefers_yaml_over_md(self, mock_paths: GovernorPaths) -> None:
+        """Resolved path prefers .yaml when both .yaml and .md exist."""
+        yaml_path = mock_paths.specs / "dual.yaml"
+        md_path = mock_paths.specs / "dual.md"
+        yaml_path.write_text("kind: spec\nname: dual\n")
+        md_path.write_text("# legacy")
+
+        reader = GovernorReader(mock_paths)
+        assert reader.get_spec_path("dual") == yaml_path
 
     def test_get_aip_path(self, mock_paths: GovernorPaths) -> None:
         """get_aip_path returns correct path."""

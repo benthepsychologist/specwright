@@ -43,7 +43,7 @@ class SpecDrafter:
     """LLM-assisted spec drafting.
 
     Uses Claude Code in headless mode to explore a repository and fill in
-    the TODO sections of a scaffolded spec.
+    TODO fields of a scaffolded YAML spec.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class SpecDrafter:
         """Generate full spec with LLM assistance.
 
         Returns:
-            Complete spec markdown with TODOs filled in.
+            Complete spec YAML with TODOs filled in.
 
         Raises:
             FileNotFoundError: If claude CLI not found.
@@ -92,7 +92,7 @@ class SpecDrafter:
         """Build the prompt for Claude Code.
 
         Args:
-            scaffold: Scaffolded spec markdown.
+            scaffold: Scaffolded spec YAML.
 
         Returns:
             Complete prompt string.
@@ -108,42 +108,31 @@ The following additional context was provided to guide your drafting:
 
 """
 
-        return f"""You have a scaffolded spec that needs to be completed.
-Your job is to explore the codebase and fill in the TODO sections.
+        return f"""You have a scaffolded spec in YAML (spec-v2 format) that needs to be completed.
+Your job is to explore the codebase and fill in TODO fields.
 
 ## Scaffolded Spec
 
 {scaffold}
 {context_section}
-## Critical Constraint: build_delta First
-
-The build_delta is the REAL constraint. Everything else derives from it:
-- **adds.layout** → drives Files to Touch (what paths to create/modify)
-- **adds.kernel_surfaces** → drives Acceptance Criteria (what commands are exposed)
-- **adds.modules** → drives what functionality is added and how to verify it
-
-Start by defining the build_delta, then derive everything else from it.
-
 ## Your Task
 
 1. Explore the repository to understand the current state
-2. Fill in the Problem section with real issues you discover
-3. **Define the build_delta FIRST** - what structural changes does this spec make?
-4. Fill in each Phase, deriving content from the build_delta:
-   - Objective: what capability from the delta is being implemented
-   - Files to Touch: derived from build_delta.adds.layout
-   - Implementation notes based on existing patterns in the codebase
-   - Verification commands (pytest, ruff, etc.) - how to verify the delta was applied
+2. Fill in objective/key_decisions with concrete details
+3. Fill in each `phases[]` entry with concrete implementation slices:
+   - objective: what capability this phase implements
+   - files_to_touch: specific files expected to change
+   - notes based on existing patterns in the codebase
+   - verification commands (pytest, ruff, etc.) to validate the phase
 
 ## Output Rules
 
 IMPORTANT: Do NOT use TodoWrite or Task tools. Your ONLY job is to output the spec.
 
-When you are done exploring, output the complete filled-in spec markdown.
-The spec must start with `---` (YAML frontmatter) and include all sections.
-Replace TODO comments with real content based on your exploration.
+When you are done exploring, output the complete filled-in spec YAML.
+Replace TODO fields with real content based on your exploration.
 
-Output ONLY the spec markdown as your final response, nothing else."""
+Output ONLY the spec YAML as your final response, nothing else."""
 
     def _call_claude_code(self, prompt: str) -> str:
         """Call Claude Code in headless mode with read-only tools.
@@ -152,7 +141,7 @@ Output ONLY the spec markdown as your final response, nothing else."""
             prompt: The prompt to send to Claude Code.
 
         Returns:
-            Claude Code's response (the filled spec).
+            Claude Code's response (the filled YAML spec).
 
         Raises:
             FileNotFoundError: If claude CLI not found.
@@ -190,8 +179,8 @@ Output ONLY the spec markdown as your final response, nothing else."""
             if proc.returncode != 0:
                 raise RuntimeError(f"Claude Code failed: {stderr}")
 
-            # If stdout has content starting with ---, return it
-            if stdout.strip().startswith("---"):
+            # If stdout already looks like spec YAML, return it
+            if self._looks_like_spec_yaml(stdout):
                 return stdout
 
             # Otherwise, try to extract spec from conversation history
@@ -211,12 +200,12 @@ Output ONLY the spec markdown as your final response, nothing else."""
             raise RuntimeError(f"Claude Code timed out after {self.timeout_s}s")
 
     def _extract_spec_from_conversation(self) -> str | None:
-        """Extract spec markdown from most recent Claude conversation.
+        """Extract spec YAML from most recent Claude conversation.
 
-        Looks for assistant messages containing spec content (starts with ---).
+        Looks for assistant messages containing spec YAML blocks.
 
         Returns:
-            Extracted spec markdown, or None if not found.
+            Extracted spec YAML, or None if not found.
         """
         # Find most recent conversation file
         claude_projects = Path.home() / ".claude" / "projects"
@@ -249,13 +238,13 @@ Output ONLY the spec markdown as your final response, nothing else."""
         return None
 
     def _extract_spec_from_jsonl(self, jsonl_path: Path) -> str | None:
-        """Extract spec from a conversation JSONL file.
+        """Extract YAML spec from a conversation JSONL file.
 
         Args:
             jsonl_path: Path to conversation JSONL file.
 
         Returns:
-            Extracted spec markdown, or None if not found.
+            Extracted spec YAML, or None if not found.
         """
         spec_content: str | None = None
 
@@ -275,8 +264,7 @@ Output ONLY the spec markdown as your final response, nothing else."""
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "text":
                         text = item.get("text", "")
-                        # Look for spec content - starts with --- or contains frontmatter
-                        if "---\nid:" in text or text.strip().startswith("---\nid:"):
+                        if self._looks_like_spec_yaml(text):
                             # Extract the spec portion
                             extracted = self._extract_spec_block(text)
                             if extracted:
@@ -285,19 +273,35 @@ Output ONLY the spec markdown as your final response, nothing else."""
         return spec_content
 
     def _extract_spec_block(self, text: str) -> str | None:
-        """Extract spec markdown block from text.
+        """Extract YAML spec block from text.
 
         Args:
             text: Text that may contain a spec.
 
         Returns:
-            Extracted spec, or None.
+            Extracted YAML spec, or None.
         """
-        # Find the start of the spec (YAML frontmatter)
-        match = re.search(r"(---\s*\nid:.*)", text, re.DOTALL)
+        match = re.search(
+            r"((?:artifact_id:|name:|---\s*\nid:)[\s\S]*)",
+            text,
+            re.DOTALL,
+        )
         if match:
             return match.group(1).strip()
         return None
+
+    def _looks_like_spec_yaml(self, text: str) -> bool:
+        """Heuristic check whether text appears to be a YAML spec."""
+        stripped = text.strip()
+        if not stripped:
+            return False
+        if stripped.startswith("---\nid:"):
+            return True
+        return (
+            "kind: spec" in stripped
+            and ("name:" in stripped or "artifact_id:" in stripped)
+            and "title:" in stripped
+        )
 
 
 def check_claude_available() -> bool:

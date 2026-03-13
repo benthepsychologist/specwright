@@ -8,6 +8,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from spec.cli import exec_commands
 from spec.cli.spec import app
 from spec.executor.jobdefs import install_default_jobdefs
 from spec.executor.schemas import Backend, JobDef, StepTemplate
@@ -76,6 +77,21 @@ Test the executor CLI commands.
 ### Step 1: Setup [G1: Code Readiness]
 
 Do some setup work.
+"""
+    spec_path.write_text(spec_content)
+    return spec_path
+
+
+@pytest.fixture
+def yaml_spec_file(tmp_path):
+    """Create a test spec .yaml file."""
+    spec_path = tmp_path / "test-spec.yaml"
+    spec_content = """tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+repo:
+  working_branch: feat/test-feature
 """
     spec_path.write_text(spec_content)
     return spec_path
@@ -183,6 +199,38 @@ class TestCompileCommand:
         assert data["job_id"] == "aip-1"
         assert len(data["steps"]) == 13  # aip-1 has 13 steps (refs.sync + 3-pass model + improvements)
 
+    def test_compile_success_yaml_stdout(self, yaml_spec_file, git_repo, jobdefs_installed):
+        """Compile accepts YAML-native specs."""
+        result = runner.invoke(
+            app,
+            ["compile", "aip-1", str(yaml_spec_file), "--repo", str(git_repo)],
+        )
+        assert result.exit_code == 0
+        assert "job_id: aip-1" in result.stdout
+
+    def test_load_spec_yaml_returns_metadata_and_raw_content(self, yaml_spec_file):
+        """_load_spec parses YAML metadata while preserving raw YAML content."""
+        frontmatter, raw = exec_commands._load_spec(yaml_spec_file)
+        assert frontmatter["tier"] == "C"
+        assert frontmatter["title"] == "Test Spec"
+        assert frontmatter["owner"] == "test-user"
+        assert frontmatter["goal"] == "Test the executor CLI"
+        assert raw == yaml_spec_file.read_text(encoding="utf-8")
+
+    def test_get_spec_path_prefers_yaml(self, tmp_path, monkeypatch):
+        """_get_spec_path resolves .yaml before .md when both exist."""
+        gov = tmp_path / ".local" / "local-governor" / "projects" / "proj"
+        specs = gov / "specs" / "e101"
+        specs.mkdir(parents=True)
+        yaml_path = specs / "e101-01.yaml"
+        md_path = specs / "e101-01.md"
+        yaml_path.write_text("tier: C\ntitle: T\nowner: O\ngoal: G\n")
+        md_path.write_text("---\ntier: C\ntitle: T\nowner: O\ngoal: G\n---\n")
+
+        monkeypatch.setattr(exec_commands.Path, "home", lambda: tmp_path)
+        resolved = exec_commands._get_spec_path("e101", "e101-01")
+        assert resolved == yaml_path
+
 
 # =============================================================================
 # spec run Tests
@@ -206,6 +254,23 @@ class TestRunCommand:
                 "run",
                 "aip-1",
                 str(spec_file),
+                "--repo",
+                str(git_repo),
+                "--dry-run",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Dry run" in result.stdout
+        assert "job_id: aip-1" in result.stdout
+
+    def test_run_dry_run_yaml(self, yaml_spec_file, git_repo, jobdefs_installed):
+        """Run --dry-run accepts YAML-native specs."""
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "aip-1",
+                str(yaml_spec_file),
                 "--repo",
                 str(git_repo),
                 "--dry-run",

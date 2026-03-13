@@ -18,7 +18,7 @@ console = Console()
 def spec_refine(
     spec_path: Path = typer.Argument(
         ...,
-        help="Path to an existing spec file (.md)",
+        help="Path to an existing spec file (.yaml or .md)",
         exists=True,
         readable=True,
     ),

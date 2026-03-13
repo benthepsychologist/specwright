@@ -68,7 +68,7 @@ class EpicValidator:
                 ))
 
     def _check_spec_files(self, report: ValidationReport) -> None:
-        """Check that spec markdown files exist in the epic specs/ directory."""
+        """Check that spec files exist in the epic specs/ directory."""
         if self.epic_dir is None:
             return
 
@@ -79,7 +79,18 @@ class EpicValidator:
         specs = self.epic.get("specs") or []
         for spec in specs:
             spec_id = spec.get("id", "")
-            spec_path = spec.get("path", f"specs/{spec_id}.md")
+            explicit_path = spec.get("path")
+            if explicit_path:
+                spec_path = explicit_path
+            else:
+                yaml_path = f"specs/{spec_id}.yaml"
+                md_path = f"specs/{spec_id}.md"
+                if (self.epic_dir / yaml_path).exists():
+                    spec_path = yaml_path
+                elif (self.epic_dir / md_path).exists():
+                    spec_path = md_path
+                else:
+                    spec_path = yaml_path
             # Path is relative to epic dir
             full_path = self.epic_dir / spec_path
             if not full_path.exists():

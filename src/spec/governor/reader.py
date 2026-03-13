@@ -59,7 +59,7 @@ class GovernorReader:
         """Read a spec file by slug.
 
         Resolution order:
-        1. Direct .md file in project specs/ (legacy)
+        1. Direct .yaml, .yml, then .md file in project specs/
         2. .index.yaml spec-ref → follow path to canonical location
         3. Prefix-based resolver (searches epics/)
 
@@ -74,18 +74,19 @@ class GovernorReader:
         """
         resolved = self._resolve_spec_path(slug)
         if resolved is None:
-            raise SpecNotFoundError(slug, self._paths.specs / f"{slug}.md")
+            raise SpecNotFoundError(slug, self._paths.specs / f"{slug}.yaml")
         return resolved.read_text(encoding="utf-8")
 
     def _resolve_spec_path(self, slug: str) -> Path | None:
         """Resolve a spec slug to a file path.
 
-        Tries direct .md, then .index.yaml, then the epic-based prefix resolver.
+        Tries direct .yaml/.yml/.md, then .index.yaml, then epic-prefix resolver.
         """
-        # 1. Direct .md in project specs/
-        direct = self._paths.specs / f"{slug}.md"
-        if direct.exists():
-            return direct
+        # 1. Direct spec in project specs/ (yaml preferred)
+        for ext in (".yaml", ".yml", ".md"):
+            direct = self._paths.specs / f"{slug}{ext}"
+            if direct.exists():
+                return direct
 
         # 2. Index file (.index.yaml) in project specs/
         index = self._paths.specs / f"{slug}.index.yaml"
@@ -141,7 +142,7 @@ class GovernorReader:
     def list_specs(self) -> list[str]:
         """List all spec slugs in governor.
 
-        Includes both direct .md files and .index.yaml references.
+        Includes direct .yaml/.yml/.md files and .index.yaml references.
 
         Returns:
             List of spec slugs (deduplicated, sorted).
@@ -152,7 +153,7 @@ class GovernorReader:
         for p in self._paths.specs.iterdir():
             if not p.is_file():
                 continue
-            if p.suffix == ".md":
+            if p.suffix in (".md", ".yaml", ".yml"):
                 slugs.add(p.stem)
             elif p.name.endswith(".index.yaml"):
                 # Strip .index.yaml to get the slug
@@ -205,7 +206,7 @@ class GovernorReader:
         resolved = self._resolve_spec_path(slug)
         if resolved is not None:
             return resolved
-        return self._paths.specs / f"{slug}.md"
+        return self._paths.specs / f"{slug}.yaml"
 
     def get_aip_path(self, aip_id: str) -> Path:
         """Get the path to an AIP file.

@@ -39,7 +39,7 @@ from spec.executor.schemas import (
 from spec.executor.store import DEFAULT_ROOT as DEFAULT_RUNS_ROOT
 from spec.executor.store import RunStore
 
-# Required frontmatter fields for .md specs
+# Required metadata fields for spec files
 REQUIRED_FRONTMATTER = {"tier", "title", "owner", "goal"}
 VALID_TIERS = {"A", "B", "C"}
 
@@ -80,25 +80,28 @@ def _parse_spec_frontmatter(content: str) -> dict[str, Any]:
 
     frontmatter_text = content[4:end]
     frontmatter = yaml.safe_load(frontmatter_text) or {}
+    if not isinstance(frontmatter, dict):
+        raise ValueError("Frontmatter must be a YAML mapping")
+    return _validate_spec_metadata(frontmatter, source="frontmatter")
 
-    # Validate required fields
+
+def _validate_spec_metadata(frontmatter: dict[str, Any], source: str) -> dict[str, Any]:
+    """Validate required metadata fields used by compile/run flows."""
     missing = REQUIRED_FRONTMATTER - set(frontmatter.keys())
     if missing:
-        raise ValueError(f"Missing required frontmatter fields: {missing}")
+        raise ValueError(f"Missing required {source} fields: {missing}")
 
-    # Validate tier
     tier = str(frontmatter.get("tier", "")).upper()
     if tier not in VALID_TIERS:
         raise ValueError(f"Invalid tier '{frontmatter.get('tier')}'. Must be one of {VALID_TIERS}")
-    frontmatter["tier"] = tier  # Normalize to uppercase
+    frontmatter["tier"] = tier
 
-    # Validate non-empty strings for required fields
     for key in REQUIRED_FRONTMATTER:
-        val = frontmatter[key]
         if key == "tier":
-            continue  # Already validated
+            continue
+        val = frontmatter[key]
         if not isinstance(val, str) or not val.strip():
-            raise ValueError(f"Frontmatter field '{key}' must be a non-empty string")
+            raise ValueError(f"{source.capitalize()} field '{key}' must be a non-empty string")
 
     return frontmatter
 
@@ -133,26 +136,78 @@ def _update_frontmatter(content: str, updates: dict[str, Any]) -> str:
     return f"---\n{new_frontmatter}---\n{body}"
 
 
-def _get_spec_path(epic_id: str, spec_id: str) -> Path:
-    """Get path to .md spec file from governor storage.
+def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
+    """Load a spec from either .md or .yaml/.yml format.
 
-    Looks in: ~/.local/local-governor/projects/*/specs/{epic_id}/{spec_id}.md
+    Returns:
+        Tuple of (metadata dict, raw spec content string).
+    """
+    content = spec_path.read_text(encoding="utf-8")
+
+    if spec_path.suffix in (".yaml", ".yml"):
+        raw = yaml.safe_load(content) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"Expected a YAML mapping in {spec_path}")
+
+        frontmatter: dict[str, Any] = {}
+        for key in (
+            "tier",
+            "title",
+            "owner",
+            "goal",
+            "name",
+            "version",
+            "epic_artifact_id",
+            "labels",
+            "constraints",
+            "dependencies",
+            "repo",
+            "branch",
+        ):
+            if key in raw:
+                frontmatter[key] = raw[key]
+
+        _validate_spec_metadata(frontmatter, source="YAML spec")
+
+        if "repo" in raw and isinstance(raw["repo"], dict):
+            frontmatter["repo"] = raw["repo"]
+            if not frontmatter.get("branch") and raw["repo"].get("working_branch"):
+                frontmatter["branch"] = raw["repo"]["working_branch"]
+
+        name = raw.get("name")
+        if isinstance(name, str) and "-" in name:
+            prefix = name.split("-", 1)[0]
+            if prefix and prefix[0] in {"e", "s", "t"}:
+                frontmatter["epic"] = prefix
+
+        return frontmatter, content
+
+    frontmatter = _parse_spec_frontmatter(content)
+    return frontmatter, content
+
+
+def _get_spec_path(epic_id: str, spec_id: str) -> Path:
+    """Get path to spec file from governor storage.
+
+    Looks in: ~/.local/local-governor/projects/*/specs/{epic_id}/{spec_id}.yaml|.md
+    Prefers .yaml when both are present.
     """
     governor_root = Path.home() / ".local/local-governor/projects"
     if not governor_root.exists():
         raise FileNotFoundError(f"Governor root not found: {governor_root}")
 
-    # Search all projects for the spec
-    for project_dir in governor_root.iterdir():
-        if not project_dir.is_dir():
-            continue
-        specs_dir = project_dir / "specs" / epic_id
-        if specs_dir.exists():
-            spec_file = specs_dir / f"{spec_id}.md"
+    for ext in (".yaml", ".md"):
+        for project_dir in governor_root.iterdir():
+            if not project_dir.is_dir():
+                continue
+            specs_dir = project_dir / "specs" / epic_id
+            if not specs_dir.exists():
+                continue
+            spec_file = specs_dir / f"{spec_id}{ext}"
             if spec_file.exists():
                 return spec_file
 
-    raise FileNotFoundError(f"Spec not found: {epic_id}/{spec_id}.md")
+    raise FileNotFoundError(f"Spec not found: {epic_id}/{spec_id} (.yaml or .md)")
 
 
 def _extract_check_paths(epic: Any, spec_id: str) -> list[str]:
@@ -215,7 +270,7 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 def compile_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
-    spec_path: Path = typer.Argument(..., help="Path to spec .md file"),
+    spec_path: Path = typer.Argument(..., help="Path to spec .yaml or .md file"),
     output: Path = typer.Option(
         None, "--output", "-o", help="Output path for JobInstance (default: stdout)"
     ),
@@ -241,9 +296,9 @@ def compile_command(
     that can be executed with 'spec execute'.
 
     Examples:
-        spec compile aip-1 ./my-feature.md
-        spec compile aip-1 ./my-feature.md --output job.yaml
-        spec compile aip-1 ./my-feature.md --repo /workspace/target
+        spec compile aip-1 ./my-feature.yaml
+        spec compile aip-1 ./my-feature.yaml --output job.yaml
+        spec compile aip-1 ./my-feature.yaml --repo /workspace/target
     """
     # Validate inputs
     if not spec_path.exists():
@@ -265,10 +320,9 @@ def compile_command(
         _echo_error(f"Failed to load JobDef: {e}")
         raise typer.Exit(1)
 
-    # Load spec markdown
+    # Load spec
     try:
-        spec_md = spec_path.read_text()
-        frontmatter = _parse_spec_frontmatter(spec_md)
+        frontmatter, spec_md = _load_spec(spec_path)
     except ValueError as e:
         _echo_error(f"Invalid spec: {e}")
         raise typer.Exit(1)
@@ -296,7 +350,7 @@ def compile_command(
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
     payload_models = [m.strip() for m in models.split(",") if m.strip()] if models else []
     payload: dict[str, Any] = {
-        "spec_md": spec_md,  # Full markdown content
+        "spec_md": spec_md,  # Full spec content (YAML or markdown)
         "spec_path": str(spec_path.resolve()),
         "repo_path": str(repo_path),
         "feature_branch": branch,
@@ -408,7 +462,7 @@ def execute_command(
 
 def run_command(
     job_id: str = typer.Argument(..., help="Job template ID (e.g., 'aip-1')"),
-    spec_path: Path = typer.Argument(None, help="Path to spec .md file (optional if --epic/--spec used)"),
+    spec_path: Path = typer.Argument(None, help="Path to spec .yaml or .md file (optional if --epic/--spec used)"),
     repo_path: Path = typer.Option(
         None, "--repo", "-r", help="Repository path (default: current directory)"
     ),
@@ -448,9 +502,9 @@ def run_command(
     and executes the steps.
 
     Examples:
-        spec run aip-1 ./my-feature.md
-        spec run aip-1 ./my-feature.md --repo /workspace/target
-        spec run aip-1 ./my-feature.md --dry-run
+        spec run aip-1 ./my-feature.yaml
+        spec run aip-1 ./my-feature.yaml --repo /workspace/target
+        spec run aip-1 ./my-feature.yaml --dry-run
         spec run aip-1 --epic e005-command-plane --spec e005-01-schemas
     """
     # Validate inputs - must have either spec_path or epic/spec
@@ -482,7 +536,7 @@ def run_command(
     resolved_spec_id = spec_id  # For ctx
 
     if epic_id and spec_id:
-        # Load .md from governor
+        # Load spec from governor
         from spec.epic.loader import load_epic
 
         try:
@@ -518,14 +572,13 @@ def run_command(
             # Non-fatal - epic_spec is optional enhancement
             typer.secho(f"Warning: Could not load epic context: {e}", fg=typer.colors.YELLOW, err=True)
 
-    # Load spec markdown
+    # Load spec content
     if not spec_path.exists():
         _echo_error(f"Spec file not found: {spec_path}")
         raise typer.Exit(1)
 
     try:
-        spec_md = spec_path.read_text()
-        frontmatter = _parse_spec_frontmatter(spec_md)
+        frontmatter, spec_md = _load_spec(spec_path)
     except ValueError as e:
         _echo_error(f"Invalid spec: {e}")
         raise typer.Exit(1)
@@ -569,7 +622,7 @@ def run_command(
     payload_agent = agent or "claude-code"  # Default to claude-code if not specified
     payload_models = [m.strip() for m in models.split(",") if m.strip()] if models else []
     payload: dict[str, Any] = {
-        "spec_md": spec_md,  # Full markdown content
+        "spec_md": spec_md,  # Full spec content (YAML or markdown)
         "spec_path": str(spec_path.resolve()),
         "repo_path": str(repo_path),
         "feature_branch": branch,
@@ -835,7 +888,7 @@ def _find_epic_dir_for_spec_path(spec_path: Path) -> Path | None:
 
     Expected layout (local-governor epics):
         <epic_dir>/epic.yaml
-        <epic_dir>/specs/<spec>.md
+        <epic_dir>/specs/<spec>.yaml|.md
     """
     try:
         spec_path = spec_path.resolve()
@@ -1044,14 +1097,17 @@ def _show_run_details(record, store: RunStore) -> None:
 
 
 def validate_command(
-    spec_path: Path = typer.Argument(None, help="Path to spec .md file (uses current if omitted)"),
+    spec_path: Path = typer.Argument(None, help="Path to spec .yaml or .md file (uses current if omitted)"),
     check_only: bool = typer.Option(
         False, "--check", "-c", help="Check only, don't write validated flag"
     ),
 ) -> None:
     """Validate a spec file and mark it as validated.
 
-    Validates the full spec structure:
+    For `.yaml` specs, validates required metadata fields used by the
+    executor and does not modify the file.
+
+    For `.md` specs, validates:
     - YAML frontmatter with required fields (tier, title, owner, goal)
     - Plan section with at least one step
     - Proper markdown structure
@@ -1059,8 +1115,8 @@ def validate_command(
     If valid, writes 'validated: true' to the frontmatter.
 
     Examples:
-        spec validate ./my-feature.md
-        spec validate ./my-feature.md --check
+        spec validate ./my-feature.yaml
+        spec validate ./my-feature.yaml --check
         spec validate  # uses current spec from config
     """
     from spec.compiler.parser import SpecParser
@@ -1072,7 +1128,7 @@ def validate_command(
         current_spec = cfg.get("current", {}).get("spec")
         if not current_spec:
             _echo_error("No spec path provided and no current spec set.")
-            typer.echo("  Run: spec config current.spec <path-to-spec.md>")
+            typer.echo("  Run: spec config current.spec <path-to-spec.yaml>")
             raise typer.Exit(1)
         spec_path = Path(current_spec)
         typer.echo(f"Using current spec: {spec_path}")
@@ -1081,8 +1137,22 @@ def validate_command(
         _echo_error(f"Spec file not found: {spec_path}")
         raise typer.Exit(1)
 
+    if spec_path.suffix in (".yaml", ".yml"):
+        try:
+            _load_spec(spec_path)
+            typer.secho("✓ YAML spec metadata valid", fg=typer.colors.GREEN)
+            _echo_success(f"Spec is valid: {spec_path}")
+            typer.echo("  YAML specs are not auto-mutated with validated: true")
+            return
+        except ValueError as e:
+            _echo_error(f"Invalid spec: {e}")
+            raise typer.Exit(1)
+        except Exception as e:
+            _echo_error(f"Failed to validate spec: {e}")
+            raise typer.Exit(1)
+
     if spec_path.suffix != ".md":
-        _echo_error(f"Spec must be a .md file (got {spec_path.suffix})")
+        _echo_error(f"Spec must be a .md or .yaml file (got {spec_path.suffix})")
         raise typer.Exit(1)
 
     # Full validation using SpecParser
