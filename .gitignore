@@ -68,5 +68,7 @@ aips/*.yaml
 .specwright/tmp/
 
 specwright.code.workspace
+
+# Projected agent skills (canonical source: ~/.local/local-governor/skills/)
 .claude/skills/
 .agents/skills/
