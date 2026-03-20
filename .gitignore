@@ -68,3 +68,5 @@ aips/*.yaml
 .specwright/tmp/
 
 specwright.code.workspace
+.claude/skills/
+.agents/skills/

@@ -884,3 +884,425 @@ These are non-functional but should be updated for a clean grep.
 - `SpecParser` kept for legacy `.md` validation — not deleted.
 
 <!-- END SPEC: e101-07-specwright-yaml-io -->
+
+<!-- BEGIN SPEC: t013-01-skills-schema-and-store -->
+## Current Spec: t013-01-skills-schema-and-store
+
+---
+id: t013-01-skills-schema-and-store
+tier: B
+title: "Skills Schema, Store, and Seed Skills"
+owner: benthepsychologist
+goal: Create the governed skills store using the Agent Skills open standard format, establish lifecycle conventions, project global skills to native agent discovery paths, and author seed skills.
+validated: true
+version: "2.0"
+labels:
+  - specwright
+  - skills
+  - governance
+  - agent-skills-standard
+epic: t013-skills-layer
+repo:
+  name: specwright
+  url: /workspace/specwright
+  working_branch: feat/skills-schema
+depends_on: []
+created: "2026-03-20T00:00:00Z"
+updated: "2026-03-20T00:00:00Z"
+---
+
+# t013-01: Skills Schema, Store, and Seed Skills
+
+**Epic:** t013-skills-layer
+**Branch:** `feat/skills-schema`
+**Tier:** B
+
+## Objective
+
+Create the governed skills store using the Agent Skills open standard format
+(agentskills.io). Author at least 3 seed skills. Project global skills to
+native agent discovery paths. This spec produces **conventions and files
+only** — no specwright code changes.
+
+## Problem
+
+Agent sessions lack reusable operational knowledge. Today:
+
+1. Hard-won procedural knowledge gets buried in improvement files or manually
+   copy-pasted into CLAUDE.md as static context.
+2. When an agent encounters a task it has done before, it has no structured,
+   conditionally-loaded reference to consult.
+3. CLAUDE.md is always loaded at session start — it is context, not skills.
+   As it grows, it wastes context window on knowledge irrelevant to the
+   current task.
+
+## Agent Skills Open Standard
+
+The Agent Skills standard (agentskills.io) defines a portable format for
+giving agents on-demand capabilities. Key properties:
+
+- A skill is a **directory** containing a required `SKILL.md` file
+- `SKILL.md` has YAML frontmatter with `name` (required) and `description`
+  (required), plus optional `license`, `compatibility`, `metadata`,
+  `allowed-tools`
+- Agents use **progressive disclosure**: only `name` and `description` are
+  loaded at session start; full `SKILL.md` loads only when the agent
+  determines the skill is relevant or the user invokes `/skill-name`
+- Supported by: Claude Code, Codex, Copilot, VS Code, Cursor, Goose,
+  Junie, TRAE, and others
+
+### How agents discover skills
+
+| Agent | Project Path | Personal Path |
+|-------|-------------|---------------|
+| Claude Code | `.claude/skills/<name>/SKILL.md` | `~/.claude/skills/<name>/SKILL.md` |
+| Codex | `.agents/skills/<name>/SKILL.md` | `~/.agents/skills/<name>/SKILL.md` |
+| Copilot | reads `.claude/skills/` natively | unconfirmed (project-level confirmed only) |
+
+### How skills differ from context
+
+| | Context (CLAUDE.md) | Skills (SKILL.md) |
+|---|---|---|
+| Loading | Always, at session start | On demand, when relevant |
+| Format | Freeform markdown | Frontmatter + instructions |
+| Scope | Entire session | Specific task |
+| Cost | Permanent context window use | Loaded only when needed |
+| Discovery | Fixed path, always read | Progressive: name+description first |
+
+## Skill Directory Format
+
+Per the Agent Skills specification:
+
+```
+skill-name/
+├── SKILL.md          # Required: frontmatter + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: reference documentation
+└── assets/           # Optional: templates, resources
+```
+
+### SKILL.md Frontmatter
+
+Standard fields (these go in the SKILL.md file):
+
+| Field | Required | Constraint |
+|-------|----------|------------|
+| `name` | Yes | Lowercase alphanumeric (a-z, 0-9) and hyphens, 1-64 chars, must not start/end with hyphen, no consecutive hyphens, must match directory name |
+| `description` | Yes | What it does and when to use it, max 1024 chars |
+| `license` | No | License name or reference |
+| `compatibility` | No | Environment requirements, max 500 chars |
+| `metadata` | No | Arbitrary key-value map |
+| `allowed-tools` | No | Space-delimited pre-approved tools |
+
+Example:
+
+```yaml
+---
+name: registrar-bootstrap
+description: Bootstrap a registrar-managed environment with BigQuery DDL,
+  schemas, and seed data. Use when setting up dev, stage, or prod environments
+  for a registrar-governed project.
+metadata:
+  author: benthepsychologist
+  version: "1.0"
+---
+```
+
+### What does NOT go in SKILL.md frontmatter
+
+Non-standard **top-level** frontmatter fields (`status`, `retired_at`,
+`scope`, `source_run` as top-level keys, etc.) do NOT go in the SKILL.md
+file. That would violate the standard and could confuse agents.
+
+Governor lifecycle metadata lives in `skills.yaml`.
+
+The standard `metadata:` field (an arbitrary key-value map) IS a valid
+place for supplementary information like `author` or `version`. Draft
+skills may also use `metadata:` for `source_run` and `source_spec` since
+these are sub-keys of a standard field, not non-standard top-level fields.
+
+## Store Layout
+
+```
+~/.local/local-governor/
+  skills/
+    skills.yaml                         # Manifest: global list + governor metadata
+    git-branching-workflow/             # Each skill is a directory
+      SKILL.md
+    specwright-spec-authoring/
+      SKILL.md
+    idempotent-shell-scripts/
+      SKILL.md
+    registrar-bootstrap/
+      SKILL.md
+      references/
+        env-configs.md
+    local-http-smoke-test/
+      SKILL.md
+    drafts/                             # Draft skills awaiting review
+      some-extracted-skill/
+        SKILL.md
+```
+
+## skills.yaml Manifest
+
+The manifest declares global skills, tracks lifecycle state, and holds
+governor-specific metadata that does not belong in standard SKILL.md
+frontmatter.
+
+```yaml
+# Skills manifest — governor lifecycle metadata + global declarations
+version: "1.0"
+
+# Global skills: projected to ~/.claude/skills/ and ~/.agents/skills/
+# for every agent session on this machine. Keep small (3-5 max).
+global:
+  - git-branching-workflow
+  - specwright-spec-authoring
+
+# Governor metadata per skill (not in SKILL.md files)
+registry:
+  git-branching-workflow:
+    status: active
+    scope: global
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  specwright-spec-authoring:
+    status: active
+    scope: global
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  idempotent-shell-scripts:
+    status: active
+    scope: project
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  registrar-bootstrap:
+    status: active
+    scope: project
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  local-http-smoke-test:
+    status: active
+    scope: domain
+    created: "2026-03-20"
+    author: benthepsychologist
+
+# Drafts are tracked here too when staged by the improvement pipeline
+drafts:
+  some-extracted-skill:
+    status: draft
+    source_run: run-e103-03-...-20260320
+    source_spec: e103-03-http-listener
+    created: "2026-03-20"
+    author: ai
+```
+
+### Why separate from SKILL.md?
+
+1. **Standard compliance.** SKILL.md frontmatter must only contain fields
+   defined by the Agent Skills spec. `status: retired` is not a standard
+   field.
+2. **Single source of truth.** Governor metadata lives in one manifest,
+   not scattered across 50 SKILL.md files.
+3. **Agent safety.** Agents parse SKILL.md frontmatter to decide when to
+   load skills. Non-standard fields could confuse them.
+
+## Selection Mechanism
+
+### Three-Tier Declaration
+
+Skills are named at three tiers. The governor resolves which skills to
+project. The agent handles on-demand loading natively.
+
+| Tier | Source | Projected To |
+|------|--------|--------------|
+| **Global** | `skills.yaml` → `global:` | `~/.claude/skills/` + `~/.agents/skills/` |
+| **Project** | `{project}.build.yaml` → `skills:` | `{repo}/.claude/skills/` + `{repo}/.agents/skills/` |
+| **Spec** | Spec payload → `skills:` | `{repo}/.claude/skills/` + `{repo}/.agents/skills/` |
+
+### build.yaml Integration
+
+```yaml
+# In {project}.build.yaml
+kernel:
+  description: "..."
+  invariants: [...]
+
+skills:
+  - registrar-bootstrap
+  - idempotent-shell-scripts
+```
+
+### Spec Frontmatter Integration
+
+```yaml
+---
+id: e103-03-http-listener
+title: "HTTP Listener Service"
+skills:
+  - local-http-smoke-test
+---
+```
+
+### What Does NOT Happen
+
+- **No auto-selection.** The governor does not choose skills based on task.
+  The human names them. The agent decides when to load based on its own
+  progressive disclosure.
+- **No "project everything."** Only named skills are projected. The store
+  may grow large; projecting all of them would defeat progressive disclosure.
+- **No tag-based matching.** Tags/scope are for human CLI listing, not
+  automatic projection.
+
+## Global Skills Projection
+
+Global skills are projected to personal agent discovery paths. This is a
+one-time setup (or re-run on skill changes):
+
+```
+~/.local/local-governor/skills/git-branching-workflow/SKILL.md
+  → ~/.claude/skills/git-branching-workflow/SKILL.md
+  → ~/.agents/skills/git-branching-workflow/SKILL.md
+```
+
+Projection is a **copy** (or symlink if the platform supports it). The
+canonical source remains in the governor store. Spec 02 automates this
+as part of `refs.sync`.
+
+## .gitignore Convention
+
+Projected skill directories in repos are copies from the governor store.
+They should be gitignored to avoid committing derived content:
+
+```gitignore
+# Projected agent skills (canonical source: ~/.local/local-governor/skills/)
+.claude/skills/
+.agents/skills/
+```
+
+This convention should be documented in skills store README and applied
+to repos that receive projected skills. Spec 02 should note this but
+not auto-modify .gitignore.
+
+## Lifecycle
+
+```
+draft  ──promote──▶  active  ──retire──▶  retired
+  ▲                                          │
+  └────────────reactivate───────────────────┘
+```
+
+| State | Where | Projected? | Governor Metadata |
+|-------|-------|------------|-------------------|
+| `draft` | `skills/drafts/<name>/` | Never | `status: draft` in `skills.yaml` → `drafts:` |
+| `active` | `skills/<name>/` | When named | `status: active` in `skills.yaml` → `registry:` |
+| `retired` | `skills/<name>/` | Never | `status: retired` + `retired_at` + `retired_reason` |
+
+### Promotion (manual)
+
+1. Review draft in `skills/drafts/<name>/SKILL.md`
+2. Move directory to `skills/<name>/`
+3. Move entry from `drafts:` to `registry:` in `skills.yaml`
+4. Set `status: active`, update `author` from `ai` to human
+
+### Retirement
+
+Set `status: retired` in `skills.yaml` → `registry:`. Add `retired_at`
+and `retired_reason`. Directory stays in `skills/`. If a build.yaml or
+spec still names a retired skill, `refs.sync` warns and skips it.
+
+## Guiding Principles
+
+1. **Standard-compliant SKILL.md.** Every SKILL.md must pass
+   `skills-ref validate`. No custom frontmatter fields.
+
+2. **Skills are for agents, not humans.** Write in imperative voice with
+   concrete commands, paths, and examples. The description must include
+   keywords that match how a task would be described.
+
+3. **One skill, one task.** "How to bootstrap a registrar environment" is
+   a skill. "Everything about registrar" is not.
+
+4. **Description is the trigger.** Agents match tasks to skills using the
+   description field. Write it to include the exact words a prompt or spec
+   would use.
+
+5. **Progressive disclosure.** Keep SKILL.md under 500 lines. Move
+   detailed references to `references/`. Move scripts to `scripts/`.
+
+6. **Small global set.** 3-5 global skills max. If it only applies to some
+   projects, declare it in build.yaml, not globals.
+
+7. **Named, not magic.** Every projection is traceable to an explicit
+   declaration in skills.yaml, build.yaml, or spec frontmatter.
+
+8. **Draft means invisible.** Drafts are never projected, period.
+
+## Seed Skills
+
+Author at least 3 seed skills to validate the format:
+
+| Skill ID | Scope | Description |
+|----------|-------|-------------|
+| `git-branching-workflow` | global | Branching model: branch naming, commit discipline, merge flow |
+| `specwright-spec-authoring` | global | How to write a specwright-compatible spec with proper frontmatter, test plan, and acceptance criteria |
+| `idempotent-shell-scripts` | project | How to write re-runnable gcloud/bq infrastructure scripts |
+| `registrar-bootstrap` | project | How to use `registrar bootstrap --env` and what it provisions |
+| `local-http-smoke-test` | domain | How to start a real HTTP process, send requests, and validate |
+
+The first two are global (declared in `skills.yaml`). The rest are available
+for build.yaml or spec-level declaration.
+
+Minimum: 3 seed skills. All 5 are recommended since each validates a
+different scope and use case.
+
+## Deliverables
+
+1. `~/.local/local-governor/skills/skills.yaml` — manifest
+2. At least 3 skill directories in `~/.local/local-governor/skills/`, each with `SKILL.md`
+3. `~/.local/local-governor/skills/drafts/` directory (empty, ready for spec 03)
+4. Global skills projected to `~/.claude/skills/` and `~/.agents/skills/`
+5. All SKILL.md files pass `skills-ref validate` (or manual frontmatter check)
+
+## Test Plan
+
+| # | Test | Method |
+|---|------|--------|
+| 1 | SKILL.md frontmatter has `name` and `description` | Manual inspection or skills-ref validate |
+| 2 | `name` field matches parent directory name | Check each skill directory |
+| 3 | `name` is lowercase alphanumeric + hyphens, 1-64 chars, no leading/trailing/consecutive hyphens | Regex check |
+| 4 | `description` is non-empty, max 1024 chars | Length check |
+| 5 | No non-standard top-level fields in SKILL.md frontmatter | Frontmatter parse + allowlist check (allowed: name, description, license, compatibility, metadata, allowed-tools) |
+| 6 | skills.yaml is valid YAML with `global:` and `registry:` keys | YAML parse |
+| 7 | All skills named in `global:` exist as directories | Directory existence check |
+| 8 | All skills in `registry:` have `status` field | Key check |
+| 9 | Global skills projected to `~/.claude/skills/` | File existence check |
+| 10 | Global skills projected to `~/.agents/skills/` | File existence check |
+| 11 | `drafts/` directory exists | ls check |
+| 12 | No skill in main `skills/` dir has `status: draft` in `skills.yaml` | Manifest check |
+| 13 | Seed skills contain concrete procedures, not placeholder stubs | Manual review: each SKILL.md has real commands, paths, and examples |
+
+## Acceptance Criteria
+
+1. `skills/skills.yaml` exists with `version`, `global`, and `registry` keys
+2. At least 3 skill directories exist with standard-compliant `SKILL.md` files
+3. SKILL.md files contain only standard top-level frontmatter fields (`name`, `description`, and optionally `metadata`, `license`, `compatibility`, `allowed-tools`)
+4. Governor lifecycle metadata (`status`, `scope`, `retired_at`, etc.) is in `skills.yaml`, not as top-level SKILL.md keys
+5. `skills/drafts/` directory exists
+6. Global skills are projected to `~/.claude/skills/` and `~/.agents/skills/`
+7. Seed skills are concrete and useful — not placeholder stubs
+8. No specwright code changes in this spec
+
+## Boundary
+
+- **In scope:** Conventions, store layout, skills.yaml manifest, seed skills,
+  global projection
+- **Out of scope:** Code changes to sync_refs.py (spec 02), improvement
+  pipeline changes (spec 03), CLI commands (spec 03)
+
+<!-- END SPEC: t013-01-skills-schema-and-store -->

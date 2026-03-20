@@ -1,0 +1,38 @@
+version: "1.0"
+
+global:
+  - git-branching-workflow
+  - specwright-spec-authoring
+
+registry:
+  git-branching-workflow:
+    status: active
+    scope: global
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  specwright-spec-authoring:
+    status: active
+    scope: global
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  idempotent-shell-scripts:
+    status: active
+    scope: project
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  registrar-bootstrap:
+    status: active
+    scope: project
+    created: "2026-03-20"
+    author: benthepsychologist
+
+  local-http-smoke-test:
+    status: active
+    scope: domain
+    created: "2026-03-20"
+    author: benthepsychologist
+
+drafts: {}
