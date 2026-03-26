@@ -77,6 +77,49 @@ def _extract_context(build: dict) -> dict[str, Any]:
     }
 
 
+def _extract_spec_stub(spec_md: str, spec_id: str) -> str:
+    """Extract a lightweight stub from full spec markdown.
+
+    Returns only the spec header, goal, and acceptance criteria —
+    enough for the agent to stay oriented without bloating the context file.
+    """
+    lines = spec_md.split("\n")
+    stub_lines = [f"## Current Spec: {spec_id}", ""]
+
+    # Extract goal from frontmatter
+    in_fm = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "---":
+            if not in_fm:
+                in_fm = True
+                continue
+            else:
+                break
+        if in_fm and stripped.startswith("goal:"):
+            goal = stripped[5:].strip().strip('"').strip("'")
+            stub_lines.append(f"**Goal:** {goal}")
+            stub_lines.append("")
+            break
+
+    # Extract acceptance criteria section
+    in_ac = False
+    for line in lines:
+        if line.strip().lower().startswith("## acceptance criteria"):
+            in_ac = True
+            stub_lines.append(line)
+            continue
+        if in_ac:
+            if line.startswith("## ") and "acceptance" not in line.lower():
+                break
+            stub_lines.append(line)
+
+    if not in_ac:
+        stub_lines.append("(No acceptance criteria section found in spec)")
+
+    return "\n".join(stub_lines)
+
+
 def _format_consumers(consumers: Any) -> str:
     """Safely format consumers field which may be string or list."""
     if isinstance(consumers, list):
@@ -375,42 +418,44 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "summary": f"FAILED: unknown agents {unknown_agents}. Available: {available}",
         }
 
-    # Load build.yaml
+    # Load build.yaml — missing is non-fatal (repo may not have one yet)
     governor_root = _governor_root()
     build = _load_build_yaml(governor_root, project)
 
+    results: list[dict] = []
+    context_sections: list[str] = []
+    build_skipped = False
+
     if build is None:
         build_path = governor_root / "projects" / project / f"{project}.build.yaml"
-        return {
-            "passed": False,
-            "data": {"error": f"build.yaml not found or invalid: {build_path}"},
-            "summary": f"FAILED: cannot load build.yaml for project '{project}'",
-        }
+        build_skipped = True
+        summary_lines = [
+            f"Skipped build.yaml sync for '{project}' (not found: {build_path})",
+        ]
+    else:
+        # Extract context once
+        context = _extract_context(build)
+        context_sections = [k for k, v in context.items() if v]
 
-    # Extract context once
-    context = _extract_context(build)
+        # Sync to each agent
+        for agent in agents:
+            result = _sync_single_agent(agent, project, context, repo_path)
+            result["agent"] = agent
+            results.append(result)
 
-    # Sync to each agent
-    results: list[dict] = []
-    for agent in agents:
-        result = _sync_single_agent(agent, project, context, repo_path)
-        result["agent"] = agent
-        results.append(result)
+        successes = [r for r in results if r["success"]]
+        failures = [r for r in results if not r["success"]]
 
-    # Determine overall success
-    successes = [r for r in results if r["success"]]
-    failures = [r for r in results if not r["success"]]
+        # Build summary (no emoji per CLAUDE.md guidelines)
+        summary_lines = [f"Synced {project} context to {len(successes)}/{len(agents)} agents:"]
+        for r in results:
+            status = "[OK]" if r["success"] else "[FAIL]"
+            line = f"  {status} {r['agent']}: {r['target_path']}"
+            if r["error"]:
+                line += f" ({r['error']})"
+            summary_lines.append(line)
 
-    # Build summary (no emoji per CLAUDE.md guidelines)
-    summary_lines = [f"Synced {project} context to {len(successes)}/{len(agents)} agents:"]
-    for r in results:
-        status = "[OK]" if r["success"] else "[FAIL]"
-        line = f"  {status} {r['agent']}: {r['target_path']}"
-        if r["error"]:
-            line += f" ({r['error']})"
-        summary_lines.append(line)
-
-    # Optionally inject spec into CLAUDE.md
+    # Inject spec stub into CLAUDE.md (independent of build.yaml)
     spec_synced = None
     if spec_md and spec_id:
         try:
@@ -418,23 +463,27 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             existing = claude_md_path.read_text() if claude_md_path.exists() else ""
             begin = f"<!-- BEGIN SPEC: {spec_id} -->"
             end = f"<!-- END SPEC: {spec_id} -->"
-            spec_section = f"## Current Spec: {spec_id}\n\n{spec_md}"
+            spec_section = _extract_spec_stub(spec_md, spec_id)
             merged = _merge_content(existing, spec_section, begin, end)
             claude_md_path.write_text(merged)
             spec_synced = str(claude_md_path)
-            summary_lines.append(f"  [OK] spec (id={spec_id}): {spec_synced}")
+            summary_lines.append(f"  [OK] spec stub (id={spec_id}): {spec_synced}")
         except OSError as e:
             summary_lines.append(f"  [FAIL] spec (id={spec_id}): {e}")
 
+    # Determine overall success — build.yaml skip is not a failure
+    agent_failures = [r for r in results if not r["success"]]
+
     return {
-        "passed": len(failures) == 0,
+        "passed": len(agent_failures) == 0,
         "data": {
             "project": project,
             "agents": agents,
             "results": results,
-            "synced_count": len(successes),
-            "failed_count": len(failures),
-            "context_sections": [k for k, v in context.items() if v],
+            "synced_count": len([r for r in results if r["success"]]),
+            "failed_count": len(agent_failures),
+            "build_skipped": build_skipped,
+            "context_sections": context_sections,
             "spec_synced": spec_synced,
             "spec_id": spec_id,
         },

@@ -1,0 +1,94 @@
+# aip-1-lite: Single-pass spec execution (no drift correction)
+#
+# Execution model:
+#   Run 1 (agent.run_spec): Execute the spec — one shot
+#   No drift_fix or drift_verify passes
+#
+# Use this for:
+#   - Small/focused specs where one pass is enough
+#   - Faster iteration cycles
+#   - Specs with well-defined acceptance criteria
+#
+# Failure handling:
+#   - Run 1 fails: skip to capture.bundle (via on_failure_skip_to)
+#   - Commits after successful agent run
+
+job_id: aip-1-lite
+version: "0.3"
+kind: jobdef
+artifact_id: 2a8c1f3e-4b7d-5a9c-8e1f-6d3b2c5a4e7f
+name: aip-1-lite
+description: Execute a spec with a single agent pass (no drift correction)
+
+steps:
+  # Step 1: Create or switch to feature branch — must succeed
+  - step_id: branch.create
+    backend: cmd
+    description: Create or switch to feature branch
+    payload:
+      command: "git checkout @payload.feature_branch 2>/dev/null || git checkout -b @payload.feature_branch"
+      capture_git: true
+    continue_on_failure: false
+
+  # Step 2: Sync agent reference files from build.yaml
+  - step_id: refs.sync
+    backend: python
+    description: Sync agent reference files from build.yaml
+    payload:
+      callable: "agent.sync_refs"
+      agents: ["@payload.agent"]
+      project: "@payload.project"
+      spec_md: "@payload.spec_md"
+      spec_id: "@payload.spec_id"
+    continue_on_failure: true
+
+  # Step 3: Run 1 — Execute spec (single pass)
+  - step_id: agent.run_spec
+    backend: "@payload.agent"
+    description: "Run 1: Execute spec with agent"
+    payload:
+      spec_md: "@payload.spec_md"
+      repo_path: "@payload.repo_path"
+      models: "@payload.models"
+      capture_git: true
+    timeout_s: 1800
+    on_failure_skip_to: capture.bundle
+    capture_patch: true
+
+  # Step 4: Commit after Run 1
+  - step_id: commit.run1
+    backend: cmd
+    description: Commit changes from run 1
+    payload:
+      command: "git add -A && git commit -m 'spec(@payload.spec_id): revision 1' || true"
+      capture_git: true
+    continue_on_failure: true
+
+  # Step 5: Capture bundle — best effort
+  - step_id: capture.bundle
+    backend: cmd
+    description: Bundle execution artifacts
+    payload:
+      command: "git log --oneline -10 || git diff --stat"
+      capture_git: true
+    continue_on_failure: true
+
+  # Step 6: Assess acceptance — best effort
+  - step_id: assess.acceptance
+    backend: llm
+    description: Assess spec acceptance criteria
+    payload:
+      prompt_type: acceptance_review
+      spec_md: "@payload.spec_md"
+      epic_spec: "@payload.epic_spec"
+      repo_path: "@payload.repo_path"
+    continue_on_failure: true
+
+  # Step 7: Finalize run — always try
+  - step_id: finalize.run
+    backend: cmd
+    description: Finalize run and write summary
+    payload:
+      command: "echo 'Run finalized'"
+      capture_git: false
+    continue_on_failure: true

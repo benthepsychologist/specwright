@@ -506,12 +506,42 @@ def _evaluate_condition(condition: str, ctx: dict[str, Any], payload: dict[str, 
         return False
 
 
+def _extract_acceptance_criteria(spec_md: str) -> str:
+    """Extract just the acceptance criteria section from spec markdown.
+
+    Returns the criteria block for use in drift prompts.
+    Falls back to the full spec if no AC section is found.
+    """
+    lines = spec_md.split("\n")
+    ac_lines: list[str] = []
+    in_ac = False
+
+    for line in lines:
+        if line.strip().lower().startswith("## acceptance criteria"):
+            in_ac = True
+            ac_lines.append(line)
+            continue
+        if in_ac:
+            if line.startswith("## ") and "acceptance" not in line.lower():
+                break
+            ac_lines.append(line)
+
+    if ac_lines:
+        return "\n".join(ac_lines)
+
+    # Fallback: no AC section found — return full spec
+    return spec_md
+
+
 def _build_drift_fix_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 2: drift inspection and fix.
 
+    Uses only acceptance criteria and touched-file context (not the full spec)
+    to keep the prompt small and the agent focused.
+
     Args:
         epic_spec: Optional epic spec expectations to include as ground truth
-        spec_md: Optional full spec markdown to include as ground truth
+        spec_md: Optional full spec markdown (AC will be extracted)
     """
     prompt = """# Drift Inspection and Fix
 
@@ -519,33 +549,21 @@ You are reviewing the code changes from the previous spec implementation run.
 
 ## Your Task
 
-1. **Inspect Changes**: Review all code changes made so far (use `git diff` from base commit)
+1. Run `git diff --name-only` from base commit to list touched files
+2. Run `git diff --stat` to see scope of changes
+3. Check each acceptance criterion below against the actual implementation
+4. Run tests relevant to the touched files
+5. If any criteria are unmet or tests fail, fix them
 
-2. **Check for Drift**: Compare the implementation against the spec requirements:
-   - Are all acceptance criteria being addressed?
-   - Is the implementation aligned with the spec's intent?
-   - Are there any missing pieces or incomplete implementations?
-   - Are there any deviations from the expected behavior?
-
-3. **Make a Plan**: If you find any drift or issues:
-   - Document what needs to be fixed
-   - Prioritize the fixes
-
-4. **Execute Fixes**: Implement any necessary corrections to bring the code back in alignment with the spec.
-
-## Context
-
-The spec data is provided to you. The repository is the working directory.
-Check `git log` and `git diff` to see what was implemented.
-
-Focus on correctness and spec adherence, not on style or refactoring.
+Focus ONLY on acceptance criteria and test correctness.
+Do NOT refactor, restyle, or explore beyond the touched files.
 """
 
-    # Add full spec as ground truth if provided
+    # Add only the acceptance criteria (not the full spec)
     if spec_md:
-        prompt += "\n\n## Full Spec (Ground Truth)\n\n"
-        prompt += "The following is the COMPLETE spec. Use the Acceptance Criteria section as a checklist — every item must be verified implemented.\n\n"
-        prompt += spec_md
+        ac = _extract_acceptance_criteria(spec_md)
+        prompt += "\n\n## Acceptance Criteria (Checklist)\n\n"
+        prompt += ac
         prompt += "\n"
 
     # Add epic expectations as ground truth if provided
@@ -558,9 +576,12 @@ Focus on correctness and spec adherence, not on style or refactoring.
 def _build_drift_verify_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 3: final drift verification.
 
+    Uses only acceptance criteria and touched-file context (not the full spec)
+    to keep the agent focused on verification, not re-exploration.
+
     Args:
         epic_spec: Optional epic spec expectations to include as ground truth
-        spec_md: Optional full spec markdown to include as ground truth
+        spec_md: Optional full spec markdown (AC will be extracted)
     """
     prompt = """# Final Drift Verification
 
@@ -568,32 +589,19 @@ You are performing a final verification pass on the spec implementation.
 
 ## Your Task
 
-1. **Final Review**: Review ALL changes made across previous runs (use `git diff` from base commit)
+1. Run `git diff --name-only` from base commit — these are the ONLY files to check
+2. For each acceptance criterion below, verify it is correctly implemented
+3. Run relevant test suites — if any test fails, fix it
+4. Do NOT make unnecessary changes — only fix actual failures
 
-2. **Acceptance Criteria Check**: Go through each acceptance criterion in the spec:
-   - Is it fully implemented?
-   - Does it work as expected?
-   - Are there any edge cases missed?
-
-3. **Fix Remaining Issues**: If you find any remaining problems:
-   - Fix them directly
-   - Focus on correctness over completeness
-
-4. **Verification**: Run any verification commands specified in the spec.
-
-## Context
-
-The spec data is provided to you. The repository is the working directory.
-This is the FINAL pass - focus on making sure everything is correct and complete.
-
-Do not make unnecessary changes. Only fix actual issues.
+This is the FINAL pass. Be surgical: verify criteria, run tests, fix failures.
 """
 
-    # Add full spec as ground truth if provided
+    # Add only the acceptance criteria (not the full spec)
     if spec_md:
-        prompt += "\n\n## Full Spec (Ground Truth)\n\n"
-        prompt += "The following is the COMPLETE spec. Systematically verify every acceptance criterion.\n\n"
-        prompt += spec_md
+        ac = _extract_acceptance_criteria(spec_md)
+        prompt += "\n\n## Acceptance Criteria (Checklist)\n\n"
+        prompt += ac
         prompt += "\n"
 
     # Add epic expectations as ground truth if provided

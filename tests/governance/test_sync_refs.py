@@ -523,7 +523,7 @@ class TestSyncRefs:
         assert "unknown" in str(result["data"]["error"])
 
     def test_missing_build_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Should fail when build.yaml doesn't exist."""
+        """Should succeed gracefully when build.yaml doesn't exist (skip agent sync)."""
         gov_root = tmp_path / "governor"
         gov_root.mkdir()
 
@@ -537,8 +537,9 @@ class TestSyncRefs:
             repo_path=tmp_path,
         )
 
-        assert result["passed"] is False
-        assert "build.yaml" in result["data"]["error"]
+        assert result["passed"] is True
+        assert result["data"]["build_skipped"] is True
+        assert "Skipped" in result["summary"]
 
     def test_roo_code_creates_nested_directory(
         self, tmp_path: Path, mock_governor_root: Path
