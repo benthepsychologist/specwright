@@ -490,6 +490,8 @@ def _sync_single_agent(
     project: str,
     context: dict[str, Any],
     repo_path: Path,
+    *,
+    empty_context: bool = False,
 ) -> dict:
     """Sync context to a single agent's reference file.
 
@@ -500,7 +502,7 @@ def _sync_single_agent(
     target_path = repo_path / filename
 
     # Format content for this agent
-    content = _format_content(context, project, format_type)
+    content = "" if empty_context else _format_content(context, project, format_type)
 
     # Get markers
     begin_marker, end_marker = _get_markers(project, format_type)
@@ -625,7 +627,7 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     # Sync to each agent
     sync_agents = [agent for agent in agents if agent in AGENT_REF_TARGETS]
     for agent in sync_agents:
-        result = _sync_single_agent(agent, project, context, repo_path)
+        result = _sync_single_agent(agent, project, context, repo_path, empty_context=build_skipped)
         result["agent"] = agent
         results.append(result)
 

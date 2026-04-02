@@ -586,8 +586,11 @@ class TestSyncRefs:
         assert result["passed"] is True
         assert result["data"]["build_skipped"] is True
         assert result["data"]["synced_count"] == 1
+        assert result["data"]["context_sections"] == []
         assert "No build.yaml" in result["data"]["skills_warnings"][0]
         assert (tmp_path / "CLAUDE.md").exists()
+        content = (tmp_path / "CLAUDE.md").read_text()
+        assert "<!-- BEGIN SYNCED: nonexistent -->\n\n<!-- END SYNCED: nonexistent -->" in content
 
     def test_sync_no_build_yaml_with_spec(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
