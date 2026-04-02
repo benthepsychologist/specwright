@@ -14,6 +14,7 @@ Payload keys:
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -36,12 +37,26 @@ AGENT_REF_TARGETS: dict[str, tuple[str, str]] = {
     "opencode": (".opencode/instructions.md", "markdown"),
 }
 
+# Agent skills discovery directories (relative to repo root).
+# Agents not listed here do not currently support native skill discovery.
+AGENT_SKILLS_PATHS: dict[str, str] = {
+    "claude-code": ".claude/skills",
+    "copilot": ".claude/skills",
+    "cursor": ".claude/skills",
+    "codex": ".agents/skills",
+}
+
 
 def _governor_root() -> Path:
     """Get governor root via the standard locator."""
     from spec.governor.locator import GovernorLocator
 
     return GovernorLocator().find(ensure_dirs=False).root
+
+
+def _home_dir() -> Path:
+    """Return the current user's home directory."""
+    return Path.home()
 
 
 def _load_build_yaml(governor_root: Path, project: str) -> dict | None:
@@ -57,6 +72,172 @@ def _load_build_yaml(governor_root: Path, project: str) -> dict | None:
         return data
     except yaml.YAMLError:
         return None
+
+
+def _load_skills_yaml(governor_root: Path) -> dict | None:
+    """Load skills registry manifest from governor store."""
+    skills_path = governor_root / "skills" / "skills.yaml"
+    if not skills_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(skills_path.read_text())
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _skill_names(raw: Any) -> list[str]:
+    """Normalize a raw skills value to a list of non-empty names."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw] if raw.strip() else []
+    if isinstance(raw, list):
+        names: list[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                names.append(item)
+        return names
+    return []
+
+
+def _load_skill_registry(skills_manifest: dict | None) -> tuple[dict[str, str], list[str]]:
+    """Read skill statuses and global skill list from skills manifest."""
+    if not skills_manifest:
+        return {}, []
+
+    statuses: dict[str, str] = {}
+    for item in skills_manifest.get("skills") or []:
+        if isinstance(item, dict):
+            name = item.get("name")
+            if isinstance(name, str) and name:
+                status = item.get("status")
+                statuses[name] = str(status) if isinstance(status, str) and status else "active"
+
+    # Also support mapping form: skills: {name: {status: active}}
+    skills_mapping = skills_manifest.get("skills")
+    if isinstance(skills_mapping, dict):
+        for name, cfg in skills_mapping.items():
+            if not isinstance(name, str) or not name:
+                continue
+            if isinstance(cfg, dict):
+                status = cfg.get("status")
+                statuses[name] = str(status) if isinstance(status, str) and status else "active"
+            elif isinstance(cfg, str):
+                statuses[name] = cfg
+            else:
+                statuses[name] = "active"
+
+    global_skills = _skill_names(skills_manifest.get("global"))
+    return statuses, global_skills
+
+
+def _resolve_skills(
+    *,
+    build: dict,
+    spec_skills: Any,
+    skills_manifest: dict | None,
+) -> tuple[list[str], list[str], dict[str, str]]:
+    """Resolve deduplicated skill names from global, project, and spec tiers."""
+    statuses, global_skills = _load_skill_registry(skills_manifest)
+    project_skills = _skill_names(build.get("skills"))
+    requested_spec_skills = _skill_names(spec_skills)
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for name in [*global_skills, *project_skills, *requested_spec_skills]:
+        if name in seen:
+            continue
+        seen.add(name)
+        resolved.append(name)
+
+    return resolved, global_skills, statuses
+
+
+def _target_roots(agents: list[str], *, repo_path: Path | None) -> list[Path]:
+    """Resolve unique skills target roots for the selected agents."""
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for agent in agents:
+        rel = AGENT_SKILLS_PATHS.get(agent)
+        if not rel:
+            continue
+        root = _home_dir() / rel if repo_path is None else repo_path / rel
+        if root in seen:
+            continue
+        seen.add(root)
+        roots.append(root)
+    return roots
+
+
+def _project_skills(
+    *,
+    governor_root: Path,
+    skills: list[str],
+    status_by_name: dict[str, str],
+    target_roots: list[Path],
+    projection_targets: dict[str, list[str]],
+    skills_warnings: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Copy skill directories into native discovery paths."""
+    projected: set[str] = set()
+    skipped: set[str] = set()
+    errors: list[str] = []
+
+    for skill_name in skills:
+        status = status_by_name.get(skill_name, "active")
+        if status in {"draft", "retired"}:
+            skills_warnings.append(f"Skill '{skill_name}' has status '{status}' and was skipped")
+            skipped.add(skill_name)
+            continue
+
+        source_dir = governor_root / "skills" / skill_name
+        if not source_dir.exists() or not source_dir.is_dir():
+            skills_warnings.append(
+                f"Skill '{skill_name}' directory not found: {source_dir}"
+            )
+            skipped.add(skill_name)
+            continue
+
+        if not target_roots:
+            continue
+
+        for root in target_roots:
+            dest = root / skill_name
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source_dir, dest, dirs_exist_ok=True)
+            except OSError as exc:
+                errors.append(f"Skill '{skill_name}' projection failed at {dest}: {exc}")
+                continue
+            projection_targets.setdefault(skill_name, []).append(str(dest))
+
+        if projection_targets.get(skill_name):
+            projected.add(skill_name)
+
+    return sorted(projected), sorted(skipped), errors
+
+
+def _project_global_skills(
+    *,
+    governor_root: Path,
+    global_skills: list[str],
+    status_by_name: dict[str, str],
+    target_roots: list[Path],
+    projection_targets: dict[str, list[str]],
+    skills_warnings: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Project global skills to user-level native discovery paths."""
+    return _project_skills(
+        governor_root=governor_root,
+        skills=global_skills,
+        status_by_name=status_by_name,
+        target_roots=target_roots,
+        projection_targets=projection_targets,
+        skills_warnings=skills_warnings,
+    )
 
 
 def _extract_context(build: dict) -> dict[str, Any]:
@@ -361,11 +542,12 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     """Sync build.yaml architecture context to agent reference files.
 
     Payload keys:
-        agents: list[str] — agent types to sync (claude-code, cursor, aider,
-                            roo-code, goose, opencode)
+        agents: list[str] — agent types to sync/project (claude-code, copilot,
+                            codex, cursor, aider, roo-code, goose, opencode)
         project: str — project name to read build.yaml from
         spec_md: str | None — optional full spec markdown content to inject
         spec_id: str | None — optional spec ID for marker identification
+        skills: list[str] | None — optional spec-level skill names to project
 
     Returns:
         Callable contract dict with passed, data, summary
@@ -375,6 +557,7 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     project = payload.get("project")
     spec_md = payload.get("spec_md")
     spec_id = payload.get("spec_id")
+    spec_skills = payload.get("skills")
 
     # Validate required parameters
     if agents is None:
@@ -406,9 +589,10 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         }
 
     # Validate all agent types upfront
-    unknown_agents = [a for a in agents if a not in AGENT_REF_TARGETS]
+    supported_agents = set(AGENT_REF_TARGETS.keys()) | set(AGENT_SKILLS_PATHS.keys())
+    unknown_agents = [a for a in agents if a not in supported_agents]
     if unknown_agents:
-        available = ", ".join(sorted(AGENT_REF_TARGETS.keys()))
+        available = ", ".join(sorted(supported_agents))
         return {
             "passed": False,
             "data": {
@@ -421,39 +605,40 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     # Load build.yaml — missing is non-fatal (repo may not have one yet)
     governor_root = _governor_root()
     build = _load_build_yaml(governor_root, project)
+    skills_manifest = _load_skills_yaml(governor_root)
 
     results: list[dict] = []
-    context_sections: list[str] = []
+    skills_warnings: list[str] = []
+    projection_targets: dict[str, list[str]] = {}
     build_skipped = False
 
     if build is None:
-        build_path = governor_root / "projects" / project / f"{project}.build.yaml"
+        build = {}
         build_skipped = True
-        summary_lines = [
-            f"Skipped build.yaml sync for '{project}' (not found: {build_path})",
-        ]
-    else:
-        # Extract context once
-        context = _extract_context(build)
-        context_sections = [k for k, v in context.items() if v]
+        skills_warnings.append(
+            f"No build.yaml for project '{project}' - skipping project context"
+        )
 
-        # Sync to each agent
-        for agent in agents:
-            result = _sync_single_agent(agent, project, context, repo_path)
-            result["agent"] = agent
-            results.append(result)
+    context = _extract_context(build)
+    context_sections = [k for k, v in context.items() if v]
 
-        successes = [r for r in results if r["success"]]
-        failures = [r for r in results if not r["success"]]
+    # Sync to each agent
+    sync_agents = [agent for agent in agents if agent in AGENT_REF_TARGETS]
+    for agent in sync_agents:
+        result = _sync_single_agent(agent, project, context, repo_path)
+        result["agent"] = agent
+        results.append(result)
 
-        # Build summary (no emoji per CLAUDE.md guidelines)
-        summary_lines = [f"Synced {project} context to {len(successes)}/{len(agents)} agents:"]
-        for r in results:
-            status = "[OK]" if r["success"] else "[FAIL]"
-            line = f"  {status} {r['agent']}: {r['target_path']}"
-            if r["error"]:
-                line += f" ({r['error']})"
-            summary_lines.append(line)
+    successes = [r for r in results if r["success"]]
+
+    # Build summary (no emoji per CLAUDE.md guidelines)
+    summary_lines = [f"Synced {project} context to {len(successes)}/{len(sync_agents)} agents:"]
+    for r in results:
+        status = "[OK]" if r["success"] else "[FAIL]"
+        line = f"  {status} {r['agent']}: {r['target_path']}"
+        if r["error"]:
+            line += f" ({r['error']})"
+        summary_lines.append(line)
 
     # Inject spec stub into CLAUDE.md (independent of build.yaml)
     spec_synced = None
@@ -471,11 +656,49 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         except OSError as e:
             summary_lines.append(f"  [FAIL] spec (id={spec_id}): {e}")
 
+    # Resolve and project skills.
+    resolved_skills, global_skills, status_by_name = _resolve_skills(
+        build=build,
+        spec_skills=spec_skills,
+        skills_manifest=skills_manifest,
+    )
+
+    repo_skill_roots = _target_roots(agents, repo_path=repo_path)
+    global_skill_roots = _target_roots(agents, repo_path=None)
+
+    projected_repo, skipped_repo, projection_errors_repo = _project_skills(
+        governor_root=governor_root,
+        skills=resolved_skills,
+        status_by_name=status_by_name,
+        target_roots=repo_skill_roots,
+        projection_targets=projection_targets,
+        skills_warnings=skills_warnings,
+    )
+    projected_global, skipped_global, projection_errors_global = _project_global_skills(
+        governor_root=governor_root,
+        global_skills=global_skills,
+        status_by_name=status_by_name,
+        target_roots=global_skill_roots,
+        projection_targets=projection_targets,
+        skills_warnings=skills_warnings,
+    )
+
+    skills_projected = sorted(set(projected_repo) | set(projected_global))
+    skills_skipped = sorted(set(skipped_repo) | set(skipped_global))
+    projection_errors = projection_errors_repo + projection_errors_global
+    for err in projection_errors:
+        summary_lines.append(f"  [FAIL] {err}")
+
+    if skills_projected:
+        summary_lines.append(f"  [OK] skills projected: {', '.join(skills_projected)}")
+    if skills_skipped:
+        summary_lines.append(f"  [OK] skills skipped: {', '.join(skills_skipped)}")
+
     # Determine overall success — build.yaml skip is not a failure
     agent_failures = [r for r in results if not r["success"]]
 
     return {
-        "passed": len(agent_failures) == 0,
+        "passed": len(agent_failures) == 0 and len(projection_errors) == 0,
         "data": {
             "project": project,
             "agents": agents,
@@ -486,6 +709,10 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "context_sections": context_sections,
             "spec_synced": spec_synced,
             "spec_id": spec_id,
+            "skills_projected": skills_projected,
+            "skills_skipped": skills_skipped,
+            "skills_warnings": skills_warnings,
+            "projection_targets": projection_targets,
         },
         "summary": "\n".join(summary_lines),
     }

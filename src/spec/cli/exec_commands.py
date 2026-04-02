@@ -358,6 +358,7 @@ def compile_command(
         "epic_spec": None,  # No epic context when compiling from file
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skills": frontmatter.get("skills"),
         "models": payload_models,
     }
 
@@ -631,6 +632,7 @@ def run_command(
         "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skills": frontmatter.get("skills"),
         "models": payload_models,
     }
 

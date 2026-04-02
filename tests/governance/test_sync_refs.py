@@ -8,6 +8,7 @@ import yaml
 
 from spec.governance.sync_refs import (
     AGENT_REF_TARGETS,
+    AGENT_SKILLS_PATHS,
     _extract_context,
     _format_consumers,
     _format_content,
@@ -35,6 +36,17 @@ class TestAgentRefTargets:
             filename, fmt = target
             assert isinstance(filename, str), f"{agent} filename should be str"
             assert fmt in valid_formats, f"{agent} format '{fmt}' not in {valid_formats}"
+
+
+class TestAgentSkillsPaths:
+    """Test AGENT_SKILLS_PATHS configuration."""
+
+    def test_expected_agents_defined(self) -> None:
+        """Skill-discovery mappings should cover known native paths."""
+        assert AGENT_SKILLS_PATHS["claude-code"] == ".claude/skills"
+        assert AGENT_SKILLS_PATHS["copilot"] == ".claude/skills"
+        assert AGENT_SKILLS_PATHS["cursor"] == ".claude/skills"
+        assert AGENT_SKILLS_PATHS["codex"] == ".agents/skills"
 
 
 class TestExtractContext:
@@ -302,7 +314,9 @@ class TestSyncRefs:
         """Create a mock governor root with project build.yaml."""
         gov_root = tmp_path / "governor"
         project_dir = gov_root / "projects" / "testproj"
+        skills_dir = gov_root / "skills"
         project_dir.mkdir(parents=True)
+        skills_dir.mkdir(parents=True)
 
         build = {
             "kernel": {
@@ -313,6 +327,26 @@ class TestSyncRefs:
             "decisions": [{"id": "adr-001", "title": "Test decision", "status": "accepted"}],
         }
         (project_dir / "testproj.build.yaml").write_text(yaml.dump(build))
+        (skills_dir / "skills.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "global": ["global-skill"],
+                    "skills": [
+                        {"name": "global-skill", "status": "active"},
+                        {"name": "project-skill", "status": "active"},
+                        {"name": "spec-skill", "status": "active"},
+                    ],
+                },
+                sort_keys=False,
+            )
+        )
+        for skill in ["global-skill", "project-skill", "spec-skill"]:
+            skill_path = skills_dir / skill
+            (skill_path / "references").mkdir(parents=True)
+            (skill_path / "scripts").mkdir(parents=True)
+            (skill_path / "SKILL.md").write_text(f"# {skill}\n")
+            (skill_path / "references" / "ref.md").write_text("reference")
+            (skill_path / "scripts" / "run.sh").write_text("#!/bin/sh\necho ok\n")
 
         # Patch _governor_root
         def mock_root():
@@ -320,6 +354,18 @@ class TestSyncRefs:
 
         monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
         return gov_root
+
+    @pytest.fixture
+    def mock_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """Patch home dir for global skills projection assertions."""
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+
+        def mock_home_dir() -> Path:
+            return home
+
+        monkeypatch.setattr("spec.governance.sync_refs._home_dir", mock_home_dir)
+        return home
 
     def test_basic_sync_single_agent(self, tmp_path: Path, mock_governor_root: Path) -> None:
         """Should sync build.yaml context to single agent reference file."""
@@ -523,9 +569,9 @@ class TestSyncRefs:
         assert "unknown" in str(result["data"]["error"])
 
     def test_missing_build_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Should succeed gracefully when build.yaml doesn't exist (skip agent sync)."""
+        """Should succeed gracefully when build.yaml doesn't exist."""
         gov_root = tmp_path / "governor"
-        gov_root.mkdir()
+        (gov_root / "skills").mkdir(parents=True)
 
         def mock_root():
             return gov_root
@@ -539,7 +585,381 @@ class TestSyncRefs:
 
         assert result["passed"] is True
         assert result["data"]["build_skipped"] is True
-        assert "Skipped" in result["summary"]
+        assert result["data"]["synced_count"] == 1
+        assert "No build.yaml" in result["data"]["skills_warnings"][0]
+        assert (tmp_path / "CLAUDE.md").exists()
+
+    def test_sync_no_build_yaml_with_spec(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spec block should still be injected when build.yaml is missing."""
+        gov_root = tmp_path / "governor"
+        (gov_root / "skills").mkdir(parents=True)
+
+        def mock_root() -> Path:
+            return gov_root
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "nonexistent",
+                "spec_id": "s-1",
+                "spec_md": "---\ngoal: test\n---\n\n## Acceptance Criteria\n- done",
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        content = (repo / "CLAUDE.md").read_text()
+        assert "<!-- BEGIN SPEC: s-1 -->" in content
+        assert "## Acceptance Criteria" in content
+
+    def test_sync_no_build_yaml_with_skills(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mock_home: Path
+    ) -> None:
+        """Missing build.yaml should not block skills projection."""
+        gov_root = tmp_path / "governor"
+        skills_dir = gov_root / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "skills.yaml").write_text(
+            yaml.safe_dump(
+                {"skills": [{"name": "spec-skill", "status": "active"}]},
+                sort_keys=False,
+            )
+        )
+        (skills_dir / "spec-skill").mkdir()
+        (skills_dir / "spec-skill" / "SKILL.md").write_text("# spec-skill")
+
+        def mock_root() -> Path:
+            return gov_root
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code", "codex"],
+                "project": "nonexistent",
+                "skills": ["spec-skill"],
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert "spec-skill" in result["data"]["skills_projected"]
+        assert (repo / ".claude" / "skills" / "spec-skill" / "SKILL.md").exists()
+        assert (repo / ".agents" / "skills" / "spec-skill" / "SKILL.md").exists()
+
+    def test_skills_projected_to_claude_dir(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Skills should project to .claude/skills for claude-style agents."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert (repo / ".claude" / "skills" / "spec-skill" / "SKILL.md").exists()
+
+    def test_skills_projected_to_agents_dir(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Skills should project to .agents/skills for codex."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["codex"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert (repo / ".agents" / "skills" / "spec-skill" / "SKILL.md").exists()
+
+    def test_skills_full_directory_copied(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Projection should copy full skill directory tree."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        target = repo / ".claude" / "skills" / "spec-skill"
+        assert (target / "SKILL.md").exists()
+        assert (target / "references" / "ref.md").exists()
+        assert (target / "scripts" / "run.sh").exists()
+
+    def test_skills_global_loading(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Global skills from skills.yaml should always project."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj"},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "global-skill" in result["data"]["skills_projected"]
+        assert (repo / ".claude" / "skills" / "global-skill" / "SKILL.md").exists()
+        assert (mock_home / ".claude" / "skills" / "global-skill" / "SKILL.md").exists()
+
+    def test_skills_project_loading(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Project skills in build.yaml should project."""
+        project_yaml = (
+            mock_governor_root / "projects" / "testproj" / "testproj.build.yaml"
+        )
+        build = yaml.safe_load(project_yaml.read_text())
+        build["skills"] = ["project-skill"]
+        project_yaml.write_text(yaml.safe_dump(build, sort_keys=False))
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj"},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "project-skill" in result["data"]["skills_projected"]
+
+    def test_skills_spec_loading(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Spec-level skills in payload should project."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "spec-skill" in result["data"]["skills_projected"]
+
+    def test_skills_dedup(self, tmp_path: Path, mock_governor_root: Path, mock_home: Path) -> None:
+        """Same skill from multiple tiers should project once."""
+        project_yaml = (
+            mock_governor_root / "projects" / "testproj" / "testproj.build.yaml"
+        )
+        build = yaml.safe_load(project_yaml.read_text())
+        build["skills"] = ["spec-skill"]
+        project_yaml.write_text(yaml.safe_dump(build, sort_keys=False))
+
+        skills_manifest_path = mock_governor_root / "skills" / "skills.yaml"
+        manifest = yaml.safe_load(skills_manifest_path.read_text())
+        manifest["global"] = ["spec-skill"]
+        skills_manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert result["data"]["skills_projected"].count("spec-skill") == 1
+
+    def test_skills_missing_dir_warns(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Missing skill directory should warn and continue."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["missing-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "missing-skill" in result["data"]["skills_skipped"]
+        assert any("missing-skill" in w for w in result["data"]["skills_warnings"])
+
+    def test_skills_retired_skipped(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Retired skills should be skipped."""
+        skills_manifest_path = mock_governor_root / "skills" / "skills.yaml"
+        manifest = yaml.safe_load(skills_manifest_path.read_text())
+        manifest["skills"].append({"name": "retired-skill", "status": "retired"})
+        skills_manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+        (mock_governor_root / "skills" / "retired-skill").mkdir()
+        (mock_governor_root / "skills" / "retired-skill" / "SKILL.md").write_text("# retired")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["retired-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "retired-skill" in result["data"]["skills_skipped"]
+        assert any("status 'retired'" in w for w in result["data"]["skills_warnings"])
+
+    def test_skills_draft_skipped(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Draft skills should be skipped by registry status check."""
+        skills_manifest_path = mock_governor_root / "skills" / "skills.yaml"
+        manifest = yaml.safe_load(skills_manifest_path.read_text())
+        manifest["skills"].append({"name": "draft-skill", "status": "draft"})
+        skills_manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False))
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["draft-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "draft-skill" in result["data"]["skills_skipped"]
+        assert any("status 'draft'" in w for w in result["data"]["skills_warnings"])
+        assert all("directory not found" not in w for w in result["data"]["skills_warnings"])
+
+    def test_skills_projection_idempotent(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Running projection twice should be idempotent."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        payload = {"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]}
+        first = sync_refs(payload=payload, repo_path=repo)
+        second = sync_refs(payload=payload, repo_path=repo)
+        assert first["passed"] is True
+        assert second["passed"] is True
+        path = repo / ".claude" / "skills" / "spec-skill" / "SKILL.md"
+        assert path.exists()
+        assert path.read_text() == "# spec-skill\n"
+
+    def test_skills_no_skills_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mock_home: Path
+    ) -> None:
+        """Missing skills.yaml should not fail projection."""
+        gov_root = tmp_path / "governor"
+        project_dir = gov_root / "projects" / "testproj"
+        project_dir.mkdir(parents=True)
+        (project_dir / "testproj.build.yaml").write_text(yaml.safe_dump({}))
+        (gov_root / "skills" / "spec-skill").mkdir(parents=True)
+        (gov_root / "skills" / "spec-skill" / "SKILL.md").write_text("# spec-skill")
+
+        def mock_root() -> Path:
+            return gov_root
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert "spec-skill" in result["data"]["skills_projected"]
+
+    def test_skills_empty_resolution(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mock_home: Path
+    ) -> None:
+        """No skills at any tier should be a no-op."""
+        gov_root = tmp_path / "governor"
+        project_dir = gov_root / "projects" / "testproj"
+        project_dir.mkdir(parents=True)
+        (project_dir / "testproj.build.yaml").write_text(yaml.safe_dump({}))
+        (gov_root / "skills").mkdir(parents=True)
+        (gov_root / "skills" / "skills.yaml").write_text(yaml.safe_dump({"skills": []}))
+
+        def mock_root() -> Path:
+            return gov_root
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj"},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert result["data"]["skills_projected"] == []
+        assert result["data"]["skills_skipped"] == []
+
+    def test_existing_synced_content_preserved(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Existing SYNCED and SPEC blocks should update in-place without duplication."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        claude = repo / "CLAUDE.md"
+        claude.write_text(
+            dedent(
+                """\
+                # Header
+                <!-- BEGIN SYNCED: testproj -->
+                old synced
+                <!-- END SYNCED: testproj -->
+                <!-- BEGIN SPEC: s-1 -->
+                old spec
+                <!-- END SPEC: s-1 -->
+                # Footer
+                """
+            )
+        )
+
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "testproj",
+                "spec_id": "s-1",
+                "spec_md": "---\ngoal: refreshed\n---\n\n## Acceptance Criteria\n- one",
+            },
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        updated = claude.read_text()
+        assert updated.count("<!-- BEGIN SYNCED: testproj -->") == 1
+        assert updated.count("<!-- BEGIN SPEC: s-1 -->") == 1
+        assert "old synced" not in updated
+        assert "old spec" not in updated
+        assert "# Header" in updated
+        assert "# Footer" in updated
+
+    def test_only_requested_agents_get_skills(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Projection should only target requested agents' paths."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj", "skills": ["spec-skill"]},
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        assert (repo / ".claude" / "skills" / "spec-skill" / "SKILL.md").exists()
+        assert not (repo / ".agents" / "skills" / "spec-skill").exists()
+
+    def test_shared_path_agents_dedup(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """claude-code + copilot should dedupe .claude/skills projection target."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code", "copilot"],
+                "project": "testproj",
+                "skills": ["spec-skill"],
+            },
+            repo_path=repo,
+        )
+        assert result["passed"] is True
+        targets = result["data"]["projection_targets"]["spec-skill"]
+        claude_targets = [p for p in targets if "/.claude/skills/spec-skill" in p]
+        assert len(claude_targets) == 1
 
     def test_roo_code_creates_nested_directory(
         self, tmp_path: Path, mock_governor_root: Path
