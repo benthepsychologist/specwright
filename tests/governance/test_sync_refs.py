@@ -748,6 +748,53 @@ class TestSyncRefs:
         assert result["passed"] is True
         assert "spec-skill" in result["data"]["skills_projected"]
 
+    def test_skill_filepath_projects_without_registry_entry(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Explicit skill paths should project even when not registered in skills.yaml."""
+        direct_skill = tmp_path / "direct-skill" / "SKILL.md"
+        direct_skill.parent.mkdir(parents=True)
+        direct_skill.write_text("# direct-skill\n")
+        (direct_skill.parent / "references").mkdir()
+        (direct_skill.parent / "references" / "ref.md").write_text("reference")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "testproj",
+                "skill": str(direct_skill),
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert "direct-skill" in result["data"]["skills_projected"]
+        assert (repo / ".claude" / "skills" / "direct-skill" / "SKILL.md").exists()
+        assert (repo / ".claude" / "skills" / "direct-skill" / "references" / "ref.md").exists()
+
+    def test_skill_filepath_missing_warns(
+        self, tmp_path: Path, mock_governor_root: Path, mock_home: Path
+    ) -> None:
+        """Missing explicit skill paths should warn and continue."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        missing_skill = tmp_path / "missing-skill" / "SKILL.md"
+
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "testproj",
+                "skill": str(missing_skill),
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert "missing-skill" in result["data"]["skills_skipped"]
+        assert any("Skill path not found" in w for w in result["data"]["skills_warnings"])
+
     def test_skills_dedup(self, tmp_path: Path, mock_governor_root: Path, mock_home: Path) -> None:
         """Same skill from multiple tiers should project once."""
         project_yaml = (

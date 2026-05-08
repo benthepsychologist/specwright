@@ -37,6 +37,7 @@ steps:
       project: "@payload.project"
       spec_md: "@payload.spec_md"
       spec_id: "@payload.spec_id"
+      skill: "@payload.skill"
       skills: "@payload.skills"
     continue_on_failure: true
 

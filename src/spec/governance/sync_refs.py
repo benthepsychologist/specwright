@@ -103,6 +103,21 @@ def _skill_names(raw: Any) -> list[str]:
     return []
 
 
+def _skill_paths(raw: Any) -> list[str]:
+    """Normalize raw skill path input to a list of non-empty path strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [raw.strip()] if raw.strip() else []
+    if isinstance(raw, list):
+        paths: list[str] = []
+        for item in raw:
+            if isinstance(item, str) and item.strip():
+                paths.append(item.strip())
+        return paths
+    return []
+
+
 def _load_skill_registry(skills_manifest: dict | None) -> tuple[dict[str, str], list[str]]:
     """Read skill statuses and global skill list from skills manifest."""
     if not skills_manifest:
@@ -238,6 +253,63 @@ def _project_global_skills(
         projection_targets=projection_targets,
         skills_warnings=skills_warnings,
     )
+
+
+def _project_skill_paths(
+    *,
+    skill_paths: list[str],
+    target_roots: list[Path],
+    projection_targets: dict[str, list[str]],
+    skills_warnings: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Project explicit skill file or directory paths into native discovery paths."""
+    projected: set[str] = set()
+    skipped: set[str] = set()
+    errors: list[str] = []
+
+    for raw_path in skill_paths:
+        source = Path(raw_path).expanduser()
+        source_dir = source if source.is_dir() else source.parent
+        skill_name = source_dir.name or source.stem
+
+        if not source.exists():
+            skills_warnings.append(f"Skill path not found: {source}")
+            if skill_name:
+                skipped.add(skill_name)
+            continue
+
+        if not source_dir.exists() or not source_dir.is_dir():
+            skills_warnings.append(f"Skill source directory not found: {source_dir}")
+            if skill_name:
+                skipped.add(skill_name)
+            continue
+
+        skill_md = source_dir / "SKILL.md"
+        if not skill_md.exists():
+            skills_warnings.append(
+                f"Skill path '{source}' does not resolve to a skill directory with SKILL.md"
+            )
+            if skill_name:
+                skipped.add(skill_name)
+            continue
+
+        if not target_roots:
+            continue
+
+        for root in target_roots:
+            dest = root / skill_name
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source_dir, dest, dirs_exist_ok=True)
+            except OSError as exc:
+                errors.append(f"Skill '{skill_name}' projection failed at {dest}: {exc}")
+                continue
+            projection_targets.setdefault(skill_name, []).append(str(dest))
+
+        if projection_targets.get(skill_name):
+            projected.add(skill_name)
+
+    return sorted(projected), sorted(skipped), errors
 
 
 def _extract_context(build: dict) -> dict[str, Any]:
@@ -549,6 +621,7 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         project: str — project name to read build.yaml from
         spec_md: str | None — optional full spec markdown content to inject
         spec_id: str | None — optional spec ID for marker identification
+        skill: str | list[str] | None — optional explicit skill file/directory path(s)
         skills: list[str] | None — optional spec-level skill names to project
 
     Returns:
@@ -559,6 +632,7 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     project = payload.get("project")
     spec_md = payload.get("spec_md")
     spec_id = payload.get("spec_id")
+    explicit_skill_paths = _skill_paths(payload.get("skill"))
     spec_skills = payload.get("skills")
 
     # Validate required parameters
@@ -676,6 +750,12 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         projection_targets=projection_targets,
         skills_warnings=skills_warnings,
     )
+    projected_explicit, skipped_explicit, projection_errors_explicit = _project_skill_paths(
+        skill_paths=explicit_skill_paths,
+        target_roots=repo_skill_roots,
+        projection_targets=projection_targets,
+        skills_warnings=skills_warnings,
+    )
     projected_global, skipped_global, projection_errors_global = _project_global_skills(
         governor_root=governor_root,
         global_skills=global_skills,
@@ -685,9 +765,9 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         skills_warnings=skills_warnings,
     )
 
-    skills_projected = sorted(set(projected_repo) | set(projected_global))
-    skills_skipped = sorted(set(skipped_repo) | set(skipped_global))
-    projection_errors = projection_errors_repo + projection_errors_global
+    skills_projected = sorted(set(projected_repo) | set(projected_explicit) | set(projected_global))
+    skills_skipped = sorted(set(skipped_repo) | set(skipped_explicit) | set(skipped_global))
+    projection_errors = projection_errors_repo + projection_errors_explicit + projection_errors_global
     for err in projection_errors:
         summary_lines.append(f"  [FAIL] {err}")
 

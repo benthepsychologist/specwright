@@ -208,6 +208,70 @@ class TestCompileCommand:
         assert result.exit_code == 0
         assert "job_id: aip-1" in result.stdout
 
+    def test_compile_resolves_relative_skill_path_in_frontmatter(
+        self, tmp_path, git_repo, jobdefs_installed
+    ):
+        """Compile resolves frontmatter skill paths relative to the spec file."""
+        skill_dir = tmp_path / "skills" / "direct-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# direct-skill\n")
+
+        spec_path = tmp_path / "test-spec.md"
+        spec_path.write_text(
+            """---
+tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+skill: skills/direct-skill/SKILL.md
+repo:
+  working_branch: feat/test-feature
+---
+
+# Test Spec
+"""
+        )
+
+        output_file = tmp_path / "job_instance.yaml"
+        result = runner.invoke(
+            app,
+            [
+                "compile",
+                "aip-1",
+                str(spec_path),
+                "--repo",
+                str(git_repo),
+                "--output",
+                str(output_file),
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = yaml.safe_load(output_file.read_text())
+        refs_sync = next(step for step in data["steps"] if step["step_id"] == "refs.sync")
+        assert refs_sync["payload"]["skill"] == str((skill_dir / "SKILL.md").resolve())
+
+    def test_compile_yaml_spec_preserves_skills_metadata(
+        self, tmp_path, yaml_spec_file
+    ):
+        """_load_spec should retain skill metadata from YAML-native specs."""
+        yaml_spec_file.write_text(
+            """tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+skill: /tmp/direct-skill/SKILL.md
+skills:
+  - spec-skill
+repo:
+  working_branch: feat/test-feature
+"""
+        )
+
+        frontmatter, _ = exec_commands._load_spec(yaml_spec_file)
+        assert frontmatter["skill"] == "/tmp/direct-skill/SKILL.md"
+        assert frontmatter["skills"] == ["spec-skill"]
+
     def test_load_spec_yaml_returns_metadata_and_raw_content(self, yaml_spec_file):
         """_load_spec parses YAML metadata while preserving raw YAML content."""
         frontmatter, raw = exec_commands._load_spec(yaml_spec_file)

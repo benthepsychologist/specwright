@@ -33,13 +33,15 @@ steps:
   # Step 2: Sync agent reference files from build.yaml
   - step_id: refs.sync
     backend: python
-    description: Sync agent reference files from build.yaml
+    description: Sync agent reference files and project skills
     payload:
       callable: "agent.sync_refs"
       agents: ["@payload.agent"]
       project: "@payload.project"
       spec_md: "@payload.spec_md"
       spec_id: "@payload.spec_id"
+      skill: "@payload.skill"
+      skills: "@payload.skills"
     continue_on_failure: true
 
   # Step 3: Run 1 — Execute spec (single pass)

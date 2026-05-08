@@ -149,6 +149,12 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
         if not isinstance(raw, dict):
             raise ValueError(f"Expected a YAML mapping in {spec_path}")
 
+        # Registrar-native specs nest document fields under a `document:` key.
+        # Fall back to that sub-dict so both flat and envelope formats are accepted.
+        doc = raw.get("document") or {}
+        if not isinstance(doc, dict):
+            doc = {}
+
         frontmatter: dict[str, Any] = {}
         for key in (
             "tier",
@@ -161,20 +167,24 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
             "labels",
             "constraints",
             "dependencies",
+            "skill",
+            "skills",
             "repo",
             "branch",
         ):
-            if key in raw:
-                frontmatter[key] = raw[key]
+            val = raw[key] if key in raw else doc.get(key)
+            if val is not None:
+                frontmatter[key] = val
 
         _validate_spec_metadata(frontmatter, source="YAML spec")
 
-        if "repo" in raw and isinstance(raw["repo"], dict):
-            frontmatter["repo"] = raw["repo"]
-            if not frontmatter.get("branch") and raw["repo"].get("working_branch"):
-                frontmatter["branch"] = raw["repo"]["working_branch"]
+        repo_raw = raw.get("repo") or doc.get("repo")
+        if isinstance(repo_raw, dict):
+            frontmatter["repo"] = repo_raw
+            if not frontmatter.get("branch") and repo_raw.get("working_branch"):
+                frontmatter["branch"] = repo_raw["working_branch"]
 
-        name = raw.get("name")
+        name = frontmatter.get("name") or raw.get("name")
         if isinstance(name, str) and "-" in name:
             prefix = name.split("-", 1)[0]
             if prefix and prefix[0] in {"e", "s", "t"}:
@@ -184,6 +194,20 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
 
     frontmatter = _parse_spec_frontmatter(content)
     return frontmatter, content
+
+
+def _resolve_frontmatter_path(raw: Any, *, base_dir: Path) -> str | None:
+    """Resolve an optional frontmatter path value against the spec directory."""
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    return str(path)
 
 
 def _get_spec_path(epic_id: str, spec_id: str) -> Path:
@@ -358,6 +382,7 @@ def compile_command(
         "epic_spec": None,  # No epic context when compiling from file
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
         "skills": frontmatter.get("skills"),
         "models": payload_models,
     }
@@ -632,6 +657,7 @@ def run_command(
         "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
         "skills": frontmatter.get("skills"),
         "models": payload_models,
     }

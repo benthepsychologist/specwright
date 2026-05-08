@@ -39,6 +39,7 @@ steps:
       project: "@payload.project"
       spec_md: "@payload.spec_md"
       spec_id: "@payload.spec_id"
+      skill: "@payload.skill"
       skills: "@payload.skills"
     continue_on_failure: true
 
@@ -52,7 +53,7 @@ steps:
       repo_path: "@payload.repo_path"
       capture_git: true
     interactive: true
-    timeout_s: 86400  # 24h - interactive has no real timeout
+    timeout_s: 86400 # 24h - interactive has no real timeout
     on_failure_skip_to: capture.bundle
     capture_patch: true
 
