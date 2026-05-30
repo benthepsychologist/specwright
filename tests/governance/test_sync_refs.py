@@ -618,8 +618,74 @@ class TestSyncRefs:
 
         assert result["passed"] is True
         content = (repo / "CLAUDE.md").read_text()
-        assert "<!-- BEGIN SPEC: s-1 -->" in content
+        assert "<!-- BEGIN SYNCED: SPEC: s-1 -->" in content
         assert "## Acceptance Criteria" in content
+
+    def test_sync_spec_stub_targets_requested_agent_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Spec stubs should be injected into the selected agent reference file."""
+        gov_root = tmp_path / "governor"
+        (gov_root / "skills").mkdir(parents=True)
+
+        def mock_root() -> Path:
+            return gov_root
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", mock_root)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        result = sync_refs(
+            payload={
+                "agents": ["copilot"],
+                "project": "nonexistent",
+                "spec_id": "s-2",
+                "spec_md": "---\ngoal: test\n---\n\n## Acceptance Criteria\n- done",
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert (repo / "COPILOT.md").exists()
+        assert "BEGIN SYNCED: SPEC: s-2" in (repo / "COPILOT.md").read_text()
+
+    def test_governor_lookup_failure_still_syncs_spec_and_explicit_skill(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Governor lookup failures should degrade to spec/explicit-skill sync, not fail."""
+        from spec.governor.locator import GovernorNotFoundError
+
+        def broken_root() -> Path:
+            raise GovernorNotFoundError(["default: ~/.local/local-governor"])
+
+        monkeypatch.setattr("spec.governance.sync_refs._governor_root", broken_root)
+
+        direct_skill = tmp_path / "direct-skill" / "SKILL.md"
+        direct_skill.parent.mkdir(parents=True)
+        direct_skill.write_text("# direct-skill\n")
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "missing",
+                "spec_id": "s-3",
+                "spec_md": "---\ngoal: test\n---\n\n## Acceptance Criteria\n- done",
+                "skill": str(direct_skill),
+                "skills": ["named-skill"],
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert (repo / "CLAUDE.md").exists()
+        assert "BEGIN SYNCED: SPEC: s-3" in (repo / "CLAUDE.md").read_text()
+        assert (repo / ".claude" / "skills" / "direct-skill" / "SKILL.md").exists()
+        assert any(
+            "Governor unavailable" in w or "Governor root lookup failed" in w
+            for w in result["data"]["skills_warnings"]
+        )
 
     def test_sync_no_build_yaml_with_skills(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mock_home: Path
@@ -952,9 +1018,9 @@ class TestSyncRefs:
                 <!-- BEGIN SYNCED: testproj -->
                 old synced
                 <!-- END SYNCED: testproj -->
-                <!-- BEGIN SPEC: s-1 -->
+                <!-- BEGIN SYNCED: SPEC: s-1 -->
                 old spec
-                <!-- END SPEC: s-1 -->
+                <!-- END SYNCED: SPEC: s-1 -->
                 # Footer
                 """
             )
@@ -972,7 +1038,7 @@ class TestSyncRefs:
         assert result["passed"] is True
         updated = claude.read_text()
         assert updated.count("<!-- BEGIN SYNCED: testproj -->") == 1
-        assert updated.count("<!-- BEGIN SPEC: s-1 -->") == 1
+        assert updated.count("<!-- BEGIN SYNCED: SPEC: s-1 -->") == 1
         assert "old synced" not in updated
         assert "old spec" not in updated
         assert "# Header" in updated

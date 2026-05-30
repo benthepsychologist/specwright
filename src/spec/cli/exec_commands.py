@@ -166,6 +166,7 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
             "epic_artifact_id",
             "labels",
             "constraints",
+            "forbidden_legacy_semantics",
             "dependencies",
             "skill",
             "skills",

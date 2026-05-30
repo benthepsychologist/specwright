@@ -269,6 +269,12 @@ def _epic_to_commented_map(epic: Epic) -> CommentedMap:
         data["run_context"]["cli_bin"] = epic.run_context.cli_bin
         data["run_context"]["cwd_policy"] = epic.run_context.cwd_policy
         if epic.run_context.env_override:
+            if isinstance(epic.run_context.env_override, str):
+                raise AssertionError(
+                    f"env_override must be a dict, got str: "
+                    f"{epic.run_context.env_override!r}. "
+                    "String env_override is no longer supported as of epic@0-3-0."
+                )
             data["run_context"]["env_override"] = epic.run_context.env_override
 
     if epic.governance:

@@ -208,7 +208,7 @@ class RunContext:
     governor_root: str
     cli_bin: str
     cwd_policy: str
-    env_override: str | dict[str, str] | None = None
+    env_override: dict[str, str | None] | None = None
 
 
 @dataclass

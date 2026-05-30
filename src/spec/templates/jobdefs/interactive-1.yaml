@@ -2,7 +2,7 @@
 #
 # Execution model:
 #   Step 1: Create feature branch
-#   Step 2: Sync agent reference files
+#   Step 2: Best-effort sync of agent reference files, spec stubs, and skills
 #   Step 3: Interactive Claude session (human in the loop)
 #   Step 4: Commit changes (best effort)
 #   Step 5: Capture artifacts (best effort)
@@ -29,10 +29,10 @@ steps:
       capture_git: true
     continue_on_failure: false
 
-  # Step 2: Sync agent reference files from build.yaml
+  # Step 2: Best-effort sync of agent reference files, spec stubs, and skills
   - step_id: refs.sync
     backend: python
-    description: Sync agent reference files and project skills
+    description: Sync agent reference files, spec stub, and project skills
     payload:
       callable: "agent.sync_refs"
       agents: ["@payload.agent"]

@@ -83,6 +83,7 @@ class SpecScaffolder:
             "goal": self.intent.goal,
             "objective": "TODO: describe the objective",
             "key_decisions": [],
+            "forbidden_legacy_semantics": [],
             "phases": [
                 {
                     "phase_number": i,

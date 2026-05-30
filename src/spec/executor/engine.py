@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from spec.executor.backends import BackendError, get_backend
 from spec.executor.sandbox.capture import generate_patch
 from spec.executor.schemas import (
@@ -533,6 +535,65 @@ def _extract_acceptance_criteria(spec_md: str) -> str:
     return spec_md
 
 
+def _extract_forbidden_legacy_semantics(spec_md: str) -> list[str]:
+    """Extract forbidden legacy semantics from YAML-native or markdown specs."""
+
+    def _normalize(raw: Any) -> list[str]:
+        if isinstance(raw, str):
+            return [raw.strip()] if raw.strip() else []
+        if isinstance(raw, list):
+            items: list[str] = []
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    items.append(item.strip())
+            return items
+        return []
+
+    stripped = spec_md.lstrip()
+    if stripped and not stripped.startswith("---"):
+        try:
+            raw = yaml.safe_load(spec_md) or {}
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            doc = raw.get("document") if isinstance(raw.get("document"), dict) else {}
+            semantics = raw.get("forbidden_legacy_semantics")
+            if semantics is None and isinstance(doc, dict):
+                semantics = doc.get("forbidden_legacy_semantics")
+            values = _normalize(semantics)
+            if values:
+                return values
+
+    if stripped.startswith("---"):
+        end = spec_md.find("\n---\n", 4)
+        if end != -1:
+            try:
+                frontmatter = yaml.safe_load(spec_md[4:end]) or {}
+            except Exception:
+                frontmatter = {}
+            if isinstance(frontmatter, dict):
+                values = _normalize(frontmatter.get("forbidden_legacy_semantics"))
+                if values:
+                    return values
+
+    lines = spec_md.splitlines()
+    collected: list[str] = []
+    in_section = False
+    for line in lines:
+        stripped_line = line.strip()
+        if stripped_line.lower().startswith("## forbidden legacy semantics"):
+            in_section = True
+            continue
+        if in_section:
+            if stripped_line.startswith("## "):
+                break
+            if stripped_line.startswith(("- ", "* ")):
+                item = stripped_line[2:].strip()
+                if item:
+                    collected.append(item)
+    return collected
+
+
 def _build_drift_fix_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 2: drift inspection and fix.
 
@@ -590,11 +651,18 @@ You are performing a final verification pass on the spec implementation.
 ## Your Task
 
 1. Run `git diff --name-only` from base commit — these are the ONLY files to check
-2. For each acceptance criterion below, verify it is correctly implemented
-3. Run relevant test suites — if any test fails, fix it
-4. Do NOT make unnecessary changes — only fix actual failures
+2. Verify the implementation against the acceptance criteria, epic expectations,
+   and architectural invariants — not just against the rewritten tests
+3. Explicitly search for any forbidden legacy semantics listed below; if any are
+   still present, that is drift even if tests pass
+4. Run relevant test suites — if any test fails, fix it
+5. Do NOT make unnecessary changes — only fix actual failures
 
-This is the FINAL pass. Be surgical: verify criteria, run tests, fix failures.
+This is the FINAL pass. Be surgical: verify criteria, check invariants, run tests,
+and fix real failures.
+
+Do not treat passing tests alone as sufficient evidence. Rewritten tests can still
+encode stale architecture.
 """
 
     # Add only the acceptance criteria (not the full spec)
@@ -603,6 +671,16 @@ This is the FINAL pass. Be surgical: verify criteria, run tests, fix failures.
         prompt += "\n\n## Acceptance Criteria (Checklist)\n\n"
         prompt += ac
         prompt += "\n"
+
+        forbidden = _extract_forbidden_legacy_semantics(spec_md)
+        if forbidden:
+            prompt += "\n## Forbidden Legacy Semantics (Must NOT Remain)\n\n"
+            for item in forbidden:
+                prompt += f"- {item}\n"
+            prompt += (
+                "\nFor each forbidden semantic above, explicitly search the changed code "
+                "and updated tests. If it remains, remove it or mark the run as drifting.\n"
+            )
 
     # Add epic expectations as ground truth if provided
     if epic_spec:

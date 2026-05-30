@@ -27,10 +27,10 @@ steps:
       capture_git: true
     continue_on_failure: false
 
-  # Step 2: Sync agent reference files from build.yaml
+  # Step 2: Best-effort sync of agent reference files, spec stubs, and skills
   - step_id: refs.sync
     backend: python
-    description: Sync agent reference files and project skills
+    description: Sync agent reference files, spec stub, and project skills
     payload:
       callable: "agent.sync_refs"
       agents: ["@payload.agent"]
@@ -90,7 +90,7 @@ steps:
   # Step 7: Run 3 - Final drift verification
   - step_id: agent.drift_verify
     backend: "@payload.agent"
-    description: "Run 3: Final drift verification"
+    description: "Run 3: Final drift verification against criteria and forbidden legacy semantics"
     payload:
       prompt_type: drift_verify
       spec_md: "@payload.spec_md"

@@ -272,6 +272,27 @@ repo:
         assert frontmatter["skill"] == "/tmp/direct-skill/SKILL.md"
         assert frontmatter["skills"] == ["spec-skill"]
 
+        def test_compile_yaml_spec_preserves_forbidden_legacy_semantics(self, yaml_spec_file):
+                """_load_spec should retain forbidden legacy semantics from YAML-native specs."""
+                yaml_spec_file.write_text(
+                        """tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+forbidden_legacy_semantics:
+    - Legacy path A must not remain
+    - Legacy path B must not remain
+repo:
+    working_branch: feat/test-feature
+"""
+                )
+
+                frontmatter, _ = exec_commands._load_spec(yaml_spec_file)
+                assert frontmatter["forbidden_legacy_semantics"] == [
+                        "Legacy path A must not remain",
+                        "Legacy path B must not remain",
+                ]
+
     def test_load_spec_yaml_returns_metadata_and_raw_content(self, yaml_spec_file):
         """_load_spec parses YAML metadata while preserving raw YAML content."""
         frontmatter, raw = exec_commands._load_spec(yaml_spec_file)

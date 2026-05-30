@@ -1,15 +1,15 @@
-"""Agent reference file synchronization from build.yaml.
+"""Agent reference file synchronization for context, spec stubs, and skills.
 
-This module provides the `agent.sync_refs` callable that syncs project
-architecture context from canonical build.yaml files into agent-specific
-reference files (CLAUDE.md, .goosehints, etc.).
+This module provides the `agent.sync_refs` callable that best-effort syncs
+governor-backed project context, spec stubs, and projected skills into
+agent-specific reference files (CLAUDE.md, COPILOT.md, .goosehints, etc.).
 
 Callable contract:
   fn(payload: dict, repo_path: Path) -> {"passed": bool, "data": dict, "summary": str}
 
 Payload keys:
-  agents: list[str] — agent types to sync (e.g., ["claude-code", "goose"])
-  project: str — project name to read build.yaml from
+    agents: list[str] — agent types to sync (e.g., ["claude-code", "goose"])
+    project: str — project name for optional governor-backed context lookup
 """
 
 from __future__ import annotations
@@ -48,10 +48,68 @@ AGENT_SKILLS_PATHS: dict[str, str] = {
 
 
 def _governor_root() -> Path:
-    """Get governor root via the standard locator."""
+    """Get governor root via locator path resolution only.
+
+    This intentionally resolves only the root path and does not validate that a
+    project directory exists. `refs.sync` must degrade gracefully when a repo has
+    no governor project directory or no build file.
+    """
     from spec.governor.locator import GovernorLocator
 
-    return GovernorLocator().find(ensure_dirs=False).root
+    locator = GovernorLocator(config=_find_local_config(Path.cwd()))
+    return locator._resolve_path()
+
+
+def _find_local_config(start_path: Path) -> dict[str, Any] | None:
+    """Find and parse `.specwright.yaml` by walking up from start_path."""
+    current = start_path.resolve()
+    for parent in [current, *current.parents]:
+        config_path = parent / ".specwright.yaml"
+        if not config_path.exists():
+            continue
+        try:
+            raw = yaml.safe_load(config_path.read_text()) or {}
+        except yaml.YAMLError:
+            return None
+        if isinstance(raw, dict):
+            return raw
+        return None
+    return None
+
+
+def _fallback_governor_roots(repo_path: Path) -> list[Path]:
+    """Find likely workspace-local governor roots near the repo."""
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for parent in [repo_path.resolve(), *repo_path.resolve().parents]:
+        candidate = parent / "local-governor"
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            candidates.append(candidate)
+    return candidates
+
+
+def _resolve_governor_root(repo_path: Path) -> tuple[Path | None, list[str]]:
+    """Resolve a usable governor root for `refs.sync`.
+
+    Returns a tuple of `(root_or_none, warnings)`.
+    """
+    warnings: list[str] = []
+
+    try:
+        return _governor_root(), warnings
+    except Exception as exc:
+        warnings.append(f"Governor root lookup failed: {exc}")
+
+    for candidate in _fallback_governor_roots(repo_path):
+        if (candidate / "projects").is_dir() or (candidate / "skills").is_dir():
+            warnings.append(f"Using fallback governor root: {candidate}")
+            return candidate, warnings
+
+    warnings.append("No usable governor root found - skipping governor-backed context and named skills")
+    return None, warnings
 
 
 def _home_dir() -> Path:
@@ -373,6 +431,20 @@ def _extract_spec_stub(spec_md: str, spec_id: str) -> str:
     return "\n".join(stub_lines)
 
 
+def _format_spec_stub(spec_md: str, spec_id: str, format_type: str) -> str:
+    """Format a spec stub for an agent-specific reference file."""
+    stub = _extract_spec_stub(spec_md, spec_id)
+    if format_type == "aider":
+        lines: list[str] = []
+        for line in stub.split("\n"):
+            if line:
+                lines.append(f"# {line}")
+            else:
+                lines.append("#")
+        return "\n".join(lines)
+    return stub
+
+
 def _format_consumers(consumers: Any) -> str:
     """Safely format consumers field which may be string or list."""
     if isinstance(consumers, list):
@@ -612,13 +684,58 @@ def _sync_single_agent(
     }
 
 
+def _sync_spec_stub_for_agent(
+    *,
+    agent: str,
+    spec_md: str,
+    spec_id: str,
+    repo_path: Path,
+) -> dict[str, Any]:
+    """Sync the current spec stub into an agent reference file."""
+    filename, format_type = AGENT_REF_TARGETS[agent]
+    target_path = repo_path / filename
+    begin_marker, end_marker = _get_markers(f"SPEC: {spec_id}", format_type)
+    spec_section = _format_spec_stub(spec_md, spec_id, format_type)
+
+    existing = ""
+    if target_path.exists():
+        try:
+            existing = target_path.read_text()
+        except OSError as exc:
+            return {
+                "success": False,
+                "agent": agent,
+                "target_path": str(target_path),
+                "error": f"Cannot read: {exc}",
+            }
+
+    merged = _merge_content(existing, spec_section, begin_marker, end_marker)
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(merged)
+    except OSError as exc:
+        return {
+            "success": False,
+            "agent": agent,
+            "target_path": str(target_path),
+            "error": f"Cannot write: {exc}",
+        }
+
+    return {
+        "success": True,
+        "agent": agent,
+        "target_path": str(target_path),
+        "error": None,
+    }
+
+
 def sync_refs(*, payload: dict, repo_path: Path) -> dict:
-    """Sync build.yaml architecture context to agent reference files.
+    """Sync best-effort governor context, spec stubs, and skills to agents.
 
     Payload keys:
         agents: list[str] — agent types to sync/project (claude-code, copilot,
                             codex, cursor, aider, roo-code, goose, opencode)
-        project: str — project name to read build.yaml from
+        project: str — project name for optional governor-backed context lookup
         spec_md: str | None — optional full spec markdown content to inject
         spec_id: str | None — optional spec ID for marker identification
         skill: str | list[str] | None — optional explicit skill file/directory path(s)
@@ -678,22 +795,30 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "summary": f"FAILED: unknown agents {unknown_agents}. Available: {available}",
         }
 
-    # Load build.yaml — missing is non-fatal (repo may not have one yet)
-    governor_root = _governor_root()
-    build = _load_build_yaml(governor_root, project)
-    skills_manifest = _load_skills_yaml(governor_root)
-
     results: list[dict] = []
     skills_warnings: list[str] = []
     projection_targets: dict[str, list[str]] = {}
     build_skipped = False
+    governor_root, governor_warnings = _resolve_governor_root(repo_path)
+    skills_warnings.extend(governor_warnings)
+
+    build: dict[str, Any] | None = None
+    skills_manifest: dict[str, Any] | None = None
+    if governor_root is not None:
+        build = _load_build_yaml(governor_root, project)
+        skills_manifest = _load_skills_yaml(governor_root)
 
     if build is None:
         build = {}
         build_skipped = True
-        skills_warnings.append(
-            f"No build.yaml for project '{project}' - skipping project context"
-        )
+        if governor_root is None:
+            skills_warnings.append(
+                f"Governor unavailable for project '{project}' - skipping project context and governor-backed named skills"
+            )
+        else:
+            skills_warnings.append(
+                f"No build.yaml for project '{project}' - skipping project context"
+            )
 
     context = _extract_context(build)
     context_sections = [k for k, v in context.items() if v]
@@ -718,52 +843,76 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
 
     # Inject spec stub into CLAUDE.md (independent of build.yaml)
     spec_synced = None
+    spec_synced_paths: list[str] = []
     if spec_md and spec_id:
-        try:
-            claude_md_path = repo_path / "CLAUDE.md"
-            existing = claude_md_path.read_text() if claude_md_path.exists() else ""
-            begin = f"<!-- BEGIN SPEC: {spec_id} -->"
-            end = f"<!-- END SPEC: {spec_id} -->"
-            spec_section = _extract_spec_stub(spec_md, spec_id)
-            merged = _merge_content(existing, spec_section, begin, end)
-            claude_md_path.write_text(merged)
-            spec_synced = str(claude_md_path)
-            summary_lines.append(f"  [OK] spec stub (id={spec_id}): {spec_synced}")
-        except OSError as e:
-            summary_lines.append(f"  [FAIL] spec (id={spec_id}): {e}")
+        for agent in sync_agents:
+            result = _sync_spec_stub_for_agent(
+                agent=agent,
+                spec_md=spec_md,
+                spec_id=spec_id,
+                repo_path=repo_path,
+            )
+            if result["success"]:
+                spec_synced_paths.append(result["target_path"])
+                summary_lines.append(
+                    f"  [OK] spec stub (id={spec_id}, agent={agent}): {result['target_path']}"
+                )
+            else:
+                summary_lines.append(
+                    f"  [FAIL] spec stub (id={spec_id}, agent={agent}): {result['error']}"
+                )
+        if spec_synced_paths:
+            spec_synced = spec_synced_paths[0]
 
     # Resolve and project skills.
-    resolved_skills, global_skills, status_by_name = _resolve_skills(
-        build=build,
-        spec_skills=spec_skills,
-        skills_manifest=skills_manifest,
-    )
+    resolved_skills: list[str] = []
+    global_skills: list[str] = []
+    status_by_name: dict[str, str] = {}
+    if governor_root is not None:
+        resolved_skills, global_skills, status_by_name = _resolve_skills(
+            build=build,
+            spec_skills=spec_skills,
+            skills_manifest=skills_manifest,
+        )
+    elif _skill_names(spec_skills):
+        skills_warnings.append(
+            "Governor unavailable - skipped named skills declared via payload/build/skills manifest"
+        )
 
     repo_skill_roots = _target_roots(agents, repo_path=repo_path)
     global_skill_roots = _target_roots(agents, repo_path=None)
 
-    projected_repo, skipped_repo, projection_errors_repo = _project_skills(
-        governor_root=governor_root,
-        skills=resolved_skills,
-        status_by_name=status_by_name,
-        target_roots=repo_skill_roots,
-        projection_targets=projection_targets,
-        skills_warnings=skills_warnings,
-    )
+    projected_repo: list[str] = []
+    skipped_repo: list[str] = []
+    projection_errors_repo: list[str] = []
+    projected_global: list[str] = []
+    skipped_global: list[str] = []
+    projection_errors_global: list[str] = []
+
+    if governor_root is not None:
+        projected_repo, skipped_repo, projection_errors_repo = _project_skills(
+            governor_root=governor_root,
+            skills=resolved_skills,
+            status_by_name=status_by_name,
+            target_roots=repo_skill_roots,
+            projection_targets=projection_targets,
+            skills_warnings=skills_warnings,
+        )
     projected_explicit, skipped_explicit, projection_errors_explicit = _project_skill_paths(
         skill_paths=explicit_skill_paths,
         target_roots=repo_skill_roots,
         projection_targets=projection_targets,
         skills_warnings=skills_warnings,
     )
-    projected_global, skipped_global, projection_errors_global = _project_global_skills(
-        governor_root=governor_root,
-        global_skills=global_skills,
-        status_by_name=status_by_name,
-        target_roots=global_skill_roots,
-        projection_targets=projection_targets,
-        skills_warnings=skills_warnings,
-    )
+    if governor_root is not None:
+        projected_global, skipped_global, projection_errors_global = _project_global_skills(
+            governor_root=governor_root,
+            global_skills=global_skills,
+            status_by_name=status_by_name,
+            target_roots=global_skill_roots,
+            projection_targets=projection_targets,
+            skills_warnings=skills_warnings,
+        )
 
     skills_projected = sorted(set(projected_repo) | set(projected_explicit) | set(projected_global))
     skills_skipped = sorted(set(skipped_repo) | set(skipped_explicit) | set(skipped_global))
@@ -775,6 +924,8 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         summary_lines.append(f"  [OK] skills projected: {', '.join(skills_projected)}")
     if skills_skipped:
         summary_lines.append(f"  [OK] skills skipped: {', '.join(skills_skipped)}")
+    for warning in skills_warnings:
+        summary_lines.append(f"  [WARN] {warning}")
 
     # Determine overall success — build.yaml skip is not a failure
     agent_failures = [r for r in results if not r["success"]]
@@ -788,8 +939,10 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "synced_count": len([r for r in results if r["success"]]),
             "failed_count": len(agent_failures),
             "build_skipped": build_skipped,
+            "governor_root": str(governor_root) if governor_root is not None else None,
             "context_sections": context_sections,
             "spec_synced": spec_synced,
+            "spec_synced_paths": spec_synced_paths,
             "spec_id": spec_id,
             "skills_projected": skills_projected,
             "skills_skipped": skills_skipped,
