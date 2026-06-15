@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 # Default model - can be overridden in payload or env.
 # Use the short alias form accepted by `llm --model ...`.
-DEFAULT_MODEL = "gemini-3-pro-preview"
+DEFAULT_MODEL = "gemini-3.1-pro-preview"
 FALLBACK_MODEL = "azure-gpt52"
 
 
@@ -33,7 +33,7 @@ class LlmBackend(BackendBase):
     Payload schema:
         prompt: str - The prompt to send to the model
         context: str | None - Additional context to prepend
-        model: str | None - Model to use (default: gemini/gemini-3-pro-preview)
+        model: str | None - Model to use (default: gemini/gemini-3.1-pro-preview)
         system: str | None - System prompt
         schema: dict | None - JSON schema for structured output (model must support)
         options: dict | None - Model-specific options (temperature, max_tokens, etc.)
@@ -486,10 +486,11 @@ class LlmBackend(BackendBase):
                     parts.append(f"{i}. {exp}")
                 parts.append("")
 
-        # Add full spec if provided
+        # Add compact spec ground truth if provided
         if spec_md:
-            parts.append("## Full Spec (Acceptance Criteria Ground Truth)\n")
-            parts.append(spec_md)
+            from spec.executor.engine import _format_spec_ground_truth
+
+            parts.append(_format_spec_ground_truth(spec_md))
             parts.append("")
 
         # Get the diff from the repo
@@ -518,8 +519,8 @@ class LlmBackend(BackendBase):
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     diff = result.stdout.strip()
-                    if len(diff) > 30000:
-                        diff = diff[:30000] + "\n... (truncated)"
+                    if len(diff) > 12000:
+                        diff = diff[:12000] + "\n... (truncated)"
                     parts.append("## Code Changes (diff)\n```diff")
                     parts.append(diff)
                     parts.append("```\n")

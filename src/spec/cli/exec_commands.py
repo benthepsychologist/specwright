@@ -312,7 +312,7 @@ def compile_command(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
     review_model: str = typer.Option(
-        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3.1-pro-preview"
     ),
 ) -> None:
     """Compile a JobDef + spec into a JobInstance.
@@ -503,7 +503,7 @@ def run_command(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
     review_model: str = typer.Option(
-        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3.1-pro-preview"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Compile and print JobInstance without executing"

@@ -14,6 +14,7 @@ Payload keys:
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,15 @@ AGENT_SKILLS_PATHS: dict[str, str] = {
     "cursor": ".claude/skills",
     "codex": ".agents/skills",
 }
+
+
+def _is_truthy(value: Any) -> bool:
+    """Return whether a config-like value should be treated as enabled."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _governor_root() -> Path:
@@ -744,6 +754,19 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     Returns:
         Callable contract dict with passed, data, summary
     """
+    if _is_truthy(payload.get("skip_sync")) or _is_truthy(os.environ.get("SPECWRIGHT_SKIP_REFS_SYNC")):
+        reason = "payload.skip_sync" if _is_truthy(payload.get("skip_sync")) else "SPECWRIGHT_SKIP_REFS_SYNC"
+        return {
+            "passed": True,
+            "data": {
+                "project": payload.get("project"),
+                "agents": payload.get("agents", []),
+                "skipped": True,
+                "skip_reason": reason,
+            },
+            "summary": f"SKIPPED: refs.sync disabled via {reason}",
+        }
+
     # Extract payload parameters
     agents = payload.get("agents")
     project = payload.get("project")

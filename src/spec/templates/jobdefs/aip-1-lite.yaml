@@ -33,9 +33,10 @@ steps:
   # Step 2: Best-effort sync of agent reference files, spec stubs, and skills
   - step_id: refs.sync
     backend: python
-    description: Sync agent reference files, spec stub, and project skills
+    description: Temporarily skip agent reference sync
     payload:
       callable: "agent.sync_refs"
+      skip_sync: true
       agents: ["@payload.agent"]
       project: "@payload.project"
       spec_md: "@payload.spec_md"
@@ -49,7 +50,9 @@ steps:
     backend: "@payload.agent"
     description: "Run 1: Execute spec with agent"
     payload:
+      prompt_type: execute_spec
       spec_md: "@payload.spec_md"
+      epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       models: "@payload.models"
       capture_git: true

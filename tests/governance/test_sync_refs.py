@@ -1126,6 +1126,39 @@ class TestSyncRefs:
         assert "goose" in summary
         assert "2/2" in summary
 
+    def test_skip_sync_payload_flag(self, tmp_path: Path) -> None:
+        """Should no-op successfully when payload requests a skip."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        result = sync_refs(
+            payload={"skip_sync": True, "agents": ["claude-code"], "project": "testproj"},
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert result["data"]["skipped"] is True
+        assert result["data"]["skip_reason"] == "payload.skip_sync"
+        assert "SKIPPED: refs.sync disabled via payload.skip_sync" == result["summary"]
+        assert not (repo / "CLAUDE.md").exists()
+
+    def test_skip_sync_env_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should no-op successfully when the environment disables refs.sync."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        monkeypatch.setenv("SPECWRIGHT_SKIP_REFS_SYNC", "1")
+
+        result = sync_refs(
+            payload={"agents": ["claude-code"], "project": "testproj"},
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        assert result["data"]["skipped"] is True
+        assert result["data"]["skip_reason"] == "SPECWRIGHT_SKIP_REFS_SYNC"
+        assert "SKIPPED: refs.sync disabled via SPECWRIGHT_SKIP_REFS_SYNC" == result["summary"]
+        assert not (repo / "CLAUDE.md").exists()
+
 
 class TestSyncRefsRegistration:
     """Test that agent.sync_refs is properly registered."""
