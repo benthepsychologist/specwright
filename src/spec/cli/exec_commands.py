@@ -385,6 +385,9 @@ def compile_command(
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
         "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
         "skills": frontmatter.get("skills"),
+        # Epic folder carrying AGENTS.md + CLAUDE.md pointer for refs.sync to
+        # materialize into the target repo (None when not inside an epic).
+        "epic_dir": _resolve_epic_dir(spec_path),
         "models": payload_models,
     }
 
@@ -660,6 +663,9 @@ def run_command(
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
         "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
         "skills": frontmatter.get("skills"),
+        # Epic folder carrying AGENTS.md + CLAUDE.md pointer for refs.sync to
+        # materialize into the target repo (None when not inside an epic).
+        "epic_dir": _resolve_epic_dir(spec_path),
         "models": payload_models,
     }
 
@@ -934,6 +940,17 @@ def _find_epic_dir_for_spec_path(spec_path: Path) -> Path | None:
         if (parent / "epic.yaml").exists():
             return parent
     return None
+
+
+def _resolve_epic_dir(spec_path: Path) -> str | None:
+    """Resolve the epic folder for a spec, as a string (or None).
+
+    Used to populate the refs.sync payload so the epic's AGENTS.md + CLAUDE.md
+    pointer can be materialized into the target repo. Returns None when the spec
+    is not inside an epic (e.g. ad-hoc file mode).
+    """
+    epic_dir = _find_epic_dir_for_spec_path(spec_path)
+    return str(epic_dir) if epic_dir is not None else None
 
 
 def _find_epic_dir_from_cwd() -> Path | None:

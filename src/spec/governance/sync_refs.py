@@ -10,16 +10,24 @@ Callable contract:
 Payload keys:
     agents: list[str] — agent types to sync (e.g., ["claude-code", "goose"])
     project: str — project name for optional governor-backed context lookup
+    epic_dir: str — path to the epic folder carrying AGENTS.md + CLAUDE.md stub
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
 
 import yaml  # type: ignore[import]
+
+# Non-clobbering placement for an epic's synced AGENTS.md / CLAUDE.md pointer.
+# We never overwrite the target repo's own AGENTS.md/CLAUDE.md at the repo root;
+# instead the epic pointer is materialized under .claude/ so native discovery
+# (.claude/) finds it while the repo's own files remain authoritative.
+EPIC_CONTEXT_DEST_DIR = ".claude"
 
 # Agent reference file targets
 # Maps agent type to (filename, format_type)
@@ -125,6 +133,180 @@ def _resolve_governor_root(repo_path: Path) -> tuple[Path | None, list[str]]:
 def _home_dir() -> Path:
     """Return the current user's home directory."""
     return Path.home()
+
+
+def _skill_library_roots(governor_root: Path | None, epic_dir: Path | None) -> list[Path]:
+    """Resolve directories that may contain the shared skill library.
+
+    The canonical 12 skills are authored as ``SKILL.yaml`` under a cloud-governor
+    projection (``skills/<name>/SKILL.yaml``), while the legacy local-governor
+    store keeps them under ``governor_root/skills``. Rather than force one
+    location, search several in priority order; the first directory that holds a
+    matching skill wins (per-skill, see ``_resolve_skill_dir``).
+
+    Priority:
+      1. ``$SPECWRIGHT_SKILL_LIBRARY`` (explicit override; may be comma-separated)
+      2. ``governor_root/skills`` (legacy local-governor store)
+      3. ``<epic_dir>/../../../skills`` then ``<governor-projection>/skills``
+         discovered by walking up from the epic folder (cloud-governor layout:
+         ``<root>/skills`` and ``<root>/epics/<series>/<epic>/``)
+    """
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def _add(candidate: Path) -> None:
+        resolved = candidate.expanduser()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        if resolved.is_dir():
+            roots.append(resolved)
+
+    env_value = os.environ.get("SPECWRIGHT_SKILL_LIBRARY")
+    if env_value:
+        for part in env_value.split(os.pathsep) + env_value.split(","):
+            part = part.strip()
+            if part:
+                _add(Path(part))
+
+    if governor_root is not None:
+        _add(governor_root / "skills")
+
+    if epic_dir is not None:
+        # Walk up from the epic folder; in the cloud-governor layout a sibling
+        # `skills/` directory lives at the projection root.
+        for parent in [epic_dir, *epic_dir.parents]:
+            candidate = parent / "skills"
+            if candidate.is_dir():
+                _add(candidate)
+
+    return roots
+
+
+def _resolve_skill_dir(name: str, library_roots: list[Path]) -> Path | None:
+    """Find a skill directory for ``name`` across the library roots.
+
+    SKILL.yaml-aware: a directory qualifies if it contains either a SKILL.yaml
+    (canonical) or a SKILL.md (legacy). Returns the first match, or None.
+    """
+    for root in library_roots:
+        candidate = root / name
+        if not candidate.is_dir():
+            continue
+        if (candidate / "SKILL.yaml").exists() or (candidate / "SKILL.md").exists():
+            return candidate
+    return None
+
+
+def _parse_agents_md_skills(agents_md: str) -> list[str]:
+    """Parse skill names from an epic AGENTS.md pointer.
+
+    Reads the ``## Skills`` section and collects list-item entries. Each item may
+    be a bare name, an inline-code name (`` `name` ``), or a markdown link
+    ``[name](...)``; the first token-like name is extracted. Stops at the next
+    ``##`` heading.
+    """
+    names: list[str] = []
+    in_skills = False
+    for raw_line in agents_md.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            heading = stripped[3:].strip().lower()
+            in_skills = heading.startswith("skills")
+            continue
+        if not in_skills:
+            continue
+        if not (stripped.startswith("- ") or stripped.startswith("* ")):
+            continue
+        item = stripped[2:].strip()
+        if not item:
+            continue
+        # [name](path) -> name
+        link = re.match(r"\[([^\]]+)\]\([^)]*\)", item)
+        if link:
+            item = link.group(1).strip()
+        # `name` -> name
+        item = item.strip("`").strip()
+        # take the leading token (skill names have no spaces)
+        token = item.split()[0] if item.split() else ""
+        token = token.strip("`*_").strip()
+        if token:
+            names.append(token)
+    # dedupe preserving order
+    out: list[str] = []
+    seen: set[str] = set()
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _copy_skill_dir(
+    *,
+    name: str,
+    source_dir: Path,
+    target_roots: list[Path],
+    projection_targets: dict[str, list[str]],
+) -> list[str]:
+    """Copy a resolved skill directory into each native discovery root.
+
+    Returns a list of error strings (empty on success).
+    """
+    errors: list[str] = []
+    for root in target_roots:
+        dest = root / name
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source_dir, dest, dirs_exist_ok=True)
+        except OSError as exc:
+            errors.append(f"Skill '{name}' projection failed at {dest}: {exc}")
+            continue
+        projection_targets.setdefault(name, []).append(str(dest))
+    return errors
+
+
+def _materialize_epic_context(
+    *,
+    epic_dir: Path,
+    repo_path: Path,
+) -> tuple[list[str], list[str], str | None]:
+    """Materialize an epic's AGENTS.md + CLAUDE.md stub into the target repo.
+
+    Non-clobbering: the files land under ``<repo>/.claude/`` so the repo's own
+    root AGENTS.md/CLAUDE.md are never overwritten. Returns
+    ``(materialized_paths, warnings, agents_md_text)``. Degrades gracefully:
+    a missing epic AGENTS.md is a warning, not a failure.
+    """
+    materialized: list[str] = []
+    warnings: list[str] = []
+    agents_md_text: str | None = None
+
+    dest_dir = repo_path / EPIC_CONTEXT_DEST_DIR
+
+    for filename in ("AGENTS.md", "CLAUDE.md"):
+        source = epic_dir / filename
+        if not source.exists():
+            warnings.append(f"Epic {filename} not found at {source} - skipped")
+            continue
+        try:
+            content = source.read_text()
+        except OSError as exc:
+            warnings.append(f"Could not read epic {filename}: {exc}")
+            continue
+        if filename == "AGENTS.md":
+            agents_md_text = content
+        dest = dest_dir / filename
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content)
+        except OSError as exc:
+            warnings.append(f"Could not write {dest}: {exc}")
+            continue
+        materialized.append(str(dest))
+
+    return materialized, warnings, agents_md_text
 
 
 def _load_build_yaml(governor_root: Path, project: str) -> dict | None:
@@ -750,6 +932,11 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
         spec_id: str | None — optional spec ID for marker identification
         skill: str | list[str] | None — optional explicit skill file/directory path(s)
         skills: list[str] | None — optional spec-level skill names to project
+        epic_dir: str | None — optional path to the epic folder. When provided,
+                  the epic's AGENTS.md + CLAUDE.md stub are materialized into the
+                  target repo under .claude/ (non-clobbering), and the skills the
+                  AGENTS.md names are resolved from the shared library
+                  (SKILL.yaml-aware) and copied into .claude/skills/.
 
     Returns:
         Callable contract dict with passed, data, summary
@@ -774,6 +961,12 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
     spec_id = payload.get("spec_id")
     explicit_skill_paths = _skill_paths(payload.get("skill"))
     spec_skills = payload.get("skills")
+    epic_dir_raw = payload.get("epic_dir")
+    epic_dir: Path | None = None
+    if isinstance(epic_dir_raw, str) and epic_dir_raw.strip():
+        epic_dir = Path(epic_dir_raw).expanduser()
+    elif isinstance(epic_dir_raw, Path):
+        epic_dir = epic_dir_raw
 
     # Validate required parameters
     if agents is None:
@@ -937,12 +1130,80 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             skills_warnings=skills_warnings,
         )
 
-    skills_projected = sorted(set(projected_repo) | set(projected_explicit) | set(projected_global))
-    skills_skipped = sorted(set(skipped_repo) | set(skipped_explicit) | set(skipped_global))
-    projection_errors = projection_errors_repo + projection_errors_explicit + projection_errors_global
+    # Materialize the epic's AGENTS.md + CLAUDE.md stub into the target repo
+    # (non-clobbering) and copy the skills its AGENTS.md names from the shared
+    # library (SKILL.yaml-aware). Docs are referenced by path, never copied.
+    epic_context_materialized: list[str] = []
+    agents_md_skills_projected: list[str] = []
+    agents_md_skills_skipped: list[str] = []
+    agents_md_skill_errors: list[str] = []
+    if epic_dir is not None:
+        if not epic_dir.is_dir():
+            skills_warnings.append(
+                f"Epic folder not found: {epic_dir} - skipped epic context materialization"
+            )
+        else:
+            materialized, mat_warnings, agents_md_text = _materialize_epic_context(
+                epic_dir=epic_dir,
+                repo_path=repo_path,
+            )
+            epic_context_materialized.extend(materialized)
+            skills_warnings.extend(mat_warnings)
+
+            if agents_md_text:
+                named = _parse_agents_md_skills(agents_md_text)
+                library_roots = _skill_library_roots(governor_root, epic_dir)
+                seen_named: set[str] = set()
+                for name in named:
+                    if name in seen_named:
+                        continue
+                    seen_named.add(name)
+                    source_dir = _resolve_skill_dir(name, library_roots)
+                    if source_dir is None:
+                        skills_warnings.append(
+                            f"Skill '{name}' (named in epic AGENTS.md) not found in "
+                            f"shared library - skipped"
+                        )
+                        agents_md_skills_skipped.append(name)
+                        continue
+                    if not repo_skill_roots:
+                        continue
+                    errors = _copy_skill_dir(
+                        name=name,
+                        source_dir=source_dir,
+                        target_roots=repo_skill_roots,
+                        projection_targets=projection_targets,
+                    )
+                    if errors:
+                        agents_md_skill_errors.extend(errors)
+                    if projection_targets.get(name):
+                        agents_md_skills_projected.append(name)
+
+    skills_projected = sorted(
+        set(projected_repo)
+        | set(projected_explicit)
+        | set(projected_global)
+        | set(agents_md_skills_projected)
+    )
+    skills_skipped = sorted(
+        set(skipped_repo)
+        | set(skipped_explicit)
+        | set(skipped_global)
+        | set(agents_md_skills_skipped)
+    )
+    projection_errors = (
+        projection_errors_repo
+        + projection_errors_explicit
+        + projection_errors_global
+        + agents_md_skill_errors
+    )
     for err in projection_errors:
         summary_lines.append(f"  [FAIL] {err}")
 
+    if epic_context_materialized:
+        summary_lines.append(
+            f"  [OK] epic context materialized: {', '.join(epic_context_materialized)}"
+        )
     if skills_projected:
         summary_lines.append(f"  [OK] skills projected: {', '.join(skills_projected)}")
     if skills_skipped:
@@ -971,6 +1232,8 @@ def sync_refs(*, payload: dict, repo_path: Path) -> dict:
             "skills_skipped": skills_skipped,
             "skills_warnings": skills_warnings,
             "projection_targets": projection_targets,
+            "epic_context_materialized": epic_context_materialized,
+            "epic_dir": str(epic_dir) if epic_dir is not None else None,
         },
         "summary": "\n".join(summary_lines),
     }

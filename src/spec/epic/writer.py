@@ -130,6 +130,15 @@ def create_epic(
     notes_path = epic_dir / "notes.md"
     notes_path.write_text(f"# {title}\n\n## Notes\n\n")
 
+    # Always create the epic's AGENTS.md pointer + CLAUDE.md stub. AGENTS.md is a
+    # pointer (names shared-library skills, links docs by path), not a context
+    # dump; CLAUDE.md is a one-line stub pointing at AGENTS.md so Claude Code and
+    # Codex/Copilot land on the same canonical file. agent.sync_refs materializes
+    # these into the target repo at run.
+    from spec.governance.spec_scaffolder import write_epic_context_files
+
+    write_epic_context_files(epic_dir, title=title)
+
     # Create epic object
     now = datetime.now(UTC)
     epic = Epic(

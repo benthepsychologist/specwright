@@ -12,6 +12,100 @@ if TYPE_CHECKING:
     from spec.governance.intent_parser import ParsedIntent
 
 
+# The epic AGENTS.md is a *pointer/index*, not a context dump: a `## Skills`
+# section naming shared-library skills (copied into .claude/skills/ at run by
+# agent.sync_refs) and a `## Docs` section linking docs by path (read on demand,
+# never copied). A one-line CLAUDE.md stub points Claude Code at AGENTS.md so it
+# and Codex/Copilot land on the same canonical file.
+CLAUDE_STUB_CONTENT = "See [AGENTS.md](AGENTS.md) for the skills and docs that apply to this epic.\n"
+
+
+def render_agents_md_pointer(
+    *,
+    title: str,
+    skills: list[str] | None = None,
+    docs: list[str] | None = None,
+) -> str:
+    """Render an epic AGENTS.md pointer.
+
+    The pointer is short by design:
+      - a `## Skills` section listing shared-library skill names (one per line);
+        agent.sync_refs resolves each from the shared library and copies it into
+        `.claude/skills/<name>/` for native discovery.
+      - a `## Docs` section linking relevant docs by path; docs are referenced,
+        never copied.
+
+    Empty sections are still emitted (with a TODO placeholder) so the convention
+    is visible and easy to fill in at authoring time.
+    """
+    skills = skills or []
+    docs = docs or []
+
+    lines: list[str] = [f"# {title} — Agent Context", ""]
+    lines.append(
+        "This is a pointer (not a context dump): it names the skills that apply "
+        "and links the relevant docs."
+    )
+    lines.append("")
+
+    lines.append("## Skills")
+    lines.append("")
+    lines.append("Shared-library skills copied into `.claude/skills/` at run for native discovery:")
+    lines.append("")
+    if skills:
+        for name in skills:
+            lines.append(f"- {name}")
+    else:
+        lines.append("- TODO: name shared-library skills that apply (one per line)")
+    lines.append("")
+
+    lines.append("## Docs")
+    lines.append("")
+    lines.append("Relevant docs, referenced by path (read on demand, not copied):")
+    lines.append("")
+    if docs:
+        for doc in docs:
+            lines.append(f"- [{doc}]({doc})")
+    else:
+        lines.append("- TODO: link relevant docs by path")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def write_epic_context_files(
+    epic_dir: Path,
+    *,
+    title: str,
+    skills: list[str] | None = None,
+    docs: list[str] | None = None,
+    overwrite: bool = False,
+) -> list[Path]:
+    """Author an epic's AGENTS.md pointer + CLAUDE.md stub in ``epic_dir``.
+
+    Always creates both files at epic creation. Existing files are left in place
+    unless ``overwrite`` is True, so re-running never clobbers human edits.
+
+    Returns the list of file paths written.
+    """
+    epic_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    agents_path = epic_dir / "AGENTS.md"
+    if overwrite or not agents_path.exists():
+        agents_path.write_text(
+            render_agents_md_pointer(title=title, skills=skills, docs=docs)
+        )
+        written.append(agents_path)
+
+    claude_path = epic_dir / "CLAUDE.md"
+    if overwrite or not claude_path.exists():
+        claude_path.write_text(CLAUDE_STUB_CONTENT)
+        written.append(claude_path)
+
+    return written
+
+
 class SpecScaffolder:
     """Generate scaffolded YAML specs from intents."""
 
