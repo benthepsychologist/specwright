@@ -39,14 +39,10 @@ from spec.epic.schema import (
     Verification,
 )
 from spec.epic.writer import (
-    add_spec,
-    add_target,
     append_history,
-    create_epic,
     generate_event_id,
     mark_spec_done,
     save_epic,
-    set_current_spec,
     update_spec_status,
 )
 
@@ -71,10 +67,7 @@ __all__ = [
     "SpecStatus",
     "Target",
     "Verification",
-    "add_spec",
-    "add_target",
     "append_history",
-    "create_epic",
     "detect_cycle",
     "generate_event_id",
     "get_epic_path",
@@ -85,7 +78,6 @@ __all__ = [
     "load_epic_from_path",
     "mark_spec_done",
     "save_epic",
-    "set_current_spec",
     "topological_sort",
     "update_spec_status",
 ]

@@ -1,11 +1,12 @@
-"""Tests for colocated agent context (t013-01).
+"""Tests for colocated agent context runtime sync (t013-01 sync, t013-02).
 
-Covers:
-  - scaffolder always creates an epic AGENTS.md pointer + CLAUDE.md stub
-  - AGENTS.md pointer shape (Skills + Docs sections; not a context dump)
-  - sync materializes AGENTS.md/CLAUDE.md into the target repo (non-clobbering)
-  - sync copies the skills AGENTS.md names into .claude/skills/ (SKILL.yaml-aware)
-  - graceful degrade (missing build.yaml / unresolved skill name = partial sync)
+specwright no longer authors the epic AGENTS.md/CLAUDE.md (that moved to the
+cloud-governor path); these tests cover the runtime agent.sync_refs only:
+  - AGENTS.md skill-name parsing
+  - skill library resolution (SKILL.yaml-aware)
+  - sync materializes a hand-authored AGENTS.md/CLAUDE.md into the target repo
+  - sync copies the skills AGENTS.md names into .claude/skills/
+  - graceful degrade (missing epic dir / unresolved skill name = partial sync)
   - non-clobber of the target repo's own AGENTS.md / CLAUDE.md
 """
 
@@ -16,11 +17,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from spec.governance.spec_scaffolder import (
-    CLAUDE_STUB_CONTENT,
-    render_agents_md_pointer,
-    write_epic_context_files,
-)
 from spec.governance.sync_refs import (
     _parse_agents_md_skills,
     _resolve_skill_dir,
@@ -28,104 +24,32 @@ from spec.governance.sync_refs import (
     sync_refs,
 )
 
-# ---------------------------------------------------------------------------
-# Scaffolder: AGENTS.md pointer + CLAUDE.md stub
-# ---------------------------------------------------------------------------
 
+def _write_epic_context(
+    epic_dir: Path,
+    *,
+    title: str,
+    skills: list[str] | None = None,
+    docs: list[str] | None = None,
+) -> None:
+    """Hand-author an epic AGENTS.md pointer + CLAUDE.md stub for sync tests.
 
-class TestScaffoldAgentsAndStub:
-    """write_epic_context_files / create_epic author the pointer + stub."""
+    specwright no longer authors these (t013-02); on the real cloud-governor
+    path they are hand-authored. This local helper just materializes the same
+    pointer shape agent.sync_refs reads.
+    """
+    skills = skills or []
+    docs = docs or []
+    epic_dir.mkdir(parents=True, exist_ok=True)
 
-    def test_scaffold_creates_agents_and_stub(self, tmp_path: Path) -> None:
-        epic_dir = tmp_path / "t999-demo"
-        written = write_epic_context_files(epic_dir, title="Demo Epic")
-
-        agents = epic_dir / "AGENTS.md"
-        claude = epic_dir / "CLAUDE.md"
-        assert agents.exists()
-        assert claude.exists()
-        assert agents in written
-        assert claude in written
-
-    def test_claude_stub_points_to_agents(self, tmp_path: Path) -> None:
-        epic_dir = tmp_path / "t999-demo"
-        write_epic_context_files(epic_dir, title="Demo Epic")
-        claude = (epic_dir / "CLAUDE.md").read_text()
-        assert claude == CLAUDE_STUB_CONTENT
-        assert "AGENTS.md" in claude
-        # A stub is one line, not a context dump.
-        assert len([ln for ln in claude.splitlines() if ln.strip()]) == 1
-
-    def test_scaffold_does_not_clobber_existing(self, tmp_path: Path) -> None:
-        epic_dir = tmp_path / "t999-demo"
-        epic_dir.mkdir()
-        (epic_dir / "AGENTS.md").write_text("# hand authored\n")
-        written = write_epic_context_files(epic_dir, title="Demo Epic")
-        # AGENTS.md preserved; only CLAUDE.md written
-        assert (epic_dir / "AGENTS.md").read_text() == "# hand authored\n"
-        assert (epic_dir / "CLAUDE.md") in written
-        assert (epic_dir / "AGENTS.md") not in written
-
-    def test_create_epic_writes_context_files(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """create_epic (the real epic-creation path) authors both files."""
-        from spec.epic import loader, writer
-
-        epics_root = tmp_path / "epics"
-
-        def fake_get_epic_path(epic_id: str) -> Path:
-            from spec.epic.loader import get_category_from_id
-
-            category = get_category_from_id(epic_id) or "e"
-            return epics_root / category / epic_id
-
-        monkeypatch.setattr(loader, "get_epic_path", fake_get_epic_path)
-        monkeypatch.setattr(writer, "get_epic_path", fake_get_epic_path)
-
-        writer.create_epic(
-            id="t999-demo",
-            title="Demo Epic",
-            owner="tester",
-            goal="demo goal",
-        )
-
-        epic_dir = fake_get_epic_path("t999-demo")
-        assert (epic_dir / "AGENTS.md").exists()
-        assert (epic_dir / "CLAUDE.md").exists()
-
-
-class TestScaffoldPointerShape:
-    """AGENTS.md is a pointer: Skills + Docs sections, not an inline dump."""
-
-    def test_pointer_has_skills_and_docs_sections(self) -> None:
-        md = render_agents_md_pointer(
-            title="Demo",
-            skills=["spec-and-epic-authoring", "data-architecture"],
-            docs=["DESIGN.md"],
-        )
-        assert "## Skills" in md
-        assert "## Docs" in md
-        assert "- spec-and-epic-authoring" in md
-        assert "- data-architecture" in md
-        assert "[DESIGN.md](DESIGN.md)" in md
-
-    def test_pointer_is_not_a_context_dump(self) -> None:
-        """A pointer names skills/docs; it must stay small (an index)."""
-        md = render_agents_md_pointer(
-            title="Demo",
-            skills=["spec-and-epic-authoring"],
-            docs=["DESIGN.md"],
-        )
-        # An index, not a dump: a handful of lines, no inlined skill bodies.
-        assert len(md.splitlines()) < 30
-        assert "pointer" in md.lower()
-
-    def test_pointer_empty_sections_have_placeholders(self) -> None:
-        md = render_agents_md_pointer(title="Demo")
-        assert "## Skills" in md
-        assert "## Docs" in md
-        assert md.count("TODO") >= 2
+    lines = [f"# {title} — Agent Context", "", "## Skills", ""]
+    lines += [f"- {name}" for name in skills] or ["- TODO: name skills"]
+    lines += ["", "## Docs", ""]
+    lines += [f"- [{doc}]({doc})" for doc in docs] or ["- TODO: link docs"]
+    (epic_dir / "AGENTS.md").write_text("\n".join(lines) + "\n")
+    (epic_dir / "CLAUDE.md").write_text(
+        "See [AGENTS.md](AGENTS.md) for the skills and docs that apply.\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +151,7 @@ def _make_epic_with_skill_library(tmp_path: Path, skill_names: list[str]) -> Pat
 
     epic_dir = proj / "epics" / "t" / "t999-demo"
     epic_dir.mkdir(parents=True)
-    write_epic_context_files(epic_dir, title="Demo", skills=skill_names, docs=["DESIGN.md"])
+    _write_epic_context(epic_dir, title="Demo", skills=skill_names, docs=["DESIGN.md"])
     (epic_dir / "DESIGN.md").write_text("# Design\n")
     return epic_dir
 

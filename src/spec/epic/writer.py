@@ -16,11 +16,9 @@ from typing import TYPE_CHECKING, Any
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
-from spec.epic.dag import detect_cycle
 from spec.epic.loader import (
     EpicValidationError,
     get_epic_path,
-    load_epic_from_path,
 )
 from spec.epic.schema import (
     Actor,
@@ -28,7 +26,6 @@ from spec.epic.schema import (
     EpicState,
     EventType,
     HistoryEvent,
-    Intent,
     SpecRef,
     SpecStatus,
     Target,
@@ -89,89 +86,6 @@ def _save_yaml_roundtrip(path: Path, data: CommentedMap) -> None:
     yaml = _get_yaml()
     with open(path, "w") as f:
         yaml.dump(data, f)
-
-
-def create_epic(
-    id: str,
-    title: str,
-    owner: str,
-    goal: str,
-    narrative: str = "",
-) -> Epic:
-    """Create a new epic with directory structure.
-
-    Creates the epic directory with subdirectories for checks and reports.
-    Also creates a stub notes.md and epic.yaml.
-
-    Args:
-        id: Epic identifier (e.g., 'e001-my-epic').
-        title: Human-readable title.
-        owner: Owner username.
-        goal: One-line goal statement.
-        narrative: Optional longer description.
-
-    Returns:
-        Loaded Epic instance.
-
-    Raises:
-        EpicValidationError: If epic already exists or creation fails.
-    """
-    epic_dir = get_epic_path(id)
-
-    if epic_dir.exists():
-        raise EpicValidationError(f"Epic already exists: {id}")
-
-    # Create directory structure
-    epic_dir.mkdir(parents=True, exist_ok=True)
-    (epic_dir / "checks").mkdir(exist_ok=True)
-    (epic_dir / "reports").mkdir(exist_ok=True)
-
-    # Create stub notes.md
-    notes_path = epic_dir / "notes.md"
-    notes_path.write_text(f"# {title}\n\n## Notes\n\n")
-
-    # Always create the epic's AGENTS.md pointer + CLAUDE.md stub. AGENTS.md is a
-    # pointer (names shared-library skills, links docs by path), not a context
-    # dump; CLAUDE.md is a one-line stub pointing at AGENTS.md so Claude Code and
-    # Codex/Copilot land on the same canonical file. agent.sync_refs materializes
-    # these into the target repo at run.
-    from spec.governance.spec_scaffolder import write_epic_context_files
-
-    write_epic_context_files(epic_dir, title=title)
-
-    # Create epic object
-    now = datetime.now(UTC)
-    epic = Epic(
-        version="0.2",
-        kind="epic",
-        id=id,
-        title=title,
-        owner=owner,
-        created=now,
-        updated=now,
-        intent=Intent(goal=goal, narrative=narrative),
-        targets=[],
-        specs=[],
-        checks=[],
-        state=EpicState(
-            status=SpecStatus.PLANNED,
-            current_spec=None,
-            history=[
-                HistoryEvent(
-                    id="EVT-0001",
-                    at=now,
-                    event=EventType.EPIC_CREATED,
-                    actor=Actor.HUMAN,
-                    note="Epic created",
-                )
-            ],
-        ),
-    )
-
-    # Save epic.yaml
-    save_epic(epic, update_timestamp=False)
-
-    return load_epic_from_path(epic_dir / "epic.yaml")
 
 
 def save_epic(epic: Epic, update_timestamp: bool = True) -> None:
@@ -418,64 +332,6 @@ def _history_event_to_map(event: HistoryEvent) -> CommentedMap:
     return m
 
 
-def add_target(epic: Epic, target: Target) -> None:
-    """Add a target to the epic and save.
-
-    Args:
-        epic: Epic to modify.
-        target: Target to add.
-
-    Raises:
-        EpicValidationError: If target ID already exists.
-    """
-    if epic.get_target(target.id):
-        raise EpicValidationError(f"Target already exists: {target.id}")
-
-    epic.targets.append(target)
-    save_epic(epic)
-
-
-def add_spec(epic: Epic, spec: SpecRef) -> None:
-    """Add a spec to the epic and save.
-
-    Validates that the spec's repo exists in targets and that
-    adding it doesn't create a DAG cycle.
-
-    Args:
-        epic: Epic to modify.
-        spec: Spec to add.
-
-    Raises:
-        EpicValidationError: If validation fails.
-    """
-    # Check spec ID doesn't already exist
-    if epic.get_spec(spec.id):
-        raise EpicValidationError(f"Spec already exists: {spec.id}")
-
-    # Validate repo reference
-    if not epic.get_target(spec.repo):
-        raise EpicValidationError(
-            f"Spec '{spec.id}' references unknown target '{spec.repo}'"
-        )
-
-    # Validate dependencies exist
-    for dep_id in spec.depends_on:
-        if not epic.get_spec(dep_id):
-            raise EpicValidationError(
-                f"Spec '{spec.id}' depends on unknown spec '{dep_id}'"
-            )
-
-    # Check for cycles
-    test_specs = epic.specs + [spec]
-    cycle = detect_cycle(test_specs)
-    if cycle:
-        cycle_path = " -> ".join(cycle)
-        raise EpicValidationError(f"Adding spec would create cycle: {cycle_path}")
-
-    epic.specs.append(spec)
-    save_epic(epic)
-
-
 def update_spec_status(
     epic: Epic,
     spec_id: str,
@@ -517,48 +373,6 @@ def update_spec_status(
         actor=Actor.SPECWRIGHT,
         spec_id=spec_id,
         note=note or f"Status changed from {old_status.value} to {status.value}",
-    )
-
-    append_history(epic, event)
-
-
-def set_current_spec(epic: Epic, spec_id: str) -> None:
-    """Set the current spec and mark it active.
-
-    Args:
-        epic: Epic to modify.
-        spec_id: ID of spec to set as current.
-
-    Raises:
-        EpicValidationError: If spec not found.
-    """
-    spec = epic.get_spec(spec_id)
-    if not spec:
-        raise EpicValidationError(f"Spec not found: {spec_id}")
-
-    # Mark as active if not already
-    if spec.status != SpecStatus.ACTIVE:
-        spec.status = SpecStatus.ACTIVE
-
-    # Ensure state exists
-    if not epic.state:
-        epic.state = EpicState(
-            status=SpecStatus.ACTIVE,
-            current_spec=spec_id,
-            history=[],
-        )
-    else:
-        epic.state.current_spec = spec_id
-        if epic.state.status == SpecStatus.PLANNED:
-            epic.state.status = SpecStatus.ACTIVE
-
-    event = HistoryEvent(
-        id=generate_event_id(epic),
-        at=datetime.now(UTC),
-        event=EventType.SPEC_ACTIVATED,
-        actor=Actor.SPECWRIGHT,
-        spec_id=spec_id,
-        note="Set as current spec",
     )
 
     append_history(epic, event)

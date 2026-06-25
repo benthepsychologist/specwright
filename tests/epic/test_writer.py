@@ -19,13 +19,9 @@ from spec.epic.schema import (
     Target,
 )
 from spec.epic.writer import (
-    add_spec,
-    add_target,
-    create_epic,
     generate_event_id,
     mark_spec_done,
     save_epic,
-    set_current_spec,
     update_spec_status,
 )
 
@@ -84,72 +80,6 @@ def sample_epic() -> Epic:
             ],
         ),
     )
-
-
-class TestCreateEpic:
-    """Tests for create_epic function."""
-
-    def test_creates_directory_structure(self, temp_governor: Path):
-        """Creates correct directory structure."""
-        create_epic(
-            id="new-epic",
-            title="New Epic",
-            owner="testuser",
-            goal="Test goal",
-        )
-
-        epic_dir = temp_governor / "epics" / "new-epic"
-        assert epic_dir.exists()
-        assert (epic_dir / "checks").is_dir()
-        assert (epic_dir / "reports").is_dir()
-        assert (epic_dir / "notes.md").is_file()
-        assert (epic_dir / "epic.yaml").is_file()
-
-    def test_creates_notes_stub(self, temp_governor: Path):
-        """Creates notes.md with title."""
-        create_epic(
-            id="new-epic",
-            title="My New Epic",
-            owner="testuser",
-            goal="Test goal",
-        )
-
-        notes_path = temp_governor / "epics" / "new-epic" / "notes.md"
-        notes_content = notes_path.read_text()
-        assert "My New Epic" in notes_content
-
-    def test_returns_loaded_epic(self, temp_governor: Path):
-        """Returns a loaded Epic instance."""
-        epic = create_epic(
-            id="new-epic",
-            title="New Epic",
-            owner="testuser",
-            goal="Test goal",
-        )
-
-        assert isinstance(epic, Epic)
-        assert epic.id == "new-epic"
-        assert epic.title == "New Epic"
-
-    def test_includes_creation_event(self, temp_governor: Path):
-        """Epic has creation event in history."""
-        epic = create_epic(
-            id="new-epic",
-            title="New Epic",
-            owner="testuser",
-            goal="Test goal",
-        )
-
-        assert epic.state is not None
-        assert len(epic.state.history) >= 1
-        assert epic.state.history[0].event == EventType.EPIC_CREATED
-
-    def test_epic_already_exists(self, temp_governor: Path):
-        """Raises error if epic already exists."""
-        create_epic(id="existing", title="First", owner="test", goal="Test")
-
-        with pytest.raises(EpicValidationError):
-            create_epic(id="existing", title="Second", owner="test", goal="Test")
 
 
 class TestSaveEpic:
@@ -226,90 +156,6 @@ state:
         assert "# Version number" in content
 
 
-class TestAddTarget:
-    """Tests for add_target function."""
-
-    def test_adds_target(self, temp_governor: Path, sample_epic: Epic):
-        """Adds target to epic."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-        save_epic(sample_epic, update_timestamp=False)
-
-        new_target = Target(id="other-repo", repo_path="/other", default_branch="main")
-        add_target(sample_epic, new_target)
-
-        loaded = load_epic_from_path(epic_dir / "epic.yaml")
-        assert len(loaded.targets) == 2
-        assert any(t.id == "other-repo" for t in loaded.targets)
-
-    def test_duplicate_target_error(self, temp_governor: Path, sample_epic: Epic):
-        """Raises error for duplicate target ID."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-        save_epic(sample_epic, update_timestamp=False)
-
-        duplicate = Target(id="myrepo", repo_path="/other", default_branch="main")
-        with pytest.raises(EpicValidationError):
-            add_target(sample_epic, duplicate)
-
-
-class TestAddSpec:
-    """Tests for add_spec function."""
-
-    def test_adds_spec(self, temp_governor: Path, sample_epic: Epic):
-        """Adds spec to epic."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-        save_epic(sample_epic, update_timestamp=False)
-
-        new_spec = SpecRef(
-            id="spec-002",
-            repo="myrepo",
-            branch="main",
-            path="specs/other.md",
-        )
-        add_spec(sample_epic, new_spec)
-
-        loaded = load_epic_from_path(epic_dir / "epic.yaml")
-        assert len(loaded.specs) == 2
-
-    def test_validates_target_ref(self, temp_governor: Path, sample_epic: Epic):
-        """Raises error for invalid target reference."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-        save_epic(sample_epic, update_timestamp=False)
-
-        new_spec = SpecRef(
-            id="spec-002",
-            repo="unknown-repo",
-            branch="main",
-            path="test.md",
-        )
-        with pytest.raises(EpicValidationError) as exc_info:
-            add_spec(sample_epic, new_spec)
-        assert "unknown target" in str(exc_info.value)
-
-    def test_validates_no_cycle(self, temp_governor: Path, sample_epic: Epic):
-        """Raises error if spec would create cycle."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-
-        # Create mutual dependency
-        sample_epic.specs[0].depends_on = ["spec-002"]
-        save_epic(sample_epic, update_timestamp=False)
-
-        new_spec = SpecRef(
-            id="spec-002",
-            repo="myrepo",
-            branch="main",
-            path="test.md",
-            depends_on=["spec-001"],
-        )
-        with pytest.raises(EpicValidationError) as exc_info:
-            add_spec(sample_epic, new_spec)
-        assert "cycle" in str(exc_info.value)
-
-
 class TestUpdateSpecStatus:
     """Tests for update_spec_status function."""
 
@@ -350,48 +196,6 @@ class TestUpdateSpecStatus:
 
         with pytest.raises(EpicValidationError):
             update_spec_status(sample_epic, "unknown", SpecStatus.DONE)
-
-
-class TestSetCurrentSpec:
-    """Tests for set_current_spec function."""
-
-    def test_sets_current(self, temp_governor: Path, sample_epic: Epic):
-        """Sets current spec."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-
-        # Add another spec
-        sample_epic.specs.append(
-            SpecRef(id="spec-002", repo="myrepo", branch="main", path="test.md")
-        )
-        save_epic(sample_epic, update_timestamp=False)
-
-        set_current_spec(sample_epic, "spec-002")
-
-        loaded = load_epic_from_path(epic_dir / "epic.yaml")
-        assert loaded.state.current_spec == "spec-002"
-
-    def test_marks_active(self, temp_governor: Path, sample_epic: Epic):
-        """Marks spec as active when setting current."""
-        epic_dir = temp_governor / "epics" / sample_epic.id
-        epic_dir.mkdir(parents=True)
-
-        sample_epic.specs.append(
-            SpecRef(
-                id="spec-002",
-                repo="myrepo",
-                branch="main",
-                path="test.md",
-                status=SpecStatus.PLANNED,
-            )
-        )
-        save_epic(sample_epic, update_timestamp=False)
-
-        set_current_spec(sample_epic, "spec-002")
-
-        loaded = load_epic_from_path(epic_dir / "epic.yaml")
-        spec = loaded.get_spec("spec-002")
-        assert spec.status == SpecStatus.ACTIVE
 
 
 class TestMarkSpecDone:
