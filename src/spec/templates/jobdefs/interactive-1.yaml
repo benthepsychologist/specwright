@@ -32,16 +32,17 @@ steps:
   # Step 2: Best-effort sync of agent reference files, spec stubs, and skills
   - step_id: refs.sync
     backend: python
-    description: Temporarily skip agent reference sync
+    description: Sync agent references (project, spec, skills, epic context)
     payload:
       callable: "agent.sync_refs"
-      skip_sync: true
+      skip_sync: false
       agents: ["@payload.agent"]
       project: "@payload.project"
       spec_md: "@payload.spec_md"
       spec_id: "@payload.spec_id"
       skill: "@payload.skill"
       skills: "@payload.skills"
+      epic_dir: "@payload.epic_dir"
     continue_on_failure: true
 
   # Step 3: Interactive Claude session
