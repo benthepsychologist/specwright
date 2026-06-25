@@ -1,0 +1,67 @@
+# chat-1: Free-range Claude Code chat harness (NOT repo-locked)
+#
+# A meta-harness for trace/logging of multi-repo chat sessions. Unlike
+# interactive-1, this jobdef:
+#   - Does NOT create a branch, commit, or sync refs.
+#   - Is NOT bound to a governed spec (compiles from a minimal envelope).
+#   - Launches Claude Code interactively at an arbitrary launch cwd
+#     (e.g. /workspace), so the human can roam across repos.
+#   - Captures the Claude session transcript into the run directory as a
+#     rich run record.
+#
+# Execution model:
+#   Step 1: agent.interactive  - launch Claude Code TUI at @payload.repo_path
+#   Step 2: session.capture    - collect the session JSONL transcript + summary
+#   Step 3: finalize.run       - minimal finalize marker
+#
+# Only @payload.* and @run.* refs are used (no spec/aip refs), so this
+# compiles and runs WITHOUT a spec. The interactive step is interactive=true,
+# so its exit code is telemetry, not a success signal. capture/finalize use
+# continue_on_failure=true so a capture hiccup never fails the session.
+
+job_id: chat-1
+version: "0.1"
+kind: jobdef
+artifact_id: 2f3c7d1a-9b4e-5a86-bc01-7d4e2f8a1c33
+name: chat-1
+description: Free-range Claude Code chat harness with session transcript capture
+
+steps:
+  # Step 1: Free-range interactive Claude Code session.
+  # No spec_md required: a default free-range prompt is supplied so the
+  # claude-code backend has a prompt to launch with. capture_git is false —
+  # this pass does NOT diff repos.
+  - step_id: agent.interactive
+    backend: "@payload.agent"
+    description: Free-range interactive Claude Code session
+    payload:
+      interactive: true
+      capture_git: false
+      repo_path: "@payload.repo_path"
+      prompt: "@payload.prompt"
+    interactive: true
+    timeout_s: 86400 # 24h - interactive has no real timeout
+    continue_on_failure: true
+
+  # Step 2: Capture the Claude session transcript for THIS run.
+  # The collector resolves the session JSONL for the launch cwd and copies it
+  # into the run directory, then writes a session-summary with turn/tool counts.
+  - step_id: session.capture
+    backend: python
+    description: Capture the Claude session transcript into the run record
+    payload:
+      callable: "session.capture_transcript"
+      launch_cwd: "@payload.repo_path"
+      run_started_at: "@payload.run_started_at"
+      run_id: "@run.run_id"
+      runs_root: "@payload.runs_root"
+    continue_on_failure: true
+
+  # Step 3: Finalize run (best effort).
+  - step_id: finalize.run
+    backend: cmd
+    description: Finalize free-range chat run
+    payload:
+      command: "echo 'Free-range chat run finalized'"
+      capture_git: false
+    continue_on_failure: true

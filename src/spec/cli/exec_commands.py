@@ -43,6 +43,17 @@ from spec.executor.store import RunStore
 REQUIRED_FRONTMATTER = {"tier", "title", "owner", "goal"}
 VALID_TIERS = {"A", "B", "C"}
 
+# Free-range chat runs land here, separate from epic/spec runs.
+SESSIONS_ROOT = Path.home() / ".local/local-governor/sessions"
+
+# Default prompt for a free-range chat session when none is supplied. The
+# claude-code backend requires a prompt to launch, even interactively.
+DEFAULT_FREE_RANGE_PROMPT = (
+    "Free-range chat session. You are NOT locked to a single repository — "
+    "you may roam across the workspace. This session is being recorded "
+    "(the transcript is captured into the run record). How can I help?"
+)
+
 
 def _echo_error(message: str) -> None:
     """Print error message in red."""
@@ -525,6 +536,12 @@ def run_command(
         "--legacy-output",
         help="Use legacy multi-file output layout in governor storage",
     ),
+    free_range: bool = typer.Option(
+        False,
+        "--free-range",
+        help="Free-range chat mode: launch the agent without a spec (no repo lock), "
+        "routing the run record to the sessions store. Use with chat-1.",
+    ),
 ) -> None:
     """Compile and execute a job in one step.
 
@@ -537,14 +554,16 @@ def run_command(
         spec run aip-1 ./my-feature.yaml --dry-run
         spec run aip-1 --epic e005-command-plane --spec e005-01-schemas
     """
-    # Validate inputs - must have either spec_path or epic/spec
-    if spec_path is None and (epic_id is None or spec_id is None):
-        _echo_error("Must provide either SPEC_PATH or both --epic and --spec")
-        raise typer.Exit(1)
+    # Validate inputs - must have either spec_path or epic/spec.
+    # Free-range mode bypasses this gate entirely (no spec required).
+    if not free_range:
+        if spec_path is None and (epic_id is None or spec_id is None):
+            _echo_error("Must provide either SPEC_PATH or both --epic and --spec")
+            raise typer.Exit(1)
 
-    if spec_path is not None and (epic_id is not None or spec_id is not None):
-        _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
-        raise typer.Exit(1)
+        if spec_path is not None and (epic_id is not None or spec_id is not None):
+            _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
+            raise typer.Exit(1)
 
     # Load JobDef from local-governor
     try:
@@ -560,6 +579,18 @@ def run_command(
     except JobDefError as e:
         _echo_error(f"Failed to load JobDef: {e}")
         raise typer.Exit(1)
+
+    # Free-range chat mode: skip all spec loading/validation, build a minimal
+    # envelope, and route the run record to a dedicated sessions store.
+    if free_range:
+        _run_free_range(
+            job_def=job_def,
+            repo_path=repo_path,
+            agent=agent,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+        return
 
     # Load spec - either from file or from epic/spec
     epic_spec = None  # Will be populated for epic/spec mode
@@ -735,6 +766,87 @@ def run_command(
     _show_run_summary(result, store)
 
     # Exit code based on status
+    if result.status == RunStatus.failed:
+        raise typer.Exit(1)
+    elif result.status == RunStatus.completed_with_errors:
+        raise typer.Exit(2)
+
+
+# =============================================================================
+# Free-range chat helper
+# =============================================================================
+
+
+def _run_free_range(
+    *,
+    job_def: Any,
+    repo_path: Path | None,
+    agent: str | None,
+    run_id: str | None,
+    dry_run: bool,
+) -> None:
+    """Compile + execute a free-range chat job without a spec.
+
+    Builds a minimal envelope (no spec_md/spec_id/epic_dir), generates a run
+    id, and routes the run store to the dedicated sessions root so free-range
+    chat runs are kept separate from epic/spec runs.
+    """
+    from datetime import UTC, datetime
+
+    # Launch cwd: explicit --repo, else current directory. No .git requirement.
+    launch_cwd = (repo_path or Path.cwd()).resolve()
+
+    payload_agent = agent or "claude-code"
+    run_started_at = datetime.now(UTC).isoformat()
+
+    payload: dict[str, Any] = {
+        "agent": payload_agent,
+        "repo_path": str(launch_cwd),
+        "prompt": DEFAULT_FREE_RANGE_PROMPT,
+        # Threaded to the session.capture_transcript collector so it can resolve
+        # the run directory (runs_root/run_id) and select the session JSONL.
+        "runs_root": str(SESSIONS_ROOT),
+        "run_started_at": run_started_at,
+    }
+
+    envelope = {
+        "job_def": job_def.model_dump(),
+        "payload": payload,
+        "ctx": {},
+    }
+
+    if dry_run:
+        try:
+            job_instance = compile_job(job_def, envelope)
+        except ExecutorError as e:
+            _echo_error(f"Compilation failed: {e}")
+            raise typer.Exit(1)
+
+        typer.echo("Dry run - JobInstance compiled but not executed:")
+        typer.echo("")
+        instance_dict = job_instance.model_dump(mode="json")
+        print(yaml.dump(instance_dict, default_flow_style=False, allow_unicode=True, sort_keys=False))
+        return
+
+    if run_id is None:
+        run_id = generate_run_id(spec_id="chat")
+
+    store = _new_store(SESSIONS_ROOT)
+
+    typer.echo(f"Running free-range chat: {job_def.job_id}")
+    typer.echo(f"  Run ID:   {run_id}")
+    typer.echo(f"  Launch:   {launch_cwd}")
+    typer.echo(f"  Sessions: {SESSIONS_ROOT}")
+    typer.echo("")
+
+    try:
+        result = execute(envelope, store=store, run_id=run_id)
+    except ExecutorError as e:
+        _echo_error(f"Execution failed: {e}")
+        raise typer.Exit(1)
+
+    _show_run_summary(result, store)
+
     if result.status == RunStatus.failed:
         raise typer.Exit(1)
     elif result.status == RunStatus.completed_with_errors:

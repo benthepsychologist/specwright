@@ -219,10 +219,11 @@ def _format_summary(report) -> str:
 def register_all() -> None:
     """Register all governance callables with the python backend."""
     from spec.executor.backends.python import register_callable
-
+    from spec.governance.session_capture import capture_transcript
     from spec.governance.sync_refs import sync_refs
 
     register_callable("governance.validate_build", validate_build)
     register_callable("governance.validate_epic", validate_epic)
     register_callable("governance.validate_contracts", validate_contracts)
     register_callable("agent.sync_refs", sync_refs)
+    register_callable("session.capture_transcript", capture_transcript)
