@@ -7,19 +7,20 @@ for native discovery. This is the cheap, colocated alternative to a governed
 skill-selection object: selection is a human decision expressed as a pointer
 file, not an auto-matcher.
 
-## What the scaffolder creates
+## Where the pointer is authored
 
-`spec epic create` (via `spec.epic.writer.create_epic`, which calls
-`spec.governance.spec_scaffolder.write_epic_context_files`) always writes two
-files into the epic folder:
+specwright does **not** create epics or their context files — it runs and
+validates specs, it does not author them (see t013-02). Every epic is authored on
+the **cloud-governor** side and carries two hand-authored files:
 
 ```
 epics/<series>/<epic>/
-  AGENTS.md   # the canonical pointer (authored)
+  AGENTS.md   # the canonical pointer (hand-authored)
   CLAUDE.md   # one-line stub -> AGENTS.md
 ```
 
-Both are created at epic creation and are **never clobbered** on re-run.
+See the authoring catalog + template in the cloud-governor `skills/README.md`.
+specwright only **consumes** these at run via `agent.sync_refs` (below).
 
 ## AGENTS.md is a pointer, not a context dump
 
