@@ -99,6 +99,14 @@ def build_run_object_params(run_doc: dict[str, Any], scratch_dir: Path) -> dict[
         "attempts": run_doc.get("attempts") or [],
         "artifacts": _artifact_refs(scratch_dir, _BULK_RUN_KEYS, run_doc),
     }
+    # The registered run@1-0-0 schema declares a top-level `envelope`
+    # property, but storacle's policy input flattens object fields, and a
+    # top-level `envelope` collides with the WAL row's envelope-piece
+    # semantics in check_schema_adherence ("no exact envelope schema_ref"
+    # refusal). Until the primitives distinguish object-envelope from
+    # row-envelope, the specwright job envelope rides in metadata.
+    if run_doc.get("envelope") is not None:
+        metadata["envelope"] = run_doc["envelope"]
 
     params: dict[str, Any] = {
         "name": slug,
@@ -107,19 +115,24 @@ def build_run_object_params(run_doc: dict[str, Any], scratch_dir: Path) -> dict[
         "status": str(run_doc.get("status") or "unknown"),
         "metadata": metadata,
     }
-    for key in ("created_at", "updated_at", "envelope", "policy", "repo", "error"):
+    for key in ("created_at", "updated_at", "policy", "repo", "error"):
         if run_doc.get(key) is not None:
             params[key] = run_doc[key]
     return params
 
 
 def build_step_object_params(
-    step_doc: dict[str, Any], run_slug: str, run_identity: str, scratch_dir: Path
+    step_doc: dict[str, Any],
+    run_slug: str,
+    run_identity: str,
+    scratch_dir: Path,
+    job_id: str,
 ) -> dict[str, Any]:
     """Map a consolidated step-NNN.yaml document to run_step@1-0-0 object params.
 
-    The registered run_step schema only declares identity fields + metadata,
-    so all step content (minus bulk) rides in metadata.
+    run_step is a schema subtype of run (registry nesting = inheritance),
+    so the resolved schema also requires job_definition_id / job_type /
+    status. Step content (minus bulk) rides in metadata.
     """
     step_n = step_doc.get("step_n")
     if step_n is None:
@@ -137,14 +150,20 @@ def build_step_object_params(
         "name": f"{run_slug}/step-{int(step_n):03d}",
         "run_id": run_identity,
         "step_number": int(step_n),
+        "job_definition_id": job_id or "unknown",
+        "job_type": JOB_TYPE,
+        "status": str(step_doc.get("outcome") or "unknown"),
         "metadata": metadata,
     }
 
 
 def build_report_object_params(
-    report_doc: dict[str, Any], run_slug: str, run_identity: str
+    report_doc: dict[str, Any], run_slug: str, run_identity: str, job_id: str
 ) -> dict[str, Any]:
-    """Map a consolidated run_report.yaml document to run_report@1-0-0 params."""
+    """Map a consolidated run_report.yaml document to run_report@1-0-0 params.
+
+    run_report is a schema subtype of run (see build_step_object_params).
+    """
     metadata = {
         k: v
         for k, v in report_doc.items()
@@ -154,6 +173,9 @@ def build_report_object_params(
     return {
         "name": f"{run_slug}/report",
         "run_id": run_identity,
+        "job_definition_id": job_id or "unknown",
+        "job_type": JOB_TYPE,
+        "status": str(report_doc.get("status") or "unknown"),
         "metadata": metadata,
     }
 
@@ -184,6 +206,22 @@ def _resolve_target(schema_ref: str) -> tuple[str, str]:
     return dataset, f"{dataset}__base"
 
 
+def _load_lorchestra_env(lorchestra_pkg: Any) -> None:
+    """Source lorchestra's .env as defaults for storacle configuration.
+
+    Mirrors life-cli's convention (it dotenv-loads its own .env before
+    calling lorchestra in-process). Pre-set environment variables win —
+    this only fills gaps, so operators can still override per-invocation.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv ships with the venv
+        return
+    env_path = Path(lorchestra_pkg.__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+
+
 def _submit_object(schema_ref: str, object_params: dict[str, Any]) -> None:
     """Submit one governed object through lorchestra's object.create job."""
     try:
@@ -196,10 +234,15 @@ def _submit_object(schema_ref: str, object_params: dict[str, Any]) -> None:
             f"Import error: {e}"
         ) from e
 
+    _load_lorchestra_env(lorchestra)
+
     definitions_dir = Path(lorchestra.__file__).parent / "jobs" / "definitions"
     envelope = {
         "job_id": "object.create",
         "payload": {
+            # "kind" must be present (None is fine): the object.create job
+            # resolves @payload.kind strictly at compile time.
+            "kind": None,
             "schema_ref": schema_ref,
             "object_params": object_params,
         },
@@ -219,6 +262,25 @@ def _submit_object(schema_ref: str, object_params: dict[str, Any]) -> None:
             f"Gate refused {schema_ref} object "
             f"'{object_params.get('name')}': {detail}"
         )
+
+
+def _row_exists(prod_db: Path, table: str, kind: str, name: str) -> bool:
+    """True if a row of this kind+name already landed (idempotent resume).
+
+    Emission is append-once: a retry after a partial emission must not
+    re-submit rows that already exist (name-uniqueness would refuse them).
+    A missing DB reports False — submission then proceeds and verification
+    fails loudly instead.
+    """
+    if not prod_db.exists():
+        return False
+    with sqlite3.connect(f"file:{prod_db}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            f'SELECT COUNT(*) FROM "{table}" '  # noqa: S608 - table from descriptor
+            f"WHERE kind LIKE ? AND json_extract(object, '$.name') = ?",
+            (f"{kind}@%", name),
+        ).fetchone()
+    return bool(row and row[0])
 
 
 def _verify_rows(
@@ -286,26 +348,29 @@ def emit_run_records(
 
     dataset, table = _resolve_target(RUN_SCHEMA_REF)
 
+    job_id = str(run_doc.get("job_id") or "unknown")
     emitted: dict[str, list[str]] = {"run": [], "run_step": [], "run_report": []}
 
+    def _submit_once(kind: str, schema_ref: str, params: dict[str, Any]) -> None:
+        if not _row_exists(prod_db, table, kind, params["name"]):
+            _submit_object(schema_ref, params)
+        emitted[kind].append(params["name"])
+
     run_params = build_run_object_params(run_doc, run_dir)
-    _submit_object(RUN_SCHEMA_REF, run_params)
-    emitted["run"].append(run_params["name"])
+    _submit_once("run", RUN_SCHEMA_REF, run_params)
 
     steps_dir = run_dir / "steps"
     step_files = sorted(steps_dir.glob("step-*.yaml")) if steps_dir.exists() else []
     for step_file in step_files:
         step_doc = _load_yaml(step_file)
-        step_params = build_step_object_params(step_doc, slug, run_identity, run_dir)
-        _submit_object(RUN_STEP_SCHEMA_REF, step_params)
-        emitted["run_step"].append(step_params["name"])
+        step_params = build_step_object_params(step_doc, slug, run_identity, run_dir, job_id)
+        _submit_once("run_step", RUN_STEP_SCHEMA_REF, step_params)
 
     report_path = run_dir / "run_report.yaml"
     if report_path.exists():
         report_doc = _load_yaml(report_path)
-        report_params = build_report_object_params(report_doc, slug, run_identity)
-        _submit_object(RUN_REPORT_SCHEMA_REF, report_params)
-        emitted["run_report"].append(report_params["name"])
+        report_params = build_report_object_params(report_doc, slug, run_identity, job_id)
+        _submit_once("run_report", RUN_REPORT_SCHEMA_REF, report_params)
 
     verified = _verify_rows(prod_db, table, emitted)
 

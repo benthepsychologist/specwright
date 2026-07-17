@@ -99,12 +99,17 @@ RUN_SCHEMA_PROPERTIES = {
     "schema_version", "job_request_id", "envelope", "policy", "repo",
     "steps", "error",
 }
+# run_step / run_report are schema subtypes of run (registry nesting =
+# inheritance): the resolved schemas include run's properties and require
+# job_definition_id / job_type / status.
 RUN_STEP_SCHEMA_PROPERTIES = {
     "kind", "run_step_id", "name", "run_id", "step_number",
     "schema_version", "metadata",
+    "job_definition_id", "job_type", "status",
 }
 RUN_REPORT_SCHEMA_PROPERTIES = {
     "kind", "run_report_id", "name", "run_id", "schema_version", "metadata",
+    "job_definition_id", "job_type", "status",
 }
 
 
@@ -116,7 +121,10 @@ def test_run_params_shape_and_bulk_stripped(tmp_path):
     assert params["job_definition_id"] == "aip-1"
     assert params["job_type"] == "specwright"
     assert params["status"] == "completed"
-    assert params["envelope"] == RUN_DOC["envelope"]
+    # The job envelope rides in metadata — a top-level `envelope` collides
+    # with the WAL row's envelope-piece semantics at the gate.
+    assert "envelope" not in params
+    assert params["metadata"]["envelope"] == RUN_DOC["envelope"]
     # Identity derivation is lorchestra's job — never pre-set.
     assert "run_id" not in params
     # Bulk never becomes row content.
@@ -137,12 +145,17 @@ def test_run_params_shape_and_bulk_stripped(tmp_path):
 
 def test_step_params_shape_and_bulk_stripped(tmp_path):
     run_identity = derive_identity("run", RUN_DOC["run_id"])
-    params = build_step_object_params(STEP_DOC, RUN_DOC["run_id"], run_identity, tmp_path)
+    params = build_step_object_params(
+        STEP_DOC, RUN_DOC["run_id"], run_identity, tmp_path, "aip-1"
+    )
 
     assert set(params) <= RUN_STEP_SCHEMA_PROPERTIES
     assert params["name"] == f"{RUN_DOC['run_id']}/step-003"
     assert params["run_id"] == run_identity
     assert params["step_number"] == 3
+    assert params["job_definition_id"] == "aip-1"
+    assert params["job_type"] == "specwright"
+    assert params["status"] == "completed"
     md = params["metadata"]
     assert md["step_id"] == "agent.run_spec"
     assert md["backend"] == "copilot"
@@ -155,11 +168,15 @@ def test_step_params_shape_and_bulk_stripped(tmp_path):
 
 def test_report_params_shape(tmp_path):
     run_identity = derive_identity("run", RUN_DOC["run_id"])
-    params = build_report_object_params(REPORT_DOC, RUN_DOC["run_id"], run_identity)
+    params = build_report_object_params(
+        REPORT_DOC, RUN_DOC["run_id"], run_identity, "aip-1"
+    )
 
     assert set(params) <= RUN_REPORT_SCHEMA_PROPERTIES
     assert params["name"] == f"{RUN_DOC['run_id']}/report"
     assert params["run_id"] == run_identity
+    assert params["job_definition_id"] == "aip-1"
+    assert params["status"] == "completed"
     md = params["metadata"]
     assert md["summary"] == "It worked."
     assert md["issues"] == []
