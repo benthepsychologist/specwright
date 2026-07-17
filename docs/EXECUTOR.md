@@ -68,7 +68,11 @@ After each step completes, the executor captures:
 
 ### 3. Artifacts Stored Outside Target Repo
 
-Run artifacts are stored under `~/.local/local-governor/runs/`, never inside the target repository.
+Run records are emitted as governed rows through the storacle gate to
+`ops__base` at finalize (see `src/spec/executor/gate_emission.py`); bulk
+artifacts (consolidated YAML, stdout/stderr, patches) are stored under
+`~/.local/specwright/runs/`, never inside the target repository.
+`--legacy-output` is the explicit escape hatch for the old tree format.
 
 ### 4. Backend Dispatches Are Isolated
 

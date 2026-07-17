@@ -4,7 +4,7 @@
 
 Specwright defines, validates, and executes **Agentic Implementation Plans (AIPs)** — human-in-the-loop governance for AI-assisted software development.
 
-Write specs in Markdown. Compile them to structured YAML. Execute them through pluggable agent backends (Claude Code, GitHub Copilot, shell commands, Python callables, LLMs). Every step is captured, every artifact stored outside the target repo.
+Specs are authored on the governor side (cloud-governor, as `.md` or `.yaml`); specwright compiles and executes them through pluggable agent backends (Claude Code, GitHub Copilot, shell commands, Python callables, LLMs). Every step is captured; run records are emitted as governed rows through the storacle gate, and bulk artifacts stay in local scratch — never in the target repo.
 
 ---
 
@@ -30,10 +30,10 @@ spec run aip-1 ./my-feature.md --repo . --agent claude-code
 
 Specwright manages the full lifecycle of AI-assisted development:
 
-1. **Author** — Write specs in Markdown using tiered templates (A/B/C risk levels)
-2. **Compile** — Parse Markdown to validated YAML AIPs, then compile against job definitions
-3. **Execute** — Run materialized steps through pluggable backends with policy enforcement
-4. **Capture** — Record git state, agent output, and assessments for every step
+1. **Compile** — Parse specs (Markdown or YAML, authored governor-side), then compile against job definitions
+2. **Execute** — Run materialized steps through pluggable backends with policy enforcement
+3. **Capture** — Record git state, agent output, and assessments for every step
+4. **Record** — Emit run/run_step/run_report as governed rows through the storacle gate at finalize
 5. **Govern** — Epic-level dependency tracking, LLM checks, and build delta management
 
 ### Three Risk Tiers
@@ -155,7 +155,9 @@ spec validate contracts                       # Validate op-catalog vs code
 L3: Ephemeral     → Claude/Copilot sessions, temporary workspaces
 L2: Target Repos  → Multiple repos receiving AIP execution
 L1: Specwright    → CLI, compiler, executor, backends
-L0: Local Governor → Centralized storage (~/.local/local-governor/)
+L0: Governed DB   → Run records as rows via the storacle gate (ops__base);
+                    bulk in local scratch (~/.local/specwright/runs/);
+                    jobdefs synced to ~/.local/local-governor/jobdefs/
 ```
 
 ### Execution Model
@@ -170,6 +172,8 @@ execute(JobInstance) → runs steps via backends
 StepCapture records git state, agent output
     ↓
 RunRecord (completed/failed/partial)
+    ↓
+gated emission at finalize → run/run_step/run_report rows in ops__base
 ```
 
 ### Source Layout
@@ -237,7 +241,6 @@ src/spec/
 │   ├── config.py          # LLM configuration
 │   ├── prompts.py         # Prompt templates
 │   └── reporter.py        # LLM output reporting
-├── artifacts/             # Artifact collection and storage
 ├── audit/                 # Execution logging
 ├── runner/                # Background and interactive runners
 ├── core/                  # Config, exceptions, YAML loading
@@ -255,17 +258,25 @@ governor:
 
 ### Storage
 
-All run artifacts are stored outside the target repo:
+Run records are **governed rows**: at finalize, `run`, `run_step`, and
+`run_report` objects are emitted through the storacle gate (lorchestra
+`object.create`, in-process) to the `ops__base` table, with row-count and
+policy-stamp verification. Bulk artifacts never become rows — they live in
+local scratch, outside the target repo:
+
 ```
-~/.local/local-governor/runs/{run_id}/
-├── run.yaml               # RunRecord
+~/.local/specwright/runs/{epic_id}/{run_id}/     # SPECWRIGHT_SCRATCH_ROOT override
+├── run.yaml               # Consolidated RunRecord
+├── run_report.yaml        # Structured report
+├── stdout.txt / stderr.txt / changes_final.patch
 └── steps/
-    └── step-001/
-        ├── manifest.yaml  # Step dispatch record
-        ├── outcome.yaml   # StepOutcome (status, duration, error)
-        ├── capture.yaml   # StepCapture (git state, agent output)
-        └── changes.patch  # Git diff (if capture_patch enabled)
+    ├── step-001.yaml      # Consolidated per-step YAML
+    └── step-001/          # Bulk: stdout, stderr, changes.patch
 ```
+
+There is no silent fallback: if the gate refuses an emission the run fails
+loudly (scratch files remain as evidence). `--legacy-output` is the only,
+explicit escape hatch that writes the old multi-file tree format instead.
 
 ---
 
@@ -331,8 +342,9 @@ spec run aip-1 ./my-feature.md --repo /path --agent claude-code
    d. Record StepOutcome + StepCapture
    e. Check continue_on_failure policy
     ↓
-6. Write RunRecord to store
-7. Exit: 0=completed, 1=failed, 2=partial
+6. Write RunRecord to local scratch store
+7. Emit run/run_step/run_report rows through the storacle gate (verified)
+8. Exit: 0=completed, 1=failed, 2=partial
 ```
 
 ### Testing
