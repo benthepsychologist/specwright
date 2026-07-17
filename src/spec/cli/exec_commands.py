@@ -534,7 +534,10 @@ def run_command(
     legacy_output: bool = typer.Option(
         False,
         "--legacy-output",
-        help="Use legacy multi-file output layout in governor storage",
+        help=(
+            "EXPLICIT escape hatch: legacy multi-file tree output, no gated "
+            "emission. Default is local scratch + row emission through the gate."
+        ),
     ),
     free_range: bool = typer.Option(
         False,
@@ -744,17 +747,18 @@ def run_command(
     typer.echo(f"  Branch:   {branch}")
     typer.echo("")
 
-    # Execute
+    # Execute.
+    # Default (gated) mode: bulk artifacts + consolidated YAML land in local
+    # scratch, and the run/run_step/run_report records are emitted through
+    # the storacle gate at finalize. The projection repo receives NOTHING.
+    # --legacy-output is the only tree-writing path, and it is explicit —
+    # there is no silent fallback (that fallback is how legacy trees kept
+    # appearing in epic folders).
     store: Any
     if legacy_output:
         store = _new_store(_infer_runs_root(spec_path))
     else:
-        projection_repo = _resolve_projection_repo_path()
-        if projection_repo is None:
-            _echo_warning("Projection repo not configured; falling back to legacy output root")
-            store = _new_store(_infer_runs_root(spec_path))
-        else:
-            store = ConsolidatedRunWriter(root=projection_repo / "runs" / effective_epic_id)
+        store = ConsolidatedRunWriter(root=_scratch_runs_root() / effective_epic_id)
 
     try:
         result = execute(envelope, store=store, run_id=run_id)
@@ -764,6 +768,12 @@ def run_command(
 
     # Show results
     _show_run_summary(result, store)
+
+    # Emit-once-at-finalize: push the run records through the gate. Emission
+    # failures fail loudly (exit 1) — NO fallback to tree-writing. The
+    # scratch files remain as local evidence either way.
+    if not legacy_output:
+        _emit_gated_run_records(store=store, run_id=run_id)
 
     # Exit code based on status
     if result.status == RunStatus.failed:
@@ -1100,8 +1110,49 @@ def _load_workspace_config() -> dict[str, Any]:
     return cfg
 
 
+DEFAULT_SCRATCH_RUNS_ROOT = Path.home() / ".local" / "specwright" / "runs"
+
+
+def _scratch_runs_root() -> Path:
+    """Local scratch root for run output (bulk artifacts + consolidated YAML).
+
+    Never the projection repo, never an epic folder. Bulk artifacts live
+    here as the accept-lost tier; the durable record is the gated rows.
+    """
+    import os
+
+    env_root = os.environ.get("SPECWRIGHT_SCRATCH_ROOT")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+    return DEFAULT_SCRATCH_RUNS_ROOT
+
+
+def _emit_gated_run_records(*, store: Any, run_id: str) -> None:
+    """Emit run/run_step/run_report rows through the gate; fail loudly.
+
+    Wrapper so tests can monkeypatch emission without a live gate/DB.
+    """
+    from spec.executor.gate_emission import GateEmissionError, emit_run_records
+
+    try:
+        emission = emit_run_records(store=store, run_id=run_id)
+    except GateEmissionError as e:
+        _echo_error(f"Gated emission FAILED (no tree-writing fallback): {e}")
+        _echo_error(f"Local scratch evidence remains at: {store.get_run_path(run_id)}")
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Emitted {emission.total_emitted} run records through the gate "
+        f"({len(emission.emitted_names['run'])} run, "
+        f"{len(emission.emitted_names['run_step'])} steps, "
+        f"{len(emission.emitted_names['run_report'])} report) — "
+        f"{emission.verified_rows} rows verified in {emission.table}"
+    )
+
+
 def _resolve_projection_repo_path() -> Path | None:
-    """Resolve projection repo path for consolidated run output."""
+    """Resolve projection repo path (read-side only: locating older
+    consolidated runs). Run output never writes to the projection repo."""
     import os
 
     env_path = os.environ.get("SPECWRIGHT_PROJECTION_REPO")
@@ -1162,6 +1213,16 @@ def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> Any | 
         store = _new_store(root)
         if store.run_exists(run_id):
             return store
+
+    # Gated-mode scratch root: <scratch>/<epic_id>/<run_id>/run.yaml
+    scratch_root = _scratch_runs_root()
+    if scratch_root.exists():
+        for epic_runs_root in scratch_root.iterdir():
+            if not epic_runs_root.is_dir():
+                continue
+            scratch_store = ConsolidatedRunWriter(root=epic_runs_root)
+            if scratch_store.run_exists(run_id):
+                return scratch_store
 
     projection_repo = _resolve_projection_repo_path()
     if projection_repo is not None:
