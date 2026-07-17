@@ -1,6 +1,7 @@
 # CLAUDE.md — Specwright v2 Epic (e008)
 
 ## Core Contract
+- **Scope:** specwright **runs, validates, and records/traces** specs. It does **not** create or author epics/specs — authoring (epics/specs + their AGENTS.md) lives on the cloud-governor side.
 - **Entry point:** `specwright.execute(envelope)` is the only public API
 - **Spine:** `compile(job_def, envelope) -> JobInstance` then execute fixed steps
 - **Job template:** `aip-1` compiles to exactly 5 wrapper steps with ONE agent step that receives the ENTIRE AIP payload
@@ -55,62 +56,6 @@
 3. Ask — don't guess at contracts
 
 <!-- BEGIN SYNCED: specwright -->
-# Specwright Project Context
-
-## Description
-
-Spec execution engine. Compiles job definitions against spec markdown, executes step sequences via pluggable backends (claude-code, cmd, python, llm), and tracks runs with artifact capture.
-
-## Invariants
-
-- Job-based execution: specs compile to JobInstances with fixed step sequences.
-- Executor never mutates the step list — it runs exactly what compile() produced.
-- Run artifacts stored in ~/.local/local-governor/runs/, never in the target repo.
-
-## Boundaries
-
-### cli
-- Type: inbound
-- Contract: spec <command> [options]
-- Consumers: developers, agentic workflows
-
-### governor_fs
-- Type: dependency
-- Contract: ~/.local/local-governor/ filesystem layout
-- Requires: epics/, projects/, runs/, contracts/ directories
-
-### claude_code
-- Type: dependency
-- Contract: claude CLI binary
-- Requires: claude CLI for claude-code backend execution
-
-### llm_lib
-- Type: dependency
-- Contract: llm Python library (simon willison)
-- Requires: llm>=0.19.0 for LLM check execution
-
-## Architecture Decisions
-
-### adr-001: Job-based execution model
-**Status:** accepted
-
-**Rationale:** Decouples spec authoring from execution. JobDefs are reusable templates. Specs are payload.
-
-**Decision:** Specs compile to JobInstances via JobDef templates. Executor runs JobInstances.
-
-### adr-002: Pluggable backends
-**Status:** accepted
-
-**Rationale:** Different step types need different execution strategies.
-
-**Decision:** Backend registry dispatches steps to claude-code, cmd, python, llm, or codex backends.
-
-### adr-003: Governor-based storage
-**Status:** accepted
-
-**Rationale:** Artifacts, runs, and config live outside target repos.
-
-**Decision:** All specwright state in ~/.local/local-governor/. Target repos are never polluted.
 
 <!-- END SYNCED: specwright -->
 
@@ -365,7 +310,7 @@ id: e101-07-specwright-yaml-io
 tier: C
 title: "Specwright Full YAML Conversion — Structured IO for Registrar Loop"
 owner: benthepsychologist
-goal: Convert specwright to YAML as the native spec format. Read, write, scaffold, validate, and resolve .yaml specs. .md remains readable but .yaml is the default.
+goal: Convert specwright to YAML as the native spec format. Read, write, validate, and resolve .yaml specs. .md remains readable but .yaml is the default.
 validated: false
 version: '4.2'
 labels:
@@ -386,7 +331,7 @@ updated: '2026-03-13T00:00:00Z'
 
 Specwright speaks `.md` with YAML frontmatter. Registrar speaks pure `.yaml`
 (spec-v2.1 schema). Rather than maintain two formats, convert specwright to
-YAML as its native spec format — read, write, scaffold, validate, resolve.
+YAML as its native spec format — read, write, validate, resolve.
 
 This closes the registrar round-trip with zero format conversion:
 
@@ -430,24 +375,6 @@ it's just text between HTML comment markers.
 When both `spec-id.yaml` and `spec-id.md` exist, prefer `.yaml`. This makes
 the transition automatic — once a spec is in YAML, specwright picks up the
 structured version without any flags or config.
-
-### Scaffolder Outputs spec-v2.1 YAML
-
-`SpecScaffolder.scaffold()` currently emits markdown with frontmatter + prose
-sections. Change it to emit a spec-v2.1 YAML dict (dumped to string). The
-same fields exist — they just live in structured YAML instead of markdown
-sections. The scaffolder already has all the data (intent, build_delta,
-constraints, expectations); it just needs to emit it as YAML.
-
-`SpecDrafter` (LLM mode) wraps the scaffolder. Its prompt changes from
-"fill in the TODO sections of this markdown" to "fill in the TODO fields
-of this YAML spec". The LLM can edit YAML as well as markdown.
-
-### `draft.py` Default Extension Changes
-
-`spec draft` defaults to writing `{spec_id}.yaml` instead of `{spec_id}.md`.
-If the epic's `spec.path` field says `.md`, honor it (backward compat). But
-the computed default changes.
 
 ## Changes
 
@@ -656,94 +583,7 @@ return self._paths.specs / f"{slug}.yaml"
     return False
 ```
 
-### 9. `SpecScaffolder` — `spec_scaffolder.py`
-
-Replace `scaffold()` to emit spec-v2.1 YAML instead of markdown.
-
-The scaffolder already has all the structured data (from `ParsedIntent`):
-tier, title, owner, goal, constraints, expectations, branch, epic_id. It
-just needs to assemble a spec-v2.1 dict and dump it.
-
-```python
-def scaffold(self, num_phases: int = 2) -> str:
-    """Generate scaffolded spec as YAML (spec-v2.1 format)."""
-    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    branch = self.intent.branch or f"feat/{self.intent.id}"
-
-    spec = {
-        "artifact_id": "",  # filled by registrar on registration
-        "name": self.intent.id,
-        "version": "0.1.0",
-        "kind": "spec",
-        "title": self.intent.title,
-        "epic_artifact_id": "",  # filled by registrar
-        "tier": self.intent.tier or "B",
-        "owner": self.intent.owner or "TODO",
-        "goal": self.intent.goal,
-        "objective": "TODO: describe the objective",
-        "key_decisions": [],
-        "phases": [
-            {
-                "phase_number": i,
-                "title": "TODO",
-                "objective": "TODO",
-                "files_to_touch": [],
-                "notes": "",
-                "verification": [],
-            }
-            for i in range(1, num_phases + 1)
-        ],
-        "acceptance_criteria": [
-            {"text": c, "status": "pending"}
-            for c in (self.intent.expectations or ["TODO"])
-        ],
-        "constraints": self.intent.constraints or ["TODO"],
-        "dependencies": [],
-        "labels": [],
-        "repo": {
-            "name": self.repo_path.name,
-            "url": str(self.repo_path),
-            "working_branch": branch,
-        },
-        "created": now,
-        "updated": now,
-        "metadata": {},
-    }
-    return yaml.dump(spec, default_flow_style=False,
-                     allow_unicode=True, sort_keys=False)
-```
-
-The old markdown rendering methods (`_render_frontmatter`,
-`_render_header`, `_render_objective`, `_render_phase`, etc.) become dead
-code. Delete them.
-
-### 10. `SpecDrafter` — `spec_drafter.py`
-
-Update the prompt in `_build_prompt()` (~line 111). Change from:
-
-> "You have a scaffolded spec that needs to be completed..."
-> "...output the complete filled-in spec markdown."
-
-To:
-
-> "You have a scaffolded spec in YAML (spec-v2.1 format)..."
-> "...output the complete filled-in spec YAML."
-
-The LLM fills in TODO fields in the YAML instead of markdown sections.
-
-### 11. `draft.py` — Default Extension
-
-**Default output path** (~line 106):
-```python
-# Before:
-    output_path = epic_dir / "specs" / f"{spec_entry.id}.md"
-# After:
-    output_path = epic_dir / "specs" / f"{spec_entry.id}.yaml"
-```
-
-If `spec_entry.path` is set, it's used as-is (may be `.md` for old epics).
-
-### 12. `epic.py` — Default Spec Path in Refs
+### 9. `epic.py` — Default Spec Path in Refs
 
 **Default path in spec refs** (~lines 254, 410):
 ```python
@@ -753,7 +593,7 @@ If `spec_entry.path` is set, it's used as-is (may be `.md` for old epics).
     path=s.get("path", f"specs/{s['id']}.yaml"),
 ```
 
-### 13. `epic_validator.py` — Default Spec Path Lookup
+### 10. `epic_validator.py` — Default Spec Path Lookup
 
 **`_check_spec_files()`** (~line 82): the default path uses `.md` and feeds
 into a real file-existence check. If specs are `.yaml`, the default would
@@ -784,29 +624,6 @@ produce false "spec file not found" warnings.
         ...
 ```
 
-### 14. LLM Prompt Templates — `epic_drafter.py`, `spec_entry_drafter.py`
-
-Both files contain YAML templates shown to the LLM when drafting epics or
-spec entries. The templates include `path: specs/<spec-id>.md` — the LLM
-copies this pattern into its output, so new epics/specs would get `.md`
-default paths.
-
-**`epic_drafter.py`** (~line 142):
-```python
-# Before:
-      path: specs/<spec-id>.md
-# After:
-      path: specs/<spec-id>.yaml
-```
-
-**`spec_entry_drafter.py`** (~line 181):
-```python
-# Before:
-    path: specs/<spec-id>.md
-# After:
-    path: specs/<spec-id>.yaml
-```
-
 ### Cosmetic: Help Text & Docstrings
 
 Several already-touched files have help strings, docstring examples, and CLI
@@ -818,7 +635,6 @@ say `.yaml` (or `.yaml / .md`) for consistency. Affected files:
   examples at ~L244-246, L451-453, L838, L1062-1063, L1075
 - `governance.py` — `help=` at ~L225; docstring examples at ~L213, L239-241, L250
 - `epic.py` — docstring examples at ~L341-342
-- `refine.py` — `help=` at ~L21
 
 These are non-functional but should be updated for a clean grep.
 
@@ -828,17 +644,11 @@ These are non-functional but should be updated for a clean grep.
 |------|--------|
 | `src/spec/cli/exec_commands.py` | modify — add `_load_spec`, update `_get_spec_path`, `compile_command`, `run_command`, `validate_command` |
 | `src/spec/cli/governance.py` | modify — update `validate_spec` to accept `.yaml` |
-| `src/spec/cli/draft.py` | modify — default output extension `.md` → `.yaml` |
 | `src/spec/cli/epic.py` | modify — default spec path extension `.md` → `.yaml` |
 | `src/spec/governor/resolver.py` | modify — `.yaml`/`.yml` in `resolve_spec`, `list_specs_in_epic` |
 | `src/spec/governor/reader.py` | modify — `.yaml`/`.yml` in `_resolve_spec_path`, `list_specs`, `get_spec_path` |
 | `src/spec/governor/writer.py` | modify — `write_spec` emits `.yaml`, `delete_spec` checks both |
-| `src/spec/governance/spec_scaffolder.py` | modify — `scaffold()` emits spec-v2.1 YAML, delete old markdown renderers |
-| `src/spec/governance/spec_drafter.py` | modify — update LLM prompt for YAML output |
 | `src/spec/governance/epic_validator.py` | modify — default spec path `.md` → `.yaml`, accept both extensions |
-| `src/spec/governance/epic_drafter.py` | modify — LLM template `path:` default `.md` → `.yaml` |
-| `src/spec/governance/spec_entry_drafter.py` | modify — LLM template `path:` default `.md` → `.yaml` |
-| `src/spec/cli/refine.py` | modify — help text `.md` → `.yaml / .md` |
 
 ### Not Touched (and why)
 
@@ -863,13 +673,8 @@ These are non-functional but should be updated for a clean grep.
 - [ ] `GovernorReader.list_specs()` includes `.yaml` specs
 - [ ] `GovernorWriter.write_spec()` creates `.yaml` files
 - [ ] `GovernorWriter.delete_spec()` handles both `.yaml` and `.md`
-- [ ] `spec draft` outputs `.yaml` by default
-- [ ] `SpecScaffolder.scaffold()` returns spec-v2.1 YAML string
-- [ ] `spec epic create` / `spec epic add-spec` default path is `.yaml`
 - [ ] No changes to LLM backends — they still receive `spec_md` string
 - [ ] `epic_validator._check_spec_files()` defaults to `.yaml`, falls back to `.md`
-- [ ] `epic_drafter` LLM template uses `.yaml` default path
-- [ ] `spec_entry_drafter` LLM template uses `.yaml` default path
 - [ ] Help text and docstring examples updated to mention `.yaml`
 - [ ] Existing `.md` specs remain loadable (backward compat)
 
@@ -1306,3 +1111,9 @@ different scope and use case.
   pipeline changes (spec 03), CLI commands (spec 03)
 
 <!-- END SPEC: t013-01-skills-schema-and-store -->
+
+<!-- BEGIN SYNCED: SPEC: e040-07d-run-kinds-routing-and-runs-ingestion -->
+## Current Spec: e040-07d-run-kinds-routing-and-runs-ingestion
+
+(No acceptance criteria section found in spec)
+<!-- END SYNCED: SPEC: e040-07d-run-kinds-routing-and-runs-ingestion -->

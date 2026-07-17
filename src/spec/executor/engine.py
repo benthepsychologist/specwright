@@ -21,6 +21,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from spec.executor.backends import BackendError, get_backend
 from spec.executor.sandbox.capture import generate_patch
 from spec.executor.schemas import (
@@ -533,6 +535,227 @@ def _extract_acceptance_criteria(spec_md: str) -> str:
     return spec_md
 
 
+def _extract_spec_ground_truth(spec_md: str) -> dict[str, Any]:
+    """Extract compact, structured ground truth from a YAML-native spec."""
+
+    def _text_list(raw: Any) -> list[str]:
+        items: list[str] = []
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    items.append(item.strip())
+                elif isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        items.append(text.strip())
+        return items
+
+    try:
+        parsed = yaml.safe_load(spec_md) or {}
+    except Exception:
+        parsed = {}
+
+    if not isinstance(parsed, dict):
+        return {
+            "goal": None,
+            "objective": None,
+            "acceptance_criteria": [],
+            "constraints": [],
+            "touch_list": [],
+            "steps": [],
+            "body": None,
+        }
+
+    doc = parsed.get("document") if isinstance(parsed.get("document"), dict) else {}
+
+    touch_list: list[dict[str, str]] = []
+    for item in doc.get("touch_list", []):
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        action = item.get("action")
+        reason = item.get("reason")
+        if isinstance(path, str) and path.strip():
+            touch_list.append({
+                "path": path.strip(),
+                "action": action.strip() if isinstance(action, str) else "",
+                "reason": reason.strip() if isinstance(reason, str) else "",
+            })
+
+    steps: list[dict[str, Any]] = []
+    for item in doc.get("steps", []):
+        if not isinstance(item, dict):
+            continue
+        files = item.get("files") if isinstance(item.get("files"), list) else []
+        steps.append({
+            "id": item.get("id"),
+            "description": item.get("description", ""),
+            "verification": item.get("verification", ""),
+            "files": [f for f in files if isinstance(f, str)],
+        })
+
+    body = doc.get("body")
+    return {
+        "goal": parsed.get("goal") if isinstance(parsed.get("goal"), str) else None,
+        "objective": parsed.get("objective") if isinstance(parsed.get("objective"), str) else None,
+        "acceptance_criteria": _text_list(doc.get("acceptance_criteria", [])),
+        "constraints": _text_list(doc.get("constraints", [])),
+        "touch_list": touch_list,
+        "steps": steps,
+        "body": body if isinstance(body, str) else None,
+    }
+
+
+def _format_spec_ground_truth(spec_md: str, *, include_body_excerpt: bool = False) -> str:
+    """Format a compact spec-ground-truth summary for agent prompts."""
+
+    summary = _extract_spec_ground_truth(spec_md)
+    lines: list[str] = ["## Spec Ground Truth (Authoritative)", ""]
+
+    if summary["goal"]:
+        lines.extend(["### Goal", str(summary["goal"]), ""])
+
+    if summary["objective"]:
+        lines.extend(["### Objective", str(summary["objective"]), ""])
+
+    if summary["acceptance_criteria"]:
+        lines.append("### Acceptance Criteria")
+        for idx, item in enumerate(summary["acceptance_criteria"], 1):
+            lines.append(f"{idx}. {item}")
+        lines.append("")
+
+    if summary["constraints"]:
+        lines.append("### Constraints / Invariants")
+        for item in summary["constraints"]:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if summary["touch_list"]:
+        lines.append("### Intended File Surface")
+        for item in summary["touch_list"]:
+            action = f" ({item['action']})" if item["action"] else ""
+            reason = f" — {item['reason']}" if item["reason"] else ""
+            lines.append(f"- {item['path']}{action}{reason}")
+        lines.append("")
+
+    if summary["steps"]:
+        lines.append("### Execution Steps")
+        for item in summary["steps"]:
+            header = f"Step {item['id']}: {item['description']}" if item["id"] is not None else str(item["description"])
+            lines.append(f"- {header}")
+            if item["verification"]:
+                lines.append(f"  Verification: {item['verification']}")
+        lines.append("")
+
+    if include_body_excerpt and summary["body"]:
+        excerpt = str(summary["body"]).strip()
+        if len(excerpt) > 4000:
+            excerpt = excerpt[:4000] + "\n... (truncated)"
+        lines.extend(["### Body Excerpt", excerpt, ""])
+
+    return "\n".join(lines).strip()
+
+
+def _build_execute_spec_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
+    """Build prompt for Run 1: initial spec execution."""
+    prompt = """# Execute Spec
+
+You are implementing a governed spec. Follow the spec literally.
+
+## Non-negotiable rules
+
+1. Acceptance criteria and constraints are authoritative.
+2. Do NOT invent a cleaner architecture if it conflicts with the spec.
+3. Do NOT rewrite tests to bless an implementation that violates the spec.
+4. If the spec states an existing ground truth (shape, API, file contract,
+   data contract), preserve that exact ground truth.
+5. Prefer the files in the touch list. If you must touch another file, do the
+   minimum necessary and keep it clearly tied to the spec.
+
+## Required workflow
+
+1. Read the spec ground truth below and extract the invariants before editing.
+2. Inspect the current repo implementation to confirm the stated ground truth.
+3. Implement only what the spec asks for.
+4. Run the verification commands from the spec steps and acceptance criteria.
+5. Before finishing, re-check the implementation against the constraints,
+   not just the updated tests.
+"""
+
+    if spec_md:
+        prompt += "\n\n" + _format_spec_ground_truth(spec_md, include_body_excerpt=True)
+
+        forbidden = _extract_forbidden_legacy_semantics(spec_md)
+        if forbidden:
+            prompt += "\n\n## Forbidden Legacy Semantics (Must NOT Remain)\n\n"
+            for item in forbidden:
+                prompt += f"- {item}\n"
+
+    if epic_spec:
+        prompt += _format_epic_expectations(epic_spec)
+
+    return prompt
+
+
+def _extract_forbidden_legacy_semantics(spec_md: str) -> list[str]:
+    """Extract forbidden legacy semantics from YAML-native or markdown specs."""
+
+    def _normalize(raw: Any) -> list[str]:
+        if isinstance(raw, str):
+            return [raw.strip()] if raw.strip() else []
+        if isinstance(raw, list):
+            items: list[str] = []
+            for item in raw:
+                if isinstance(item, str) and item.strip():
+                    items.append(item.strip())
+            return items
+        return []
+
+    stripped = spec_md.lstrip()
+    if stripped and not stripped.startswith("---"):
+        try:
+            raw = yaml.safe_load(spec_md) or {}
+        except Exception:
+            raw = {}
+        if isinstance(raw, dict):
+            doc = raw.get("document") if isinstance(raw.get("document"), dict) else {}
+            semantics = raw.get("forbidden_legacy_semantics")
+            if semantics is None and isinstance(doc, dict):
+                semantics = doc.get("forbidden_legacy_semantics")
+            values = _normalize(semantics)
+            if values:
+                return values
+
+    if stripped.startswith("---"):
+        end = spec_md.find("\n---\n", 4)
+        if end != -1:
+            try:
+                frontmatter = yaml.safe_load(spec_md[4:end]) or {}
+            except Exception:
+                frontmatter = {}
+            if isinstance(frontmatter, dict):
+                values = _normalize(frontmatter.get("forbidden_legacy_semantics"))
+                if values:
+                    return values
+
+    lines = spec_md.splitlines()
+    collected: list[str] = []
+    in_section = False
+    for line in lines:
+        stripped_line = line.strip()
+        if stripped_line.lower().startswith("## forbidden legacy semantics"):
+            in_section = True
+            continue
+        if in_section:
+            if stripped_line.startswith("## "):
+                break
+            if stripped_line.startswith(("- ", "* ")):
+                item = stripped_line[2:].strip()
+                if item:
+                    collected.append(item)
+    return collected
+
+
 def _build_drift_fix_prompt(epic_spec: dict | None = None, spec_md: str | None = None) -> str:
     """Build prompt for Run 2: drift inspection and fix.
 
@@ -559,12 +782,8 @@ Focus ONLY on acceptance criteria and test correctness.
 Do NOT refactor, restyle, or explore beyond the touched files.
 """
 
-    # Add only the acceptance criteria (not the full spec)
     if spec_md:
-        ac = _extract_acceptance_criteria(spec_md)
-        prompt += "\n\n## Acceptance Criteria (Checklist)\n\n"
-        prompt += ac
-        prompt += "\n"
+        prompt += "\n\n" + _format_spec_ground_truth(spec_md)
 
     # Add epic expectations as ground truth if provided
     if epic_spec:
@@ -590,19 +809,32 @@ You are performing a final verification pass on the spec implementation.
 ## Your Task
 
 1. Run `git diff --name-only` from base commit — these are the ONLY files to check
-2. For each acceptance criterion below, verify it is correctly implemented
-3. Run relevant test suites — if any test fails, fix it
-4. Do NOT make unnecessary changes — only fix actual failures
+2. Verify the implementation against the acceptance criteria, epic expectations,
+   and architectural invariants — not just against the rewritten tests
+3. Explicitly search for any forbidden legacy semantics listed below; if any are
+   still present, that is drift even if tests pass
+4. Run relevant test suites — if any test fails, fix it
+5. Do NOT make unnecessary changes — only fix actual failures
 
-This is the FINAL pass. Be surgical: verify criteria, run tests, fix failures.
+This is the FINAL pass. Be surgical: verify criteria, check invariants, run tests,
+and fix real failures.
+
+Do not treat passing tests alone as sufficient evidence. Rewritten tests can still
+encode stale architecture.
 """
 
-    # Add only the acceptance criteria (not the full spec)
     if spec_md:
-        ac = _extract_acceptance_criteria(spec_md)
-        prompt += "\n\n## Acceptance Criteria (Checklist)\n\n"
-        prompt += ac
-        prompt += "\n"
+        prompt += "\n\n" + _format_spec_ground_truth(spec_md)
+
+        forbidden = _extract_forbidden_legacy_semantics(spec_md)
+        if forbidden:
+            prompt += "\n## Forbidden Legacy Semantics (Must NOT Remain)\n\n"
+            for item in forbidden:
+                prompt += f"- {item}\n"
+            prompt += (
+                "\nFor each forbidden semantic above, explicitly search the changed code "
+                "and updated tests. If it remains, remove it or mark the run as drifting.\n"
+            )
 
     # Add epic expectations as ground truth if provided
     if epic_spec:

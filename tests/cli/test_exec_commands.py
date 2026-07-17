@@ -208,6 +208,91 @@ class TestCompileCommand:
         assert result.exit_code == 0
         assert "job_id: aip-1" in result.stdout
 
+    def test_compile_resolves_relative_skill_path_in_frontmatter(
+        self, tmp_path, git_repo, jobdefs_installed
+    ):
+        """Compile resolves frontmatter skill paths relative to the spec file."""
+        skill_dir = tmp_path / "skills" / "direct-skill"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text("# direct-skill\n")
+
+        spec_path = tmp_path / "test-spec.md"
+        spec_path.write_text(
+            """---
+tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+skill: skills/direct-skill/SKILL.md
+repo:
+  working_branch: feat/test-feature
+---
+
+# Test Spec
+"""
+        )
+
+        output_file = tmp_path / "job_instance.yaml"
+        result = runner.invoke(
+            app,
+            [
+                "compile",
+                "aip-1",
+                str(spec_path),
+                "--repo",
+                str(git_repo),
+                "--output",
+                str(output_file),
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = yaml.safe_load(output_file.read_text())
+        refs_sync = next(step for step in data["steps"] if step["step_id"] == "refs.sync")
+        assert refs_sync["payload"]["skill"] == str((skill_dir / "SKILL.md").resolve())
+
+    def test_compile_yaml_spec_preserves_skills_metadata(
+        self, tmp_path, yaml_spec_file
+    ):
+        """_load_spec should retain skill metadata from YAML-native specs."""
+        yaml_spec_file.write_text(
+            """tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+skill: /tmp/direct-skill/SKILL.md
+skills:
+  - spec-skill
+repo:
+  working_branch: feat/test-feature
+"""
+        )
+
+        frontmatter, _ = exec_commands._load_spec(yaml_spec_file)
+        assert frontmatter["skill"] == "/tmp/direct-skill/SKILL.md"
+        assert frontmatter["skills"] == ["spec-skill"]
+
+        def test_compile_yaml_spec_preserves_forbidden_legacy_semantics(self, yaml_spec_file):
+                """_load_spec should retain forbidden legacy semantics from YAML-native specs."""
+                yaml_spec_file.write_text(
+                        """tier: C
+title: Test Spec
+owner: test-user
+goal: Test the executor CLI
+forbidden_legacy_semantics:
+    - Legacy path A must not remain
+    - Legacy path B must not remain
+repo:
+    working_branch: feat/test-feature
+"""
+                )
+
+                frontmatter, _ = exec_commands._load_spec(yaml_spec_file)
+                assert frontmatter["forbidden_legacy_semantics"] == [
+                        "Legacy path A must not remain",
+                        "Legacy path B must not remain",
+                ]
+
     def test_load_spec_yaml_returns_metadata_and_raw_content(self, yaml_spec_file):
         """_load_spec parses YAML metadata while preserving raw YAML content."""
         frontmatter, raw = exec_commands._load_spec(yaml_spec_file)
@@ -312,7 +397,7 @@ class TestRunCommand:
         # depending on whether branch.create step exists
         assert result.exit_code in [0, 1, 2]
 
-    def test_run_writes_consolidated_output_when_projection_configured(
+    def test_run_writes_consolidated_output_to_scratch_never_projection_repo(
         self,
         spec_file,
         git_repo,
@@ -320,8 +405,10 @@ class TestRunCommand:
         tmp_path,
         monkeypatch,
         jobdefs_installed,
+        gate_emission_calls,
     ):
-        """Default run output is consolidated when projection repo is configured."""
+        """Default run output: consolidated YAML in local scratch + gated
+        emission. The projection repo receives NOTHING, even when configured."""
         import yaml as yaml_module
 
         jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
@@ -331,6 +418,8 @@ class TestRunCommand:
         projection_repo = tmp_path / "projection-repo"
         projection_repo.mkdir(parents=True)
         monkeypatch.setenv("SPECWRIGHT_PROJECTION_REPO", str(projection_repo))
+
+        scratch_root = tmp_path / "specwright-scratch"
 
         result = runner.invoke(
             app,
@@ -344,7 +433,13 @@ class TestRunCommand:
         )
 
         assert result.exit_code in [0, 1, 2]
-        runs_root = projection_repo / "runs" / "adhoc"
+
+        # The projection repo got NOTHING (D2 — e040-07d).
+        assert not (projection_repo / "runs").exists()
+        assert list(projection_repo.iterdir()) == []
+
+        # Consolidated YAML landed in local scratch under the epic id.
+        runs_root = scratch_root / "adhoc"
         run_dirs = [d for d in runs_root.iterdir() if d.is_dir()]
         assert run_dirs
         run_dir = run_dirs[0]
@@ -357,6 +452,10 @@ class TestRunCommand:
         assert raw_step["kind"] == "run_step"
         raw_run = yaml_module.safe_load((run_dir / "run.yaml").read_text())
         assert raw_run["kind"] == "run"
+
+        # Gated emission was invoked exactly once, for this run.
+        assert len(gate_emission_calls) == 1
+        assert gate_emission_calls[0]["run_id"] == raw_run["run_id"]
 
     def test_run_legacy_output_flag_preserves_legacy_layout(
         self,
@@ -403,6 +502,44 @@ class TestRunCommand:
         assert (run_dir / "run.yaml").exists()
         assert (run_dir / "run_report.md").exists()
         assert not (run_dir / "run_report.yaml").exists()
+
+    def test_run_legacy_output_skips_gated_emission(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """--legacy-output is the explicit escape hatch: no gated emission."""
+        import yaml as yaml_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        store_path = tmp_path / "legacy-runs"
+        monkeypatch.setattr(
+            "spec.cli.exec_commands.RunStore",
+            lambda *args, **kwargs: RunStore(root=store_path),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "test-simple",
+                str(spec_file),
+                "--repo",
+                str(git_repo),
+                "--legacy-output",
+            ],
+        )
+
+        assert result.exit_code in [0, 1, 2]
+        assert gate_emission_calls == []
 
 
 # =============================================================================

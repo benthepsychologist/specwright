@@ -43,6 +43,17 @@ from spec.executor.store import RunStore
 REQUIRED_FRONTMATTER = {"tier", "title", "owner", "goal"}
 VALID_TIERS = {"A", "B", "C"}
 
+# Free-range chat runs land here, separate from epic/spec runs.
+SESSIONS_ROOT = Path.home() / ".local/local-governor/sessions"
+
+# Default prompt for a free-range chat session when none is supplied. The
+# claude-code backend requires a prompt to launch, even interactively.
+DEFAULT_FREE_RANGE_PROMPT = (
+    "Free-range chat session. You are NOT locked to a single repository — "
+    "you may roam across the workspace. This session is being recorded "
+    "(the transcript is captured into the run record). How can I help?"
+)
+
 
 def _echo_error(message: str) -> None:
     """Print error message in red."""
@@ -149,6 +160,12 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
         if not isinstance(raw, dict):
             raise ValueError(f"Expected a YAML mapping in {spec_path}")
 
+        # Registrar-native specs nest document fields under a `document:` key.
+        # Fall back to that sub-dict so both flat and envelope formats are accepted.
+        doc = raw.get("document") or {}
+        if not isinstance(doc, dict):
+            doc = {}
+
         frontmatter: dict[str, Any] = {}
         for key in (
             "tier",
@@ -160,21 +177,26 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
             "epic_artifact_id",
             "labels",
             "constraints",
+            "forbidden_legacy_semantics",
             "dependencies",
+            "skill",
+            "skills",
             "repo",
             "branch",
         ):
-            if key in raw:
-                frontmatter[key] = raw[key]
+            val = raw[key] if key in raw else doc.get(key)
+            if val is not None:
+                frontmatter[key] = val
 
         _validate_spec_metadata(frontmatter, source="YAML spec")
 
-        if "repo" in raw and isinstance(raw["repo"], dict):
-            frontmatter["repo"] = raw["repo"]
-            if not frontmatter.get("branch") and raw["repo"].get("working_branch"):
-                frontmatter["branch"] = raw["repo"]["working_branch"]
+        repo_raw = raw.get("repo") or doc.get("repo")
+        if isinstance(repo_raw, dict):
+            frontmatter["repo"] = repo_raw
+            if not frontmatter.get("branch") and repo_raw.get("working_branch"):
+                frontmatter["branch"] = repo_raw["working_branch"]
 
-        name = raw.get("name")
+        name = frontmatter.get("name") or raw.get("name")
         if isinstance(name, str) and "-" in name:
             prefix = name.split("-", 1)[0]
             if prefix and prefix[0] in {"e", "s", "t"}:
@@ -184,6 +206,20 @@ def _load_spec(spec_path: Path) -> tuple[dict[str, Any], str]:
 
     frontmatter = _parse_spec_frontmatter(content)
     return frontmatter, content
+
+
+def _resolve_frontmatter_path(raw: Any, *, base_dir: Path) -> str | None:
+    """Resolve an optional frontmatter path value against the spec directory."""
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (base_dir / path).resolve()
+    return str(path)
 
 
 def _get_spec_path(epic_id: str, spec_id: str) -> Path:
@@ -287,7 +323,7 @@ def compile_command(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
     review_model: str = typer.Option(
-        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3.1-pro-preview"
     ),
 ) -> None:
     """Compile a JobDef + spec into a JobInstance.
@@ -358,6 +394,11 @@ def compile_command(
         "epic_spec": None,  # No epic context when compiling from file
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
+        "skills": frontmatter.get("skills"),
+        # Epic folder carrying AGENTS.md + CLAUDE.md pointer for refs.sync to
+        # materialize into the target repo (None when not inside an epic).
+        "epic_dir": _resolve_epic_dir(spec_path),
         "models": payload_models,
     }
 
@@ -476,7 +517,7 @@ def run_command(
         None, "--models", "-m", help="Comma-separated model list in priority order (e.g., 'gpt-5.2,claude-opus-4.6')"
     ),
     review_model: str = typer.Option(
-        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3-pro-preview"
+        None, "--review-model", help="Model for LLM review steps (acceptance, suggestions); default: gemini-3.1-pro-preview"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Compile and print JobInstance without executing"
@@ -493,7 +534,16 @@ def run_command(
     legacy_output: bool = typer.Option(
         False,
         "--legacy-output",
-        help="Use legacy multi-file output layout in governor storage",
+        help=(
+            "EXPLICIT escape hatch: legacy multi-file tree output, no gated "
+            "emission. Default is local scratch + row emission through the gate."
+        ),
+    ),
+    free_range: bool = typer.Option(
+        False,
+        "--free-range",
+        help="Free-range chat mode: launch the agent without a spec (no repo lock), "
+        "routing the run record to the sessions store. Use with chat-1.",
     ),
 ) -> None:
     """Compile and execute a job in one step.
@@ -507,14 +557,16 @@ def run_command(
         spec run aip-1 ./my-feature.yaml --dry-run
         spec run aip-1 --epic e005-command-plane --spec e005-01-schemas
     """
-    # Validate inputs - must have either spec_path or epic/spec
-    if spec_path is None and (epic_id is None or spec_id is None):
-        _echo_error("Must provide either SPEC_PATH or both --epic and --spec")
-        raise typer.Exit(1)
+    # Validate inputs - must have either spec_path or epic/spec.
+    # Free-range mode bypasses this gate entirely (no spec required).
+    if not free_range:
+        if spec_path is None and (epic_id is None or spec_id is None):
+            _echo_error("Must provide either SPEC_PATH or both --epic and --spec")
+            raise typer.Exit(1)
 
-    if spec_path is not None and (epic_id is not None or spec_id is not None):
-        _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
-        raise typer.Exit(1)
+        if spec_path is not None and (epic_id is not None or spec_id is not None):
+            _echo_error("Cannot use both SPEC_PATH and --epic/--spec")
+            raise typer.Exit(1)
 
     # Load JobDef from local-governor
     try:
@@ -530,6 +582,18 @@ def run_command(
     except JobDefError as e:
         _echo_error(f"Failed to load JobDef: {e}")
         raise typer.Exit(1)
+
+    # Free-range chat mode: skip all spec loading/validation, build a minimal
+    # envelope, and route the run record to a dedicated sessions store.
+    if free_range:
+        _run_free_range(
+            job_def=job_def,
+            repo_path=repo_path,
+            agent=agent,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+        return
 
     # Load spec - either from file or from epic/spec
     epic_spec = None  # Will be populated for epic/spec mode
@@ -631,6 +695,11 @@ def run_command(
         "epic_spec": epic_spec,  # Epic expectations for drift checking (may be None)
         "agent": payload_agent,
         "project": repo_path.name,  # Project name for refs.sync (derived from repo dir)
+        "skill": _resolve_frontmatter_path(frontmatter.get("skill"), base_dir=spec_path.parent),
+        "skills": frontmatter.get("skills"),
+        # Epic folder carrying AGENTS.md + CLAUDE.md pointer for refs.sync to
+        # materialize into the target repo (None when not inside an epic).
+        "epic_dir": _resolve_epic_dir(spec_path),
         "models": payload_models,
     }
 
@@ -678,17 +747,18 @@ def run_command(
     typer.echo(f"  Branch:   {branch}")
     typer.echo("")
 
-    # Execute
+    # Execute.
+    # Default (gated) mode: bulk artifacts + consolidated YAML land in local
+    # scratch, and the run/run_step/run_report records are emitted through
+    # the storacle gate at finalize. The projection repo receives NOTHING.
+    # --legacy-output is the only tree-writing path, and it is explicit —
+    # there is no silent fallback (that fallback is how legacy trees kept
+    # appearing in epic folders).
     store: Any
     if legacy_output:
         store = _new_store(_infer_runs_root(spec_path))
     else:
-        projection_repo = _resolve_projection_repo_path()
-        if projection_repo is None:
-            _echo_warning("Projection repo not configured; falling back to legacy output root")
-            store = _new_store(_infer_runs_root(spec_path))
-        else:
-            store = ConsolidatedRunWriter(root=projection_repo / "runs" / effective_epic_id)
+        store = ConsolidatedRunWriter(root=_scratch_runs_root() / effective_epic_id)
 
     try:
         result = execute(envelope, store=store, run_id=run_id)
@@ -699,7 +769,94 @@ def run_command(
     # Show results
     _show_run_summary(result, store)
 
+    # Emit-once-at-finalize: push the run records through the gate. Emission
+    # failures fail loudly (exit 1) — NO fallback to tree-writing. The
+    # scratch files remain as local evidence either way.
+    if not legacy_output:
+        _emit_gated_run_records(store=store, run_id=run_id)
+
     # Exit code based on status
+    if result.status == RunStatus.failed:
+        raise typer.Exit(1)
+    elif result.status == RunStatus.completed_with_errors:
+        raise typer.Exit(2)
+
+
+# =============================================================================
+# Free-range chat helper
+# =============================================================================
+
+
+def _run_free_range(
+    *,
+    job_def: Any,
+    repo_path: Path | None,
+    agent: str | None,
+    run_id: str | None,
+    dry_run: bool,
+) -> None:
+    """Compile + execute a free-range chat job without a spec.
+
+    Builds a minimal envelope (no spec_md/spec_id/epic_dir), generates a run
+    id, and routes the run store to the dedicated sessions root so free-range
+    chat runs are kept separate from epic/spec runs.
+    """
+    from datetime import UTC, datetime
+
+    # Launch cwd: explicit --repo, else current directory. No .git requirement.
+    launch_cwd = (repo_path or Path.cwd()).resolve()
+
+    payload_agent = agent or "claude-code"
+    run_started_at = datetime.now(UTC).isoformat()
+
+    payload: dict[str, Any] = {
+        "agent": payload_agent,
+        "repo_path": str(launch_cwd),
+        "prompt": DEFAULT_FREE_RANGE_PROMPT,
+        # Threaded to the session.capture_transcript collector so it can resolve
+        # the run directory (runs_root/run_id) and select the session JSONL.
+        "runs_root": str(SESSIONS_ROOT),
+        "run_started_at": run_started_at,
+    }
+
+    envelope = {
+        "job_def": job_def.model_dump(),
+        "payload": payload,
+        "ctx": {},
+    }
+
+    if dry_run:
+        try:
+            job_instance = compile_job(job_def, envelope)
+        except ExecutorError as e:
+            _echo_error(f"Compilation failed: {e}")
+            raise typer.Exit(1)
+
+        typer.echo("Dry run - JobInstance compiled but not executed:")
+        typer.echo("")
+        instance_dict = job_instance.model_dump(mode="json")
+        print(yaml.dump(instance_dict, default_flow_style=False, allow_unicode=True, sort_keys=False))
+        return
+
+    if run_id is None:
+        run_id = generate_run_id(spec_id="chat")
+
+    store = _new_store(SESSIONS_ROOT)
+
+    typer.echo(f"Running free-range chat: {job_def.job_id}")
+    typer.echo(f"  Run ID:   {run_id}")
+    typer.echo(f"  Launch:   {launch_cwd}")
+    typer.echo(f"  Sessions: {SESSIONS_ROOT}")
+    typer.echo("")
+
+    try:
+        result = execute(envelope, store=store, run_id=run_id)
+    except ExecutorError as e:
+        _echo_error(f"Execution failed: {e}")
+        raise typer.Exit(1)
+
+    _show_run_summary(result, store)
+
     if result.status == RunStatus.failed:
         raise typer.Exit(1)
     elif result.status == RunStatus.completed_with_errors:
@@ -907,6 +1064,17 @@ def _find_epic_dir_for_spec_path(spec_path: Path) -> Path | None:
     return None
 
 
+def _resolve_epic_dir(spec_path: Path) -> str | None:
+    """Resolve the epic folder for a spec, as a string (or None).
+
+    Used to populate the refs.sync payload so the epic's AGENTS.md + CLAUDE.md
+    pointer can be materialized into the target repo. Returns None when the spec
+    is not inside an epic (e.g. ad-hoc file mode).
+    """
+    epic_dir = _find_epic_dir_for_spec_path(spec_path)
+    return str(epic_dir) if epic_dir is not None else None
+
+
 def _find_epic_dir_from_cwd() -> Path | None:
     """Infer epic directory from current working directory by walking upward."""
     cwd = Path.cwd()
@@ -942,8 +1110,49 @@ def _load_workspace_config() -> dict[str, Any]:
     return cfg
 
 
+DEFAULT_SCRATCH_RUNS_ROOT = Path.home() / ".local" / "specwright" / "runs"
+
+
+def _scratch_runs_root() -> Path:
+    """Local scratch root for run output (bulk artifacts + consolidated YAML).
+
+    Never the projection repo, never an epic folder. Bulk artifacts live
+    here as the accept-lost tier; the durable record is the gated rows.
+    """
+    import os
+
+    env_root = os.environ.get("SPECWRIGHT_SCRATCH_ROOT")
+    if env_root:
+        return Path(env_root).expanduser().resolve()
+    return DEFAULT_SCRATCH_RUNS_ROOT
+
+
+def _emit_gated_run_records(*, store: Any, run_id: str) -> None:
+    """Emit run/run_step/run_report rows through the gate; fail loudly.
+
+    Wrapper so tests can monkeypatch emission without a live gate/DB.
+    """
+    from spec.executor.gate_emission import GateEmissionError, emit_run_records
+
+    try:
+        emission = emit_run_records(store=store, run_id=run_id)
+    except GateEmissionError as e:
+        _echo_error(f"Gated emission FAILED (no tree-writing fallback): {e}")
+        _echo_error(f"Local scratch evidence remains at: {store.get_run_path(run_id)}")
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Emitted {emission.total_emitted} run records through the gate "
+        f"({len(emission.emitted_names['run'])} run, "
+        f"{len(emission.emitted_names['run_step'])} steps, "
+        f"{len(emission.emitted_names['run_report'])} report) — "
+        f"{emission.verified_rows} rows verified in {emission.table}"
+    )
+
+
 def _resolve_projection_repo_path() -> Path | None:
-    """Resolve projection repo path for consolidated run output."""
+    """Resolve projection repo path (read-side only: locating older
+    consolidated runs). Run output never writes to the projection repo."""
     import os
 
     env_path = os.environ.get("SPECWRIGHT_PROJECTION_REPO")
@@ -1004,6 +1213,16 @@ def _store_for_run_id(run_id: str, hint_runs_root: Path | None = None) -> Any | 
         store = _new_store(root)
         if store.run_exists(run_id):
             return store
+
+    # Gated-mode scratch root: <scratch>/<epic_id>/<run_id>/run.yaml
+    scratch_root = _scratch_runs_root()
+    if scratch_root.exists():
+        for epic_runs_root in scratch_root.iterdir():
+            if not epic_runs_root.is_dir():
+                continue
+            scratch_store = ConsolidatedRunWriter(root=epic_runs_root)
+            if scratch_store.run_exists(run_id):
+                return scratch_store
 
     projection_repo = _resolve_projection_repo_path()
     if projection_repo is not None:

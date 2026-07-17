@@ -116,8 +116,14 @@ class CopilotBackend(BackendBase):
         spec_md: str | None = None,
     ) -> str:
         """Build a prompt based on type (drift_fix, drift_verify, etc.)."""
-        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
+        from spec.executor.engine import (
+            _build_drift_fix_prompt,
+            _build_drift_verify_prompt,
+            _build_execute_spec_prompt,
+        )
 
+        if prompt_type == "execute_spec":
+            return _build_execute_spec_prompt(epic_spec, spec_md)
         if prompt_type == "drift_fix":
             return _build_drift_fix_prompt(epic_spec, spec_md)
         if prompt_type == "drift_verify":
@@ -206,6 +212,7 @@ class CopilotBackend(BackendBase):
                     repo_path=repo_path,
                     stdout_path=stdout_path,
                     stderr_path=stderr_path,
+                    prompt=prompt,
                 )
             except Exception as e:
                 exit_code = 1
@@ -315,17 +322,19 @@ class CopilotBackend(BackendBase):
         """Build the copilot CLI command for interactive TUI mode.
 
         Args:
-            prompt: Initial context/prompt to pass to the interactive session
+            prompt: Spec context — written to .specwright-prompt.md in the repo
+                    root, NOT passed via -p. Passing -p forces headless one-shot
+                    execution and no TUI opens.
 
         Returns:
             Command list for interactive execution.
 
-        Note: In interactive mode, the Copilot CLI TUI opens with the provided prompt
-        as context. Users can interact with the session and switch models via /model.
+        Note: Copilot CLI opens the interactive TUI when launched without -p.
+        The spec context is written to .specwright-prompt.md so the user can
+        reference it in-session. The deny-tool flag still applies.
         """
         return [
             "copilot",
-            "-p", prompt,
             "--deny-tool", "shell(git*)",
         ]
 
@@ -383,28 +392,41 @@ class CopilotBackend(BackendBase):
         repo_path: Path,
         stdout_path: Path,
         stderr_path: Path,
+        prompt: str | None = None,
     ) -> int:
         """Execute copilot CLI in interactive TUI mode.
 
-        Launches the TUI with terminal inherited (no PIPE).
-        No timeout — the human controls when to exit.
+        Writes the spec prompt to .specwright-prompt.md in the repo root so
+        the user can reference it in-session. Launches the TUI with terminal
+        inherited (no PIPE). No timeout — the human controls when to exit.
+        Cleans up the prompt file on exit.
 
         Args:
-            cmd: The copilot command to run (includes -p with prompt context)
+            cmd: The copilot command to run (no -p flag — TUI mode)
             repo_path: Target repository path
             stdout_path: Path to write stdout marker
             stderr_path: Path to write stderr marker
+            prompt: Spec context to write to .specwright-prompt.md
 
         Returns:
             Exit code from the copilot process.
         """
         import shlex
 
+        prompt_file = repo_path / ".specwright-prompt.md"
+        prompt_file_created = False
+        if prompt:
+            prompt_file.write_text(prompt)
+            prompt_file_created = True
+
         cmd_str = " ".join(shlex.quote(arg) for arg in cmd)
 
         try:
             original_cwd = os.getcwd()
             os.chdir(repo_path)
+            if prompt_file_created:
+                print(f"\n\033[1;34m📋 Spec context written to {prompt_file}\033[0m")
+                print("   In-session: 'Read .specwright-prompt.md for the spec context'\n")
             exit_code = os.system(cmd_str)
             if os.WIFEXITED(exit_code):
                 exit_code = os.WEXITSTATUS(exit_code)
@@ -412,6 +434,8 @@ class CopilotBackend(BackendBase):
                 exit_code = 1
         finally:
             os.chdir(original_cwd)
+            if prompt_file_created and prompt_file.exists():
+                prompt_file.unlink()
             stdout_path.write_text("(interactive session — no stdout capture)\n")
             stderr_path.write_text("")
 

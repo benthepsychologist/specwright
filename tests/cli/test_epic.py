@@ -84,29 +84,22 @@ class TestEpicHelp:
         assert result.exit_code == 0
         assert "Epic management commands" in result.output
 
-    def test_epic_create_help(self, runner: CliRunner):
-        """epic create --help works."""
-        result = runner.invoke(app, ["epic", "create", "--help"])
-        assert result.exit_code == 0
-        assert "--goal" in result.output
+    def test_epic_authoring_commands_removed(self, runner: CliRunner):
+        """Creation/authoring subcommands are gone (t013-02).
 
-    def test_epic_add_target_help(self, runner: CliRunner):
-        """epic add-target --help works."""
-        result = runner.invoke(app, ["epic", "add-target", "--help"])
-        assert result.exit_code == 0
-        assert "--repo-path" in result.output
+        specwright runs + validates + records; it no longer creates or authors
+        epics/specs. create/add-target/add-spec/set-current must not exist.
+        """
+        for cmd in ("create", "add-target", "add-spec", "set-current"):
+            result = runner.invoke(app, ["epic", cmd, "--help"])
+            assert result.exit_code != 0, f"epic {cmd} should not exist"
 
-    def test_epic_add_spec_help(self, runner: CliRunner):
-        """epic add-spec --help works."""
-        result = runner.invoke(app, ["epic", "add-spec", "--help"])
-        assert result.exit_code == 0
-        assert "--depends-on" in result.output
-
-    def test_epic_set_current_help(self, runner: CliRunner):
-        """epic set-current --help works."""
-        result = runner.invoke(app, ["epic", "set-current", "--help"])
-        assert result.exit_code == 0
-        assert "--spec" in result.output
+        help_result = runner.invoke(app, ["epic", "--help"])
+        out = help_result.output.lower()
+        assert "create" not in out
+        assert "add-target" not in out
+        assert "add-spec" not in out
+        assert "set-current" not in out
 
     def test_epic_mark_done_help(self, runner: CliRunner):
         """epic mark-done --help works."""
@@ -237,118 +230,6 @@ class TestEpicCheck:
             assert "not enabled" in result.output.lower() or "llm" in result.output.lower()
 
 
-class TestEpicCreate:
-    """Tests for epic create command."""
-
-    def test_create_requires_goal(self, runner: CliRunner, temp_governor: Path):
-        """Create requires --goal option."""
-        result = runner.invoke(app, ["epic", "create", "New Epic"])
-        assert result.exit_code != 0
-
-    def test_create_requires_owner(self, runner: CliRunner, temp_governor: Path):
-        """Create requires owner (from config or --owner)."""
-        result = runner.invoke(app, ["epic", "create", "New Epic", "--goal", "Test"])
-        # Should fail because no owner
-        assert result.exit_code != 0 or "owner" in result.output.lower()
-
-
-class TestEpicAddTarget:
-    """Tests for epic add-target command."""
-
-    def test_add_target(self, runner: CliRunner, temp_governor: Path):
-        """add-target adds a target."""
-        result = runner.invoke(
-            app,
-            [
-                "epic",
-                "add-target",
-                "test-epic",
-                "--id",
-                "new-repo",
-                "--repo-path",
-                "/workspace/new",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "Added target" in result.output
-
-
-class TestEpicAddSpec:
-    """Tests for epic add-spec command."""
-
-    def test_add_spec(self, runner: CliRunner, temp_governor: Path):
-        """add-spec adds a spec."""
-        result = runner.invoke(
-            app,
-            [
-                "epic",
-                "add-spec",
-                "test-epic",
-                "--id",
-                "spec-002",
-                "--repo",
-                "myrepo",
-                "--branch",
-                "main",
-                "--path",
-                "specs/new.md",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "Added spec" in result.output
-
-    def test_add_spec_invalid_repo(self, runner: CliRunner, temp_governor: Path):
-        """add-spec fails for invalid repo."""
-        result = runner.invoke(
-            app,
-            [
-                "epic",
-                "add-spec",
-                "test-epic",
-                "--id",
-                "spec-002",
-                "--repo",
-                "unknown",
-                "--branch",
-                "main",
-                "--path",
-                "test.md",
-            ],
-        )
-        assert result.exit_code != 0
-
-
-class TestEpicSetCurrent:
-    """Tests for epic set-current command."""
-
-    def test_set_current(self, runner: CliRunner, temp_governor: Path):
-        """set-current sets current spec."""
-        # First add another spec
-        runner.invoke(
-            app,
-            [
-                "epic",
-                "add-spec",
-                "test-epic",
-                "--id",
-                "spec-002",
-                "--repo",
-                "myrepo",
-                "--branch",
-                "main",
-                "--path",
-                "test.md",
-            ],
-        )
-
-        result = runner.invoke(
-            app,
-            ["epic", "set-current", "test-epic", "--spec", "spec-002"],
-        )
-        assert result.exit_code == 0
-        assert "Set current spec" in result.output
-
-
 class TestEpicMarkDone:
     """Tests for epic mark-done command."""
 
@@ -362,76 +243,3 @@ class TestEpicMarkDone:
         assert "Marked spec" in result.output
         assert "done" in result.output.lower()
 
-
-class TestEpicYamlDefaultPaths:
-    """Tests for YAML default spec path behavior."""
-
-    def test_apply_epic_patch_defaults_to_yaml_path(self):
-        """LLM patch merge defaults missing spec.path to .yaml."""
-        from datetime import UTC, datetime
-        from unittest.mock import patch
-
-        from spec.cli.epic import _apply_epic_patch
-        from spec.epic.schema import Epic, Intent, Target
-
-        epic = Epic(
-            version="1.0",
-            kind="epic",
-            id="e100-test",
-            title="Test Epic",
-            owner="test",
-            created=datetime.now(UTC),
-            updated=datetime.now(UTC),
-            intent=Intent(goal="Test"),
-            targets=[Target(id="myrepo", repo_path="/workspace/myrepo", default_branch="main")],
-            specs=[],
-        )
-
-        with patch("spec.epic.writer.save_epic"):
-            _apply_epic_patch(epic, {"specs": [{"id": "e100-01", "title": "S1"}]})
-
-        assert epic.specs[0].path == "specs/e100-01.yaml"
-
-    def test_add_spec_llm_defaults_to_yaml_path(self, runner: CliRunner, temp_governor: Path):
-        """epic add-spec --llm defaults missing generated path to .yaml."""
-        from datetime import UTC, datetime
-        from unittest.mock import patch
-
-        from spec.epic.schema import Epic, Intent, Target
-
-        epic = Epic(
-            version="1.0",
-            kind="epic",
-            id="test-epic",
-            title="Test Epic",
-            owner="test",
-            created=datetime.now(UTC),
-            updated=datetime.now(UTC),
-            intent=Intent(goal="Test"),
-            targets=[Target(id="myrepo", repo_path="/workspace/myrepo", default_branch="main")],
-            specs=[],
-        )
-
-        with (
-            patch("spec.epic.loader.load_epic", return_value=epic),
-            patch("spec.governance.spec_entry_drafter.SpecEntryDrafter") as drafter_cls,
-            patch("spec.epic.writer.add_spec") as add_spec_mock,
-        ):
-            drafter = drafter_cls.return_value
-            drafter.draft.return_value = [
-                {
-                    "id": "e100-02",
-                    "title": "Generated Spec",
-                    "repo": "myrepo",
-                    "branch": "feat/e100-02",
-                }
-            ]
-
-            result = runner.invoke(
-                app,
-                ["epic", "add-spec", "test-epic", "generated spec", "--llm"],
-            )
-
-            assert result.exit_code == 0
-            added_spec = add_spec_mock.call_args_list[0].args[1]
-            assert added_spec.path == "specs/e100-02.yaml"

@@ -27,7 +27,7 @@ def generate_command(
 
     Examples:
         spec delta generate t004-02
-        spec delta generate t004-02 --model gemini-3-pro-preview
+        spec delta generate t004-02 --model gemini-3.1-pro-preview
         spec delta generate t004-02 --yes
     """
     from spec.governance.delta_generator import DeltaGenerationError, DeltaGenerator

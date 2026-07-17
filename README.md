@@ -19,10 +19,7 @@ uv pip install specwright
 cd /path/to/your/project
 spec init
 
-# Draft a spec from an epic entry
-spec draft t004/t004-01 --llm
-
-# Or compile and run directly
+# Compile and run a spec (specwright runs specs; it does not author them)
 spec compile aip-1 ./my-feature.md
 spec run aip-1 ./my-feature.md --repo . --agent claude-code
 ```
@@ -98,17 +95,6 @@ spec config --show                            # Display current config
 ### Spec Lifecycle
 
 ```bash
-spec draft t004/t004-01                       # Draft spec from epic entry
-  --context "additional context"              #   extra context for drafting
-  --phases 3                                  #   number of AIP phases
-  --llm --model gemini-3-pro-preview          #   LLM-assisted drafting
-  --dry-run                                   #   preview without writing
-
-spec refine ./spec.md                         # Iteratively improve spec with LLM
-  --context "focus on error handling"
-  --apply                                     #   apply changes directly
-  --model gemini-3-pro-preview
-
 spec finish t004-01                           # Apply build delta and close lifecycle
   --dry-run --json                            #   preview in JSON format
 
@@ -118,27 +104,10 @@ spec delta generate t004-01                   # Generate build delta via LLM
 
 ### Epic Management
 
+Epics/specs are authored on the cloud-governor side, not via specwright. The epic
+commands below operate on existing epics (status/lifecycle/validation):
+
 ```bash
-spec epic create "Feature Title"              # Create epic
-  --id e008 --goal "One-line goal"
-  --category feature --owner ben
-  --llm --context "background info"           #   LLM-assisted creation
-
-spec epic add-target e008                     # Add target repository
-  --id myrepo --repo-path /path/to/repo
-  --branch main --governor-project myproject
-
-spec epic add-spec e008                       # Add spec to epic
-  --id e008-01 --repo myrepo
-  --path specs/feature.md
-  --depends-on e008-00                        #   dependency tracking
-  --expectation "implement auth"
-  --constraint "no breaking changes"
-
-spec epic add-spec e008 "describe feature"    # LLM-assisted spec creation
-  --llm --target myrepo --context "details"
-
-spec epic set-current e008 --spec e008-01     # Set active spec
 spec epic mark-done e008 --spec e008-01       # Mark spec complete
 spec epic status e008                         # Show status with DAG
 spec epic list                                # List all epics
@@ -210,8 +179,6 @@ src/spec/
 ├── cli/                   # Typer CLI
 │   ├── spec.py            # Main commands (init, compile, run, execute, status, logs)
 │   ├── epic.py            # Epic management subcommands
-│   ├── draft.py           # Spec drafting
-│   ├── refine.py          # Spec refinement
 │   ├── finish.py          # Spec lifecycle completion
 │   ├── delta.py           # Build delta management
 │   ├── governance.py      # Governance commands
@@ -241,12 +208,9 @@ src/spec/
 │       ├── capture.py     # Git state capture
 │       └── enforcer.py    # Sandbox policy enforcer
 ├── governance/            # Governance operations
-│   ├── spec_drafter.py    # LLM-assisted spec drafting
-│   ├── spec_refiner.py    # Iterative spec improvement
 │   ├── spec_validator.py  # Spec structure validation
 │   ├── delta_generator.py # Build delta generation
 │   ├── delta_applicator.py # Build delta application
-│   ├── epic_drafter.py    # Epic creation
 │   ├── epic_updater.py    # Epic updates
 │   ├── epic_validator.py  # Epic validation
 │   ├── build_validator.py # Build.yaml validation
@@ -262,7 +226,7 @@ src/spec/
 ├── epic/                  # Epic management
 │   ├── schema.py          # Epic, SpecRef, Check dataclasses
 │   ├── loader.py          # Load/validate epics
-│   ├── writer.py          # Create/update epics
+│   ├── writer.py          # Update epics (save, status, history)
 │   └── dag.py             # Dependency graph utilities
 ├── checks/                # LLM-powered checks
 │   ├── executor.py        # Check execution engine

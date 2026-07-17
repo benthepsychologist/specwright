@@ -59,16 +59,6 @@ from spec.cli.delta import delta_app  # noqa: E402
 
 app.add_typer(delta_app, name="delta")
 
-# Register spec draft command (scaffolded spec generation)
-from spec.cli.draft import spec_draft  # noqa: E402
-
-app.command("draft")(spec_draft)
-
-# Register spec refine command (iterative spec improvement)
-from spec.cli.refine import spec_refine  # noqa: E402
-
-app.command("refine")(spec_refine)
-
 
 def get_default_config() -> dict:
     """Get default Specwright configuration (v0.7 format)."""

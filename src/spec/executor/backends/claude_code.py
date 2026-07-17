@@ -233,9 +233,15 @@ class ClaudeCodeBackend(BackendBase):
         Returns:
             Built prompt string
         """
-        from spec.executor.engine import _build_drift_fix_prompt, _build_drift_verify_prompt
+        from spec.executor.engine import (
+            _build_drift_fix_prompt,
+            _build_drift_verify_prompt,
+            _build_execute_spec_prompt,
+        )
 
-        if prompt_type == "drift_fix":
+        if prompt_type == "execute_spec":
+            return _build_execute_spec_prompt(epic_spec, spec_md)
+        elif prompt_type == "drift_fix":
             return _build_drift_fix_prompt(epic_spec, spec_md)
         elif prompt_type == "drift_verify":
             return _build_drift_verify_prompt(epic_spec, spec_md)

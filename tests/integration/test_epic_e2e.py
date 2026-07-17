@@ -1,7 +1,9 @@
 """End-to-end integration tests for the epic system.
 
-These tests cover only the Step 6 required workflows:
-1) Create epic -> add target -> add spec -> set-current -> status
+specwright runs + validates + records; it no longer creates/authors epics
+(t013-02). Epics are authored on the cloud-governor path, so these tests
+materialize epic.yaml directly and exercise only the kept commands:
+1) status reflects the epic's current spec
 2) mark-done -> status shows done with checkmark
 3) validate detects cycles and missing refs
 4) check with LLM disabled returns exit 4 with message (deterministic)
@@ -101,59 +103,40 @@ state:
 
 
 class TestEpicE2ERequiredWorkflows:
-    def test_01_create_add_target_add_spec_set_current_status(
+    def test_01_status_reflects_current_spec(
         self, runner: CliRunner, governor_root: Path
     ) -> None:
         epic_id = "e001-test-epic"
 
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "create",
-                "Test Epic",
-                "--id",
-                epic_id,
-                "--goal",
-                "Test the epic system",
-                "--owner",
-                "testuser",
-            ],
-        )
+        _write_epic_yaml(
+            governor_root,
+            epic_id,
+            f"""version: \"0.1\"
+kind: epic
+id: {epic_id}
+title: \"Test Epic\"
+owner: testuser
+created: 2025-01-01T00:00:00Z
+updated: 2025-01-01T00:00:00Z
+intent:
+  goal: \"Test the epic system\"
 
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "add-target",
-                epic_id,
-                "--id",
-                "myrepo",
-                "--repo-path",
-                "/workspace/myrepo",
-                "--branch",
-                "main",
-            ],
+targets:
+  - id: myrepo
+    repo_path: /workspace/myrepo
+    default_branch: main
+specs:
+  - id: spec-01
+    repo: myrepo
+    branch: feat/test
+    path: specs/test.md
+    status: active
+checks: []
+state:
+  status: active
+  current_spec: spec-01
+""",
         )
-
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "add-spec",
-                epic_id,
-                "--id",
-                "spec-01",
-                "--repo",
-                "myrepo",
-                "--branch",
-                "feat/test",
-                "--path",
-                "specs/test.md",
-            ],
-        )
-
-        _invoke_ok(runner, ["epic", "set-current", epic_id, "--spec", "spec-01"])
 
         output = _invoke_ok(runner, ["epic", "status", epic_id])
         assert f"ID: {epic_id}" in output
@@ -165,52 +148,36 @@ class TestEpicE2ERequiredWorkflows:
     ) -> None:
         epic_id = "e002-mark-done"
 
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "create",
-                "Mark Done Epic",
-                "--id",
-                epic_id,
-                "--goal",
-                "Test mark-done",
-                "--owner",
-                "testuser",
-            ],
+        _write_epic_yaml(
+            governor_root,
+            epic_id,
+            f"""version: \"0.1\"
+kind: epic
+id: {epic_id}
+title: \"Mark Done Epic\"
+owner: testuser
+created: 2025-01-01T00:00:00Z
+updated: 2025-01-01T00:00:00Z
+intent:
+  goal: \"Test mark-done\"
+
+targets:
+  - id: myrepo
+    repo_path: /workspace/myrepo
+    default_branch: main
+specs:
+  - id: spec-01
+    repo: myrepo
+    branch: main
+    path: specs/spec-01.md
+    status: active
+checks: []
+state:
+  status: active
+  current_spec: spec-01
+""",
         )
 
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "add-target",
-                epic_id,
-                "--id",
-                "myrepo",
-                "--repo-path",
-                "/workspace/myrepo",
-            ],
-        )
-
-        _invoke_ok(
-            runner,
-            [
-                "epic",
-                "add-spec",
-                epic_id,
-                "--id",
-                "spec-01",
-                "--repo",
-                "myrepo",
-                "--branch",
-                "main",
-                "--path",
-                "specs/spec-01.md",
-            ],
-        )
-
-        _invoke_ok(runner, ["epic", "set-current", epic_id, "--spec", "spec-01"])
         _invoke_ok(
             runner,
             ["epic", "mark-done", epic_id, "--spec", "spec-01", "--note", "done"],

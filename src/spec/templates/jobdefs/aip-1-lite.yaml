@@ -30,16 +30,20 @@ steps:
       capture_git: true
     continue_on_failure: false
 
-  # Step 2: Sync agent reference files from build.yaml
+  # Step 2: Best-effort sync of agent reference files, spec stubs, and skills
   - step_id: refs.sync
     backend: python
-    description: Sync agent reference files from build.yaml
+    description: Sync agent references (project, spec, skills, epic context)
     payload:
       callable: "agent.sync_refs"
+      skip_sync: false
       agents: ["@payload.agent"]
       project: "@payload.project"
       spec_md: "@payload.spec_md"
       spec_id: "@payload.spec_id"
+      skill: "@payload.skill"
+      skills: "@payload.skills"
+      epic_dir: "@payload.epic_dir"
     continue_on_failure: true
 
   # Step 3: Run 1 — Execute spec (single pass)
@@ -47,7 +51,9 @@ steps:
     backend: "@payload.agent"
     description: "Run 1: Execute spec with agent"
     payload:
+      prompt_type: execute_spec
       spec_md: "@payload.spec_md"
+      epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       models: "@payload.models"
       capture_git: true
