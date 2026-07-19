@@ -1,6 +1,6 @@
 # STATUS — specwright
 
-As of **2026-07-17** (`main` at `8818a64`).
+As of **2026-07-19** (`main` at `575ae57`, pushed to origin).
 
 ## Current state
 
@@ -21,6 +21,9 @@ As of **2026-07-17** (`main` at `8818a64`).
 
 ## Recent changes
 
+- 2026-07-18 — `HOTFIXES.md` gained the projection-config update procedure
+  (lorchestra `object.update`, superseding hand-built plans); repo-level
+  `AGENTS.md`/`STATUS.md` added; all pushed to origin.
 - 2026-07-17 — e040-07d merged: `spec.executor.gate_emission` (gated
   emission), silent-fallback removal, repo-wide test guards (emission
   stubbed + scratch redirected in tests). Historical run trees (87) were
