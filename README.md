@@ -77,7 +77,6 @@ spec run aip-1 ./spec.md                      # Compile and execute in one step
   --agent copilot --models gpt-5.3-codex      #   agent and model selection
   --dry-run                                   #   preview without executing
   --run-id custom-run-id                      #   custom run identifier
-  --epic e008 --spec e008-01                  #   resolve spec from epic
 
 spec execute ./instance.yaml                  # Execute a pre-compiled JobInstance
   --run-id custom-run-id
