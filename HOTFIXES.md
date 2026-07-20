@@ -10,6 +10,44 @@ specs/epics live).
 
 ---
 
+## 2026-07-20 — gate-emission env hardening + lorchestra as a declared dep
+
+Incident: lorchestra got installed NON-editable into this venv at 18:41 (ad
+hoc, unblocking an earlier import failure), so `lorchestra.__file__` resolved
+into site-packages, `gate_emission`'s `.env` lookup silently missed
+`/workspace/lorchestra/.env`, and BOTH e045 runs' finalize emissions failed —
+e045-02's silently earlier the same day (proven missing at re-emit), e045-02b's
+loudly on the six bare `STORACLE_*` vars. Recovered by reinstalling editable
+and re-running `emit_run_records` for both runs (9 + 9 rows verified in
+`ops__base`). Two hardening fixes so it can't recur silently:
+
+- **`gate_emission._require_storacle_env`** — pre-submit check of the six
+  storacle-required vars (mirrors storacle config.py); refusal names the
+  resolved `.env` path and, when it doesn't exist, diagnoses the
+  non-editable-install cause with the fix command. The silent
+  `if env_path.exists()` skip is what made this a two-run mystery.
+- **lorchestra declared in pyproject** (`[tool.uv.sources]` editable path
+  dep) so venv rebuilds keep the editable install; `requires-python` bumped
+  to `>=3.14` to match lorchestra's. `uv lock`/`uv sync` resolved the full
+  path-dep chain and pruned a stale `workman` install. Goes away when the
+  job executor lifts out of lorchestra.
+
+Observed while verifying, not fixed here: a full re-emit of an
+already-landed run re-submits all 9 objects instead of skipping (the
+`_row_exists` precheck didn't fire); the gate's append-once semantics
+deduped silently so row counts stay correct, but that's §6b failure-mode-1
+territory — worth a look next time someone's in this file. Also note: with
+lorchestra's e045-02b two-phase write-back live, every emission's
+`object.create` execution now writes its own governed claim+terminal run
+rows — by design (every execution is a run), relevant to e040-12's
+retention math.
+
+Related: e045-02b (cloud-governor); lorchestra `c409f23`; suite green under
+`NO_COLOR=1` except two pre-existing environmental failures (rich-styled
+help assertion; retired local-governor tree).
+
+---
+
 ## 2026-06-25 — t013 skills layer, authoring removal, free-range chat harness
 
 All implemented directly (bootstrap) and merged to `develop`.

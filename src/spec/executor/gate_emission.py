@@ -17,6 +17,7 @@ degraded run record is worse than a failed run.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -206,20 +207,64 @@ def _resolve_target(schema_ref: str) -> tuple[str, str]:
     return dataset, f"{dataset}__base"
 
 
-def _load_lorchestra_env(lorchestra_pkg: Any) -> None:
+#: Mirrors storacle config.py's required_vars — the gate cannot stamp
+#: without these; checked BEFORE submit so a mis-resolved .env fails with
+#: a diagnosis instead of a bare missing-variables refusal mid-emission.
+_REQUIRED_STORACLE_VARS = (
+    "STORACLE_NAMESPACE_SALT",
+    "STORACLE_PROJECT",
+    "STORACLE_WAL_DATASET",
+    "STORACLE_WAL_TABLE",
+    "STORACLE_OPS_DATASET",
+    "STORACLE_ALLOWED_WAL_DATASETS",
+)
+
+
+def _load_lorchestra_env(lorchestra_pkg: Any) -> Path:
     """Source lorchestra's .env as defaults for storacle configuration.
 
     Mirrors life-cli's convention (it dotenv-loads its own .env before
     calling lorchestra in-process). Pre-set environment variables win —
     this only fills gaps, so operators can still override per-invocation.
+
+    Returns the resolved .env path so callers can name it in errors.
     """
+    env_path = Path(lorchestra_pkg.__file__).resolve().parent.parent / ".env"
     try:
         from dotenv import load_dotenv
     except ImportError:  # pragma: no cover - dotenv ships with the venv
-        return
-    env_path = Path(lorchestra_pkg.__file__).resolve().parent.parent / ".env"
+        return env_path
     if env_path.exists():
         load_dotenv(env_path, override=False)
+    return env_path
+
+
+def _require_storacle_env(env_path: Path, lorchestra_pkg: Any) -> None:
+    """Refuse loudly, pre-submit, when the storacle gate would starve.
+
+    2026-07-20 incident: lorchestra got installed NON-editable into this
+    venv, so ``lorchestra.__file__`` resolved into site-packages, the
+    ``.env`` lookup silently missed ``/workspace/lorchestra/.env``, and two
+    runs' emissions died mid-submit on a bare missing-variables refusal.
+    This check turns that silent skip into a diagnosis.
+    """
+    missing = [
+        v for v in _REQUIRED_STORACLE_VARS if not (os.environ.get(v) or "").strip()
+    ]
+    if not missing:
+        return
+    if env_path.exists():
+        hint = f"loaded {env_path} but these vars are not in it"
+    else:
+        hint = (
+            f"{env_path} DOES NOT EXIST — is lorchestra installed "
+            f"non-editable? (lorchestra.__file__={lorchestra_pkg.__file__!r}; "
+            "fix: uv pip install --no-deps -e /workspace/lorchestra)"
+        )
+    raise GateEmissionError(
+        f"storacle environment incomplete before submit — missing "
+        f"{', '.join(missing)}; {hint}"
+    )
 
 
 def _submit_object(schema_ref: str, object_params: dict[str, Any]) -> None:
@@ -234,7 +279,8 @@ def _submit_object(schema_ref: str, object_params: dict[str, Any]) -> None:
             f"Import error: {e}"
         ) from e
 
-    _load_lorchestra_env(lorchestra)
+    env_path = _load_lorchestra_env(lorchestra)
+    _require_storacle_env(env_path, lorchestra)
 
     definitions_dir = Path(lorchestra.__file__).parent / "jobs" / "definitions"
     envelope = {

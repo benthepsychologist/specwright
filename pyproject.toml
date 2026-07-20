@@ -11,7 +11,7 @@ license = {text = "Apache-2.0"}
 authors = [
     {name = "Benjamin Armstrong", email = "ben@benthepsychologist.com"}
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 keywords = [
     "agentic",
     "orchestration",
@@ -44,7 +44,15 @@ dependencies = [
     "dacite>=1.8.0",
     "ruamel.yaml>=0.18.0",
     "llm>=0.19.0",
+    # Gated run emission executes lorchestra's object.create in-process
+    # (gate_emission.py). Declared so venv rebuilds keep it — an ad-hoc
+    # non-editable install broke two runs' emissions on 2026-07-20.
+    # Goes away when the job executor lifts out of lorchestra.
+    "lorchestra>=0.1.0",
 ]
+
+[tool.uv.sources]
+lorchestra = { path = "/workspace/lorchestra", editable = true }
 
 [project.optional-dependencies]
 dev = [
