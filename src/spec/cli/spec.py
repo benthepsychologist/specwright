@@ -184,38 +184,23 @@ def init(
 
 
 def _install_slash_commands() -> None:
-    """Install Claude Code slash commands to .claude/commands/."""
-    claude_dir = Path.cwd() / ".claude" / "commands"
-    claude_dir.mkdir(parents=True, exist_ok=True)
+    """Install Claude Code slash commands to .claude/commands/.
 
-    slash_commands = [
-        "spec-run.md",
-        "spec-status.md",
-        "spec-next.md",
-        "spec-pause.md",
-        "README.md"
-    ]
+    Intentionally a no-op. The v1 slash-command set this used to install
+    (spec-run, spec-status, spec-next, spec-pause, step, README) documented
+    a dead .aip_artifacts/-based execution model: it wrote audit logs into
+    the *target* repo, which contradicts specwright's storage contract
+    ("Never write artifacts into the target repo" — CLAUDE.md) and it
+    referenced CLI surface that no longer exists (`spec create`,
+    `spec run --step N`, `.specwright.yaml`'s `current.aip`). Those source
+    files were deleted (git rm) rather than rewritten, since no current
+    workflow drives execution through Claude Code slash commands.
 
-    copied_count = 0
-    try:
-        # First, try to find commands in the package installation
-        spec_package_dir = Path(__file__).parent.parent.parent.parent
-        source_claude_dir = spec_package_dir / ".claude" / "commands"
-
-        if source_claude_dir.exists():
-            for cmd_file in slash_commands:
-                src = source_claude_dir / cmd_file
-                dst = claude_dir / cmd_file
-                if src.exists():
-                    dst.write_text(src.read_text())
-                    copied_count += 1
-
-            if copied_count > 0:
-                typer.echo(f"✓ Installed {copied_count} Claude Code slash commands to .claude/commands/")
-                typer.echo("  Use /spec-run, /spec-status, /spec-next, /spec-pause in Claude Code")
-    except Exception as e:
-        typer.echo(f"  Warning: Could not install Claude Code commands: {e}", err=True)
-        typer.echo("  You can manually copy them from the specwright repo's .claude/commands/", err=True)
+    Kept as a callable no-op (rather than deleted, and rather than removing
+    `--claude`/`--no-claude` from `init`) so this remains a stable extension
+    point if a v2 slash-command set is authored later.
+    """
+    return
 
 
 @app.command()
