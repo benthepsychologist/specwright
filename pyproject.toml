@@ -49,6 +49,8 @@ dependencies = [
     # non-editable install broke two runs' emissions on 2026-07-20.
     # Goes away when the job executor lifts out of lorchestra.
     "lorchestra>=0.1.0",
+    "llm-gemini>=0.32",
+    "llm-azure>=2.1",
 ]
 
 [tool.uv.sources]

@@ -46,6 +46,16 @@ Related: e045-02b (cloud-governor); lorchestra `c409f23`; suite green under
 `NO_COLOR=1` except two pre-existing environmental failures (rich-styled
 help assertion; retired local-governor tree).
 
+**Same-incident addendum (2026-07-20, found at e045-04 launch):** the
+`uv sync` above also pruned the ad-hoc-installed `llm` provider plugins
+(`llm-gemini`, `llm-azure`) — they were never declared either, so the
+LLM preflight lost both the primary (`gemini-3.1-pro-preview`) and
+fallback (`azure-gpt52`) models, leaving only stock OpenAI ids visible.
+Fixed the same way as lorchestra: `uv add llm-gemini llm-azure` — both
+now declared in pyproject, both model ids verified resolving. Lesson
+generalized: everything this venv needs must be declared; ad-hoc pip
+state does not survive a sync.
+
 ---
 
 ## 2026-06-25 — t013 skills layer, authoring removal, free-range chat harness
