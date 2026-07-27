@@ -54,7 +54,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-lorchestra = { path = "/workspace/lorchestra", editable = true }
+lorchestra = { git = "ssh://git@github.com/benthepsychologist/lorchestra.git", rev = "f22caeebd4eaf4e78f8dfc649a9ee9139421c3a5" }
 
 [project.optional-dependencies]
 dev = [

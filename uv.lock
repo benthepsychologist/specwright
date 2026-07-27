@@ -114,24 +114,13 @@ wheels = [
 [[package]]
 name = "authctl"
 version = "0.2.0"
-source = { editable = "../authctl" }
+source = { git = "ssh://git@github.com/benthepsychologist/authctl.git?rev=88181de5964d92676e62309395a1c12a507095ed#88181de5964d92676e62309395a1c12a507095ed" }
 dependencies = [
     { name = "google-auth" },
     { name = "google-auth-oauthlib" },
     { name = "msal" },
     { name = "typer" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-auth", specifier = ">=2.0.0" },
-    { name = "google-auth-oauthlib", specifier = ">=1.0.0" },
-    { name = "msal", specifier = ">=1.20.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1" },
-    { name = "typer", specifier = ">=0.18.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "autocommand"
@@ -396,7 +385,7 @@ wheels = [
 [[package]]
 name = "egret"
 version = "0.1.0"
-source = { editable = "../egret" }
+source = { git = "ssh://git@github.com/benthepsychologist/egret.git?rev=4ec72dace4ea6346d59bc9c07f4e277c947a7fba#4ec72dace4ea6346d59bc9c07f4e277c947a7fba" }
 dependencies = [
     { name = "gorch" },
     { name = "logjam" },
@@ -404,22 +393,10 @@ dependencies = [
     { name = "pydantic" },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "gorch" },
-    { name = "logjam", editable = "../logjam" },
-    { name = "morch" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
-]
-provides-extras = ["dev"]
-
 [[package]]
 name = "finalform"
 version = "0.1.0"
-source = { editable = "../finalform" }
+source = { git = "ssh://git@github.com/benthepsychologist/finalform.git?rev=54301d9e8591bded6d0db41e8bd0726859adba77#54301d9e8591bded6d0db41e8bd0726859adba77" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pydantic" },
@@ -427,20 +404,6 @@ dependencies = [
     { name = "rich" },
     { name = "typer" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "jsonschema", specifier = ">=4.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "rich", specifier = ">=13.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "typer", specifier = ">=0.18.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "frozenlist"
@@ -669,24 +632,12 @@ wheels = [
 [[package]]
 name = "gorch"
 version = "0.1.0"
-source = { editable = "../gorch" }
+source = { git = "ssh://git@github.com/benthepsychologist/gorch.git?rev=e7600fabf73883d113e95425d07282729849be58#e7600fabf73883d113e95425d07282729849be58" }
 dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "google-auth-oauthlib" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "authctl", marker = "extra == 'authctl'" },
-    { name = "google-api-python-client", specifier = ">=2.100.0" },
-    { name = "google-auth", specifier = ">=2.23.0" },
-    { name = "google-auth-oauthlib", specifier = ">=1.1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-]
-provides-extras = ["authctl", "dev"]
 
 [[package]]
 name = "gql"
@@ -840,26 +791,16 @@ wheels = [
 [[package]]
 name = "inferometer"
 version = "0.1.0"
-source = { editable = "../inferometer" }
+source = { git = "ssh://git@github.com/benthepsychologist/inferometer.git?rev=09c04c5fa417f8327690624b3a7915ad1bc79c2e#09c04c5fa417f8327690624b3a7915ad1bc79c2e" }
 dependencies = [
     { name = "llm" },
     { name = "pydantic" },
 ]
 
-[package.metadata]
-requires-dist = [
-    { name = "llm", specifier = ">=0.31" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
-]
-provides-extras = ["dev"]
-
 [[package]]
 name = "injest"
 version = "0.1.0"
-source = { editable = "../injest" }
+source = { git = "ssh://git@github.com/benthepsychologist/injest.git?rev=b16e3b2d5d99d6723c5316020a9f49fefd111472#b16e3b2d5d99d6723c5316020a9f49fefd111472" }
 dependencies = [
     { name = "authctl" },
     { name = "google-api-python-client" },
@@ -871,20 +812,6 @@ dependencies = [
     { name = "pdfplumber" },
     { name = "requests" },
     { name = "stripe" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "authctl", specifier = ">=0.2.0" },
-    { name = "google-api-python-client" },
-    { name = "google-auth" },
-    { name = "google-auth-oauthlib" },
-    { name = "google-cloud-storage", specifier = ">=2.0" },
-    { name = "monarchmoney" },
-    { name = "msal" },
-    { name = "pdfplumber", specifier = ">=0.11.9" },
-    { name = "requests" },
-    { name = "stripe", specifier = ">=15.0,<16" },
 ]
 
 [[package]]
@@ -1044,19 +971,12 @@ wheels = [
 [[package]]
 name = "logjam"
 version = "0.1.0"
-source = { editable = "../logjam" }
-
-[package.metadata]
-requires-dist = [
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
-]
-provides-extras = ["dev"]
+source = { git = "ssh://git@github.com/benthepsychologist/logjam.git?rev=be86744d265eaf8fd95778c49a2aa966b043fca1#be86744d265eaf8fd95778c49a2aa966b043fca1" }
 
 [[package]]
 name = "lorchestra"
 version = "0.1.0"
-source = { editable = "../lorchestra" }
+source = { git = "ssh://git@github.com/benthepsychologist/lorchestra.git?rev=f22caeebd4eaf4e78f8dfc649a9ee9139421c3a5#f22caeebd4eaf4e78f8dfc649a9ee9139421c3a5" }
 dependencies = [
     { name = "authctl" },
     { name = "click" },
@@ -1077,33 +997,6 @@ dependencies = [
     { name = "rich" },
     { name = "storacle" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "authctl", editable = "../authctl" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0" },
-    { name = "click", specifier = ">=8.1" },
-    { name = "egret", editable = "../egret" },
-    { name = "finalform", editable = "../finalform" },
-    { name = "google-auth", specifier = ">=2.49.1" },
-    { name = "google-cloud-bigquery", specifier = ">=3.0" },
-    { name = "gorch", editable = "../gorch" },
-    { name = "inferometer", editable = "../inferometer" },
-    { name = "injest", editable = "../injest" },
-    { name = "jinja2", specifier = ">=3.0" },
-    { name = "logjam", editable = "../logjam" },
-    { name = "morch", editable = "../morch" },
-    { name = "projectionist", editable = "../projectionist" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
-    { name = "registrar", editable = "../registrar" },
-    { name = "rich", specifier = ">=13.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
-    { name = "storacle", editable = "../storacle" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "markdown-it-py"
@@ -1173,21 +1066,10 @@ wheels = [
 [[package]]
 name = "morch"
 version = "0.1.0"
-source = { editable = "../morch" }
+source = { git = "ssh://git@github.com/benthepsychologist/morch.git?rev=db80d2d5bb5a9226935033bd44ed5ad75d1fa54a#db80d2d5bb5a9226935033bd44ed5ad75d1fa54a" }
 dependencies = [
     { name = "requests" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "authctl", marker = "extra == 'authctl'" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
-    { name = "requests", specifier = ">=2.31.0" },
-    { name = "responses", marker = "extra == 'dev'", specifier = ">=0.24.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-]
-provides-extras = ["authctl", "dev"]
 
 [[package]]
 name = "msal"
@@ -1456,13 +1338,10 @@ wheels = [
 [[package]]
 name = "projectionist"
 version = "0.2.0"
-source = { editable = "../projectionist" }
+source = { git = "ssh://git@github.com/benthepsychologist/projectionist.git?rev=d5ef65caabc1f8a87410977108c276d0767cb75a#d5ef65caabc1f8a87410977108c276d0767cb75a" }
 dependencies = [
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "pyyaml", specifier = ">=6.0" }]
 
 [[package]]
 name = "prompt-toolkit"
@@ -1815,20 +1694,11 @@ wheels = [
 [[package]]
 name = "registrar"
 version = "2.0.0"
-source = { editable = "../registrar" }
+source = { git = "ssh://git@github.com/benthepsychologist/registrar.git?rev=82317a3703c81c72cd5dd115d980767441105693#82317a3703c81c72cd5dd115d980767441105693" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-cloud-bigquery", marker = "extra == 'bq'", specifier = ">=3.11" },
-    { name = "jsonschema", specifier = ">=4.23.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-]
-provides-extras = ["dev", "bq"]
 
 [[package]]
 name = "requests"
@@ -2013,7 +1883,7 @@ requires-dist = [
     { name = "llm", specifier = ">=0.19.0" },
     { name = "llm-azure", specifier = ">=2.1" },
     { name = "llm-gemini", specifier = ">=0.32" },
-    { name = "lorchestra", editable = "../lorchestra" },
+    { name = "lorchestra", git = "ssh://git@github.com/benthepsychologist/lorchestra.git?rev=f22caeebd4eaf4e78f8dfc649a9ee9139421c3a5" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.7.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "questionary", specifier = ">=2.0.0" },
@@ -2067,26 +1937,13 @@ wheels = [
 [[package]]
 name = "storacle"
 version = "0.1.0"
-source = { editable = "../storacle" }
+source = { git = "ssh://git@github.com/benthepsychologist/storacle.git?rev=f2788f0042bd61031d6c3c3132f48ecd840a1c2c#f2788f0042bd61031d6c3c3132f48ecd840a1c2c" }
 dependencies = [
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-bigquery-storage" },
     { name = "gorch" },
     { name = "pyarrow" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "google-cloud-bigquery", specifier = ">=3.0.0" },
-    { name = "google-cloud-bigquery-storage", specifier = ">=2.24.0" },
-    { name = "gorch", directory = "../gorch" },
-    { name = "pyarrow", specifier = ">=15.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "registrar", marker = "extra == 'dev'", directory = "../registrar" },
-    { name = "registrar", marker = "extra == 'stamp'", specifier = ">=2.0.0" },
-]
-provides-extras = ["stamp", "dev"]
 
 [[package]]
 name = "stripe"
