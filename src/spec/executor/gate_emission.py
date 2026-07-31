@@ -7,12 +7,26 @@ lorchestra's ``object.create`` job (the sanctioned write path: storacle
 derived from each kind's registry descriptor (``default_data_domain``) —
 never hardcoded here.
 
+t019-04 added a claim/supersede bracket for the run row: ``emit_claim_record``
+lands a ``status=running`` row before execution starts, and the finalize run
+row (``_submit_run_supersede``) always supersedes it via ``event_type:
+run.updated`` — both go straight through
+``lorchestra.governed_write.write_governed_objects`` (mirroring lorchestra's
+own e045-02b bracket) rather than the object.create job, since the job
+template has no way to express that event_type. run_step rows also now land
+incrementally, right after each step completes (``emit_step_record``,
+called from engine.py), on top of the existing finalize sweep.
+
 Bulk artifacts (stdout/stderr/patches) never become rows: they stay in the
 scratch tree, and the rows carry scratch refs in ``metadata``.
 
 There is NO fallback to tree-writing on gate refusal — emission failures
 raise ``GateEmissionError`` and must surface to the operator. A silently
-degraded run record is worse than a failed run.
+degraded run record is worse than a failed run. The claim and incremental
+step paths are the two exceptions: incremental step emission is
+best-effort (a caller in engine.py swallows failures so a gate hiccup mid-
+run never aborts execution), and both claim + incremental step emission
+skip cleanly (no error) when LIFEOS_CLOUD_DB is unset.
 """
 
 from __future__ import annotations
@@ -31,6 +45,15 @@ RUN_STEP_SCHEMA_REF = "iglu:io.lifeos/run_step/jsonschema/1-0-0"
 RUN_REPORT_SCHEMA_REF = "iglu:io.lifeos/run_report/jsonschema/1-0-0"
 
 DEFAULT_PROD_DB = Path("~/lifeos/lifeos-cloud-prod.db").expanduser()
+
+#: Sibling of lorchestra's LIFEOS_DB_ENV_VAR (lorchestra/config.py) — the
+#: claim/terminal-supersede bracket (t019-04) checks this directly, the
+#: same ambient-env-only convention lorchestra's own e045-02b bracket uses
+#: (lorchestra.config.lifeos_db_path never dotenv-loads either). Kept as a
+#: raw env read here — not an import of lorchestra.config — so unit tests
+#: (which never set this) skip claim/incremental-step emission without
+#: importing lorchestra at all, let alone dotenv-loading its real .env.
+_LIFEOS_DB_ENV_VAR = "LIFEOS_CLOUD_DB"
 
 #: Runs are execution records produced by specwright's job templates.
 JOB_TYPE = "specwright"
@@ -68,6 +91,21 @@ class EmissionResult:
 def derive_identity(kind: str, name: str) -> str:
     """Deterministic uuid5 identity — same recipe as lorchestra's prepare step."""
     return str(uuid.uuid5(_IDENTITY_NAMESPACE, f"{kind}:{name}"))
+
+
+def _lifeos_db_path() -> str | None:
+    """LIFEOS_CLOUD_DB, read from the ambient environment only.
+
+    Deliberately mirrors lorchestra.config.lifeos_db_path()'s exact
+    behavior (plain os.environ.get, no dotenv loading) instead of
+    reusing _load_lorchestra_env's dotenv-loading path used elsewhere in
+    this module: claim and incremental-step emission are called from
+    engine.py/exec_commands.py call sites the existing test suite does
+    NOT stub, so this check must stay a true no-op (no import of
+    lorchestra, no read of lorchestra's real .env) when unset.
+    """
+    raw = os.environ.get(_LIFEOS_DB_ENV_VAR, "").strip()
+    return str(Path(raw).expanduser()) if raw else None
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -120,6 +158,156 @@ def build_run_object_params(run_doc: dict[str, Any], scratch_dir: Path) -> dict[
         if run_doc.get(key) is not None:
             params[key] = run_doc[key]
     return params
+
+
+def build_claim_object_params(
+    *,
+    run_id: str,
+    job_id: str,
+    epic_id: str | None = None,
+    spec_id: str | None = None,
+) -> dict[str, Any]:
+    """Minimal run@1-0-0 params for the pre-execution claim (status=running).
+
+    name=run_id — the SAME identity the finalize terminal write
+    (_submit_run_supersede) later reuses via event_type=run.updated, so
+    the terminal write supersedes this row instead of minting a second,
+    disconnected identity.
+    """
+    metadata: dict[str, Any] = {"source": "specwright", "run_slug": run_id}
+    if epic_id:
+        metadata["epic_id"] = epic_id
+    if spec_id:
+        metadata["spec_id"] = spec_id
+    return {
+        "name": run_id,
+        "job_definition_id": job_id or "unknown",
+        "job_type": JOB_TYPE,
+        "status": "running",
+        "metadata": metadata,
+    }
+
+
+def emit_claim_record(
+    *,
+    run_id: str,
+    job_id: str,
+    epic_id: str | None = None,
+    spec_id: str | None = None,
+) -> bool:
+    """Write the governed run CLAIM before any step executes (t019-04 D(a)).
+
+    Mirrors lorchestra's own e045-02b claim/supersede bracket exactly:
+    lands via lorchestra.governed_write.write_governed_objects (the same
+    direct-call mechanism lorchestra's own executor uses for its run
+    write-back) rather than the object.create job dispatch _submit_object
+    uses elsewhere in this module — the job template has no way to
+    express the event_type the terminal write needs, and lorchestra's own
+    job definitions are out of scope for this spec.
+
+    HARD-FAILS (raises GateEmissionError) once attempted: nothing has run
+    yet, so aborting the whole invocation is safe here, matching
+    specwright's no-silent-fallback posture at finalize. Skipped (returns
+    False, no error, no lorchestra import) when LIFEOS_CLOUD_DB is unset —
+    the same unit-test convention lorchestra's own claim write relies on.
+    """
+    db_path = _lifeos_db_path()
+    if not db_path:
+        return False
+
+    from lorchestra.governed_write import write_governed_objects
+
+    params = build_claim_object_params(
+        run_id=run_id, job_id=job_id, epic_id=epic_id, spec_id=spec_id
+    )
+    try:
+        write_governed_objects(
+            [{"schema_ref": RUN_SCHEMA_REF, "params": params}],
+            db_path=db_path,
+            correlation_id=f"{run_id}:run-claim",
+            run_id=run_id,
+            step_id="run-claim",
+        )
+    except Exception as e:
+        raise GateEmissionError(
+            f"governed run claim refused for run '{run_id}' (job={job_id}): {e}"
+        ) from e
+    return True
+
+
+def _submit_run_supersede(params: dict[str, Any], *, run_id: str) -> None:
+    """Finalize's run-row write: ALWAYS the terminal supersede (t019-04 D(b)).
+
+    Lands as event_type=run.updated under the SAME identity the claim (if
+    any landed) minted — storacle folds the content hash into the row_id
+    for .updated events, so a retry that resubmits identical content is
+    naturally deduped without an app-level _row_exists check (which would
+    otherwise skip this write entirely once a claim row already exists).
+    This exemption is for the run row ONLY — run_step/run_report keep the
+    existing _row_exists append-once gate in emit_run_records() below.
+
+    No skip-on-unset here (unlike the claim/incremental-step paths):
+    finalize's contract has always been no-silent-fallback, so a
+    misconfigured governed store must fail loudly, not quietly drop the
+    run record.
+    """
+    db_path = _lifeos_db_path()
+    if not db_path:
+        raise GateEmissionError(
+            "LIFEOS_CLOUD_DB is not set — cannot supersede the run claim "
+            "at finalize (no silent fallback)"
+        )
+
+    from lorchestra.governed_write import write_governed_objects
+
+    try:
+        write_governed_objects(
+            [{
+                "schema_ref": RUN_SCHEMA_REF,
+                "params": params,
+                "event_type": "run.updated",
+            }],
+            db_path=db_path,
+            correlation_id=f"{run_id}:run-finalize",
+            run_id=run_id,
+            step_id="run-finalize",
+        )
+    except Exception as e:
+        raise GateEmissionError(
+            f"Gate refused terminal run supersede for '{params.get('name')}': {e}"
+        ) from e
+
+
+def emit_step_record(*, store: Any, run_id: str, step_n: int, job_id: str) -> bool:
+    """Incremental emission of one step's run_step row (t019-04 D(c)).
+
+    Called immediately after write_step_outcome() lands the consolidated
+    step YAML, so a kill mid-run leaves a governed record of how far
+    execution actually got, not just that it started. Reads that same
+    consolidated step-NNN.yaml back off disk and reuses the exact
+    build_step_object_params shape finalize's emit_run_records() loop
+    uses for the SAME file — that loop's own _row_exists append-once
+    check already no-ops any step that landed here first, so no new
+    dedup logic is needed.
+
+    Skipped (returns False, no lorchestra import) when LIFEOS_CLOUD_DB is
+    unset. Raises GateEmissionError on an attempted-but-refused
+    submission or a missing consolidated file (e.g. a legacy-output
+    store, which never writes one) — the CALLER (engine.py) is
+    responsible for swallowing that; this function never swallows, to
+    keep this module's "never swallow" contract uniform.
+    """
+    db_path = _lifeos_db_path()
+    if not db_path:
+        return False
+
+    run_dir = store.get_run_path(run_id)
+    step_file = run_dir / "steps" / f"step-{step_n:03d}.yaml"
+    step_doc = _load_yaml(step_file)
+    run_identity = derive_identity("run", run_id)
+    step_params = build_step_object_params(step_doc, run_id, run_identity, run_dir, job_id)
+    _submit_object(RUN_STEP_SCHEMA_REF, step_params)
+    return True
 
 
 def build_step_object_params(
@@ -382,8 +570,10 @@ def emit_run_records(
 
     Reads the consolidated YAML files the store wrote to local scratch
     (run.yaml, steps/step-NNN.yaml, run_report.yaml), maps them to the
-    registered run / run_step / run_report kinds, submits each through
-    lorchestra object.create, then counts the landed rows.
+    registered run / run_step / run_report kinds, and submits each: the
+    run row as the terminal supersede (_submit_run_supersede, t019-04
+    D(b)), run_step/run_report through lorchestra's object.create job
+    (_submit_object) — then counts the landed rows.
     """
     prod_db = prod_db or DEFAULT_PROD_DB
     run_dir = store.get_run_path(run_id)
@@ -402,8 +592,13 @@ def emit_run_records(
             _submit_object(schema_ref, params)
         emitted[kind].append(params["name"])
 
+    # The run row is ALWAYS the terminal supersede (t019-04 D(b)) — never
+    # gated behind _row_exists like run_step/run_report below. A claim row
+    # (see emit_claim_record) is now always present at run start, so the
+    # append-once check would otherwise skip this write entirely.
     run_params = build_run_object_params(run_doc, run_dir)
-    _submit_once("run", RUN_SCHEMA_REF, run_params)
+    _submit_run_supersede(run_params, run_id=slug)
+    emitted["run"].append(run_params["name"])
 
     steps_dir = run_dir / "steps"
     step_files = sorted(steps_dir.glob("step-*.yaml")) if steps_dir.exists() else []

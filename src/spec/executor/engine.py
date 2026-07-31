@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from spec.executor.backends import BackendError, get_backend
+from spec.executor.gate_emission import emit_step_record
 from spec.executor.sandbox.capture import generate_patch
 from spec.executor.schemas import (
     AttemptRecord,
@@ -1315,6 +1316,10 @@ def _run_steps(
             )
             outcomes.append(outcome)
             store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+            _emit_step_record_best_effort(
+                store=store, run_id=run_record.run_id, step_n=step.step_n,
+                job_id=job_instance.job_id,
+            )
 
             # Variable errors are always fatal - can't continue without resolved payload
             return RunStatus.failed, outcomes
@@ -1372,6 +1377,10 @@ def _run_steps(
             )
             outcomes.append(outcome)
             store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+            _emit_step_record_best_effort(
+                store=store, run_id=run_record.run_id, step_n=step.step_n,
+                job_id=job_instance.job_id,
+            )
 
             # Log step failure
             duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
@@ -1419,6 +1428,10 @@ def _run_steps(
         # Write capture and outcome
         store.write_step_capture(run_record.run_id, step.step_n, capture)
         store.write_step_outcome(run_record.run_id, step.step_n, outcome)
+        _emit_step_record_best_effort(
+            store=store, run_id=run_record.run_id, step_n=step.step_n,
+            job_id=job_instance.job_id,
+        )
 
         # Log step completion
         duration_str = f"{duration_ms}ms" if duration_ms < 1000 else f"{duration_ms/1000:.1f}s"
@@ -1786,6 +1799,23 @@ def _build_step_run_ctx(
     return ctx
 
 
+def _emit_step_record_best_effort(
+    *, store: RunStore, run_id: str, step_n: int, job_id: str
+) -> None:
+    """Best-effort incremental run_step emission (t019-04 D(c)).
+
+    Never raises and never alters execution — only the pre-execution
+    claim (see exec_commands._emit_claim_record) is allowed to abort a
+    run. A gate hiccup here just means one fewer step landed as a
+    governed row before finalize's own emit_run_records() sweep, which
+    still runs unchanged over every local step file.
+    """
+    try:
+        emit_step_record(store=store, run_id=run_id, step_n=step_n, job_id=job_id)
+    except Exception as e:
+        print(f"Warning: incremental run_step emission failed for step {step_n}: {e}", flush=True)
+
+
 def _create_failed_outcome(
     step: Step,
     error: str,
@@ -1852,6 +1882,10 @@ def _handle_step_failure(
                 )
                 outcomes.append(skip_outcome)
                 store.write_step_outcome(run_record.run_id, skipped_step.step_n, skip_outcome)
+                _emit_step_record_best_effort(
+                    store=store, run_id=run_record.run_id, step_n=skipped_step.step_n,
+                    job_id=job_instance.job_id,
+                )
 
                 # Log skipped step
                 print(f"[{skipped_step.step_n}/{total_steps}] {skipped_step.step_id} ... skipped", flush=True)

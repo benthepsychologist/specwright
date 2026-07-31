@@ -8,6 +8,14 @@ redirected into tmp_path so tests never touch ~/.local/specwright.
 Tests that want to assert emission behavior can request the
 ``gate_emission_calls`` fixture and inspect the recorded calls.
 Unit tests for gate_emission itself call its functions directly with fakes.
+
+t019-04 added claim + incremental-step emission call sites directly inside
+exec_commands.run_command and engine._run_steps — unlike the finalize hook
+above, those are NOT wrapped by a single stubbable choke point (engine.py
+in particular is exercised by many existing tests). Their real-write path
+is gated on LIFEOS_CLOUD_DB being set in the ambient environment (see
+gate_emission._lifeos_db_path), so clearing it here is the safety net that
+makes that gate a no-op regardless of the invoking shell's own env.
 """
 
 import pytest
@@ -27,4 +35,8 @@ def gate_emission_calls(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "SPECWRIGHT_SCRATCH_ROOT", str(tmp_path / "specwright-scratch")
     )
+    # Belt-and-suspenders for the claim/incremental-step paths (see module
+    # docstring): never let a developer's real LIFEOS_CLOUD_DB leak into a
+    # test process and trigger a live governed write.
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
     return calls

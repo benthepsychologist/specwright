@@ -760,6 +760,18 @@ def run_command(
     else:
         store = ConsolidatedRunWriter(root=_scratch_runs_root() / effective_epic_id)
 
+    # Claim BEFORE execution (t019-04 D(a)): a run row (status=running)
+    # lands under this run's identity so a kill mid-flight still leaves a
+    # governed record that the run started. --legacy-output has no
+    # finalize emission to supersede it, so it gets no claim either.
+    if not legacy_output:
+        _emit_claim_record(
+            run_id=run_id,
+            job_id=job_def.job_id,
+            epic_id=effective_epic_id,
+            spec_id=resolved_spec_id,
+        )
+
     try:
         result = execute(envelope, store=store, run_id=run_id)
     except ExecutorError as e:
@@ -1125,6 +1137,26 @@ def _scratch_runs_root() -> Path:
     if env_root:
         return Path(env_root).expanduser().resolve()
     return DEFAULT_SCRATCH_RUNS_ROOT
+
+
+def _emit_claim_record(
+    *, run_id: str, job_id: str, epic_id: str | None, spec_id: str | None
+) -> None:
+    """Write the governed run CLAIM before execute() runs (t019-04 D(a)).
+
+    Wrapper so tests can monkeypatch emission without a live gate/DB —
+    mirrors _emit_gated_run_records below. Hard-fails (exit before any
+    step executes) if a claim is attempted but refused; silently skipped
+    when LIFEOS_CLOUD_DB is unset (unit-test convention — see
+    gate_emission.emit_claim_record).
+    """
+    from spec.executor.gate_emission import GateEmissionError, emit_claim_record
+
+    try:
+        emit_claim_record(run_id=run_id, job_id=job_id, epic_id=epic_id, spec_id=spec_id)
+    except GateEmissionError as e:
+        _echo_error(f"Governed run claim FAILED (aborting before execution): {e}")
+        raise typer.Exit(1)
 
 
 def _emit_gated_run_records(*, store: Any, run_id: str) -> None:
