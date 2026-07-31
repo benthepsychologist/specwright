@@ -66,3 +66,8 @@
 
 <!-- END SYNCED: specwright -->
 
+<!-- BEGIN SYNCED: SPEC: t019-04-specwright-claim-row -->
+## Current Spec: t019-04-specwright-claim-row
+
+(No acceptance criteria section found in spec)
+<!-- END SYNCED: SPEC: t019-04-specwright-claim-row -->

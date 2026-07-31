@@ -1868,3 +1868,139 @@ class TestBackendVariableResolution:
         # Invalid backend value raises CompileError
         with pytest.raises(CompileError, match="Unknown backend"):
             _resolve_backend("@payload.agent", {"agent": "nonexistent"})
+
+
+# =============================================================================
+# Incremental run_step emission (t019-04 D(c))
+# =============================================================================
+
+
+class TestIncrementalStepEmission:
+    """engine._run_steps() calls gate_emission.emit_step_record() right
+    after every write_step_outcome() — best-effort, never altering the
+    run. The real emit_step_record() no-ops safely (LIFEOS_CLOUD_DB is
+    cleared for all tests, see conftest.py), so these tests replace
+    engine.emit_step_record itself to observe the wiring."""
+
+    @pytest.fixture
+    def git_repo(self, tmp_path):
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        (repo_path / "test.txt").write_text("hello")
+        subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial"],
+            cwd=repo_path, check=True, capture_output=True,
+        )
+        return repo_path
+
+    @pytest.fixture
+    def store(self, tmp_path):
+        from spec.executor.run_writers import ConsolidatedRunWriter
+
+        return ConsolidatedRunWriter(root=tmp_path / "runs")
+
+    def test_emission_invoked_once_per_completed_step(self, git_repo, store, monkeypatch):
+        import spec.executor.engine as engine_mod
+
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            engine_mod, "emit_step_record", lambda **kw: calls.append(kw)
+        )
+
+        job_def = JobDef(
+            job_id="incremental-emission-test",
+            steps=[
+                StepTemplate(step_id="step1", backend=Backend.cmd, payload={"command": "echo 1", "capture_git": False}),
+                StepTemplate(step_id="step2", backend=Backend.cmd, payload={"command": "echo 2", "capture_git": False}),
+            ],
+        )
+        envelope = {"job_def": job_def.model_dump(mode="json"), "payload": {"repo_path": str(git_repo)}}
+        result = execute(envelope, store=store)
+
+        assert result.status == RunStatus.completed
+        assert [c["step_n"] for c in calls] == [1, 2]
+        assert all(c["run_id"] == result.run_id for c in calls)
+        assert all(c["job_id"] == "incremental-emission-test" for c in calls)
+
+    def test_emission_invoked_for_failed_and_skipped_steps(self, git_repo, store, monkeypatch):
+        """Every write_step_outcome() call site — including the
+        on_failure_skip_to skip path — gets a matching emission attempt."""
+        import spec.executor.engine as engine_mod
+
+        calls: list[dict] = []
+        monkeypatch.setattr(
+            engine_mod, "emit_step_record", lambda **kw: calls.append(kw)
+        )
+
+        job_def = JobDef(
+            job_id="skip-to-emission-test",
+            steps=[
+                StepTemplate(step_id="setup", backend=Backend.cmd, payload={"command": "echo setup", "capture_git": False}),
+                StepTemplate(
+                    step_id="agent", backend=Backend.cmd, on_failure_skip_to="capture",
+                    payload={"command": "exit 1", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="middle", backend=Backend.cmd, continue_on_failure=True,
+                    payload={"command": "echo middle", "capture_git": False},
+                ),
+                StepTemplate(
+                    step_id="capture", backend=Backend.cmd, continue_on_failure=True,
+                    payload={"command": "echo capture", "capture_git": False},
+                ),
+            ],
+        )
+        envelope = {"job_def": job_def.model_dump(mode="json"), "payload": {"repo_path": str(git_repo)}}
+        execute(envelope, store=store)
+
+        # setup(1), agent(2, failed), middle(3, skipped via on_failure_skip_to), capture(4)
+        assert [c["step_n"] for c in calls] == [1, 2, 3, 4]
+
+    def test_emission_failure_swallowed_never_alters_execution(
+        self, git_repo, store, monkeypatch, capsys
+    ):
+        import spec.executor.engine as engine_mod
+
+        def _boom(**kwargs):
+            raise RuntimeError("gate refused")
+
+        monkeypatch.setattr(engine_mod, "emit_step_record", _boom)
+
+        job_def = JobDef(
+            job_id="emission-failure-test",
+            steps=[
+                StepTemplate(step_id="step1", backend=Backend.cmd, payload={"command": "echo hi", "capture_git": False}),
+            ],
+        )
+        envelope = {"job_def": job_def.model_dump(mode="json"), "payload": {"repo_path": str(git_repo)}}
+        result = execute(envelope, store=store)
+
+        # Execution completes normally despite the emission failure.
+        assert result.status == RunStatus.completed
+        captured = capsys.readouterr()
+        assert "incremental run_step emission failed" in captured.out
+
+    def test_real_emit_step_record_noops_without_lifeos_cloud_db(self, git_repo, store):
+        """End-to-end sanity check with the REAL (unmocked) emit_step_record:
+        with LIFEOS_CLOUD_DB cleared (conftest autouse fixture), execution
+        must complete without attempting any real gate call."""
+        job_def = JobDef(
+            job_id="real-emission-noop-test",
+            steps=[
+                StepTemplate(step_id="step1", backend=Backend.cmd, payload={"command": "echo hi", "capture_git": False}),
+            ],
+        )
+        envelope = {"job_def": job_def.model_dump(mode="json"), "payload": {"repo_path": str(git_repo)}}
+        result = execute(envelope, store=store)
+
+        assert result.status == RunStatus.completed

@@ -541,6 +541,137 @@ class TestRunCommand:
         assert result.exit_code in [0, 1, 2]
         assert gate_emission_calls == []
 
+    def test_run_emits_claim_before_execute(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """t019-04 D(a): the claim lands before execute() runs, for gated
+        (non-legacy) runs."""
+        import yaml as yaml_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        order: list[str] = []
+        claim_calls: list[dict] = []
+
+        def _fake_claim(*, run_id, job_id, epic_id, spec_id):
+            order.append("claim")
+            claim_calls.append(
+                {"run_id": run_id, "job_id": job_id, "epic_id": epic_id, "spec_id": spec_id}
+            )
+
+        real_execute = exec_commands.execute
+
+        def _tracking_execute(*args, **kwargs):
+            order.append("execute")
+            return real_execute(*args, **kwargs)
+
+        monkeypatch.setattr(exec_commands, "_emit_claim_record", _fake_claim)
+        monkeypatch.setattr(exec_commands, "execute", _tracking_execute)
+
+        result = runner.invoke(
+            app,
+            ["run", "test-simple", str(spec_file), "--repo", str(git_repo)],
+        )
+
+        assert result.exit_code in [0, 1, 2]
+        assert order == ["claim", "execute"]
+        assert len(claim_calls) == 1
+        assert claim_calls[0]["job_id"] == "test-simple"
+
+    def test_run_legacy_output_skips_claim(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """--legacy-output has no finalize emission to supersede a claim,
+        so it must not emit one either."""
+        import yaml as yaml_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        store_path = tmp_path / "legacy-runs"
+        monkeypatch.setattr(
+            "spec.cli.exec_commands.RunStore",
+            lambda *args, **kwargs: RunStore(root=store_path),
+        )
+
+        claim_calls: list[dict] = []
+        monkeypatch.setattr(
+            exec_commands, "_emit_claim_record",
+            lambda **kwargs: claim_calls.append(kwargs),
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "run", "test-simple", str(spec_file), "--repo", str(git_repo),
+                "--legacy-output",
+            ],
+        )
+
+        assert result.exit_code in [0, 1, 2]
+        assert claim_calls == []
+
+    def test_run_claim_failure_aborts_before_execute(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """A refused claim aborts the run before any step executes (t019-04
+        D(a)) — mirrors specwright's no-silent-fallback posture at finalize.
+        Exercises the REAL _emit_claim_record wrapper (only the underlying
+        gate_emission.emit_claim_record is faked), so this also verifies
+        the wrapper's own GateEmissionError -> typer.Exit(1) handling."""
+        import yaml as yaml_module
+
+        from spec.executor import gate_emission as gate_emission_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        execute_calls: list[str] = []
+
+        def _refuse_claim(**kwargs):
+            raise gate_emission_module.GateEmissionError("gate refused claim")
+
+        def _tracking_execute(*args, **kwargs):
+            execute_calls.append("execute")
+            raise AssertionError("execute() must not run after a refused claim")
+
+        monkeypatch.setattr(gate_emission_module, "emit_claim_record", _refuse_claim)
+        monkeypatch.setattr(exec_commands, "execute", _tracking_execute)
+
+        result = runner.invoke(
+            app,
+            ["run", "test-simple", str(spec_file), "--repo", str(git_repo)],
+        )
+
+        assert result.exit_code == 1
+        assert execute_calls == []
+        assert gate_emission_calls == []
+
 
 # =============================================================================
 # spec status Tests

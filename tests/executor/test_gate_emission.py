@@ -8,11 +8,14 @@ import yaml
 from spec.executor import gate_emission
 from spec.executor.gate_emission import (
     GateEmissionError,
+    build_claim_object_params,
     build_report_object_params,
     build_run_object_params,
     build_step_object_params,
     derive_identity,
+    emit_claim_record,
     emit_run_records,
+    emit_step_record,
 )
 
 # ---------------------------------------------------------------------------
@@ -182,6 +185,157 @@ def test_report_params_shape(tmp_path):
     assert md["issues"] == []
 
 
+def test_claim_params_shape():
+    params = build_claim_object_params(
+        run_id=RUN_DOC["run_id"], job_id="aip-1", epic_id="e040", spec_id="e040-07d"
+    )
+
+    assert set(params) <= RUN_SCHEMA_PROPERTIES
+    # name=run_id (not a derived identity) — the finalize terminal write
+    # (build_run_object_params) reuses this SAME name/slug, so the two
+    # writes land under one identity.
+    assert params["name"] == RUN_DOC["run_id"]
+    assert params["job_definition_id"] == "aip-1"
+    assert params["job_type"] == "specwright"
+    assert params["status"] == "running"
+    assert params["metadata"]["epic_id"] == "e040"
+    assert params["metadata"]["spec_id"] == "e040-07d"
+
+
+def test_claim_params_omit_none_epic_spec():
+    params = build_claim_object_params(run_id="run-x", job_id="aip-1")
+    assert "epic_id" not in params["metadata"]
+    assert "spec_id" not in params["metadata"]
+
+
+# ---------------------------------------------------------------------------
+# Claim emission — t019-04 D(a)
+# ---------------------------------------------------------------------------
+
+
+def test_emit_claim_record_skips_when_lifeos_cloud_db_unset(monkeypatch):
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
+    assert emit_claim_record(run_id="run-x", job_id="aip-1") is False
+
+
+def test_emit_claim_record_submits_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(tmp_path / "prod.db"))
+
+    calls: list[dict] = []
+
+    def _fake_write(specs, **kwargs):
+        calls.append({"specs": specs, "kwargs": kwargs})
+        return {"objects": [{"run_id": "some-uuid"}]}
+
+    monkeypatch.setattr(
+        "lorchestra.governed_write.write_governed_objects", _fake_write
+    )
+
+    assert emit_claim_record(run_id="run-x", job_id="aip-1", epic_id="e040") is True
+    assert len(calls) == 1
+    spec = calls[0]["specs"][0]
+    assert spec["schema_ref"] == gate_emission.RUN_SCHEMA_REF
+    assert spec["params"]["name"] == "run-x"
+    assert spec["params"]["status"] == "running"
+    assert "event_type" not in spec  # plain create — no supersession yet
+    assert calls[0]["kwargs"]["db_path"] == str(tmp_path / "prod.db")
+
+
+def test_emit_claim_record_refusal_raises(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(tmp_path / "prod.db"))
+
+    def _refuse(specs, **kwargs):
+        raise RuntimeError("gate refused claim")
+
+    monkeypatch.setattr(
+        "lorchestra.governed_write.write_governed_objects", _refuse
+    )
+
+    with pytest.raises(GateEmissionError, match="gate refused claim"):
+        emit_claim_record(run_id="run-x", job_id="aip-1")
+
+
+# ---------------------------------------------------------------------------
+# Terminal run-row supersede — t019-04 D(b)
+# ---------------------------------------------------------------------------
+
+
+def test_submit_run_supersede_uses_run_updated_event_type(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(tmp_path / "prod.db"))
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "lorchestra.governed_write.write_governed_objects",
+        lambda specs, **kwargs: calls.append({"specs": specs, "kwargs": kwargs}),
+    )
+
+    params = {"name": "run-x", "status": "completed"}
+    gate_emission._submit_run_supersede(params, run_id="run-x")
+
+    assert len(calls) == 1
+    spec = calls[0]["specs"][0]
+    assert spec["event_type"] == "run.updated"
+    assert spec["params"] is params
+
+
+def test_submit_run_supersede_raises_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
+    with pytest.raises(GateEmissionError, match="LIFEOS_CLOUD_DB"):
+        gate_emission._submit_run_supersede({"name": "run-x"}, run_id="run-x")
+
+
+# ---------------------------------------------------------------------------
+# Incremental run_step emission — t019-04 D(c)
+# ---------------------------------------------------------------------------
+
+
+def test_emit_step_record_skips_when_lifeos_cloud_db_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
+    store = _FakeStore(tmp_path / "does-not-matter")
+    assert (
+        emit_step_record(store=store, run_id="run-x", step_n=1, job_id="aip-1")
+        is False
+    )
+
+
+def test_emit_step_record_submits_step_via_submit_object(monkeypatch, tmp_path):
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(tmp_path / "prod.db"))
+
+    run_dir = tmp_path / RUN_DOC["run_id"]
+    (run_dir / "steps").mkdir(parents=True)
+    (run_dir / "steps" / "step-003.yaml").write_text(yaml.dump(STEP_DOC))
+
+    submitted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        gate_emission, "_submit_object",
+        lambda ref, params: submitted.append((ref, params)),
+    )
+
+    store = _FakeStore(run_dir)
+    result = emit_step_record(
+        store=store, run_id=RUN_DOC["run_id"], step_n=3, job_id="aip-1"
+    )
+
+    assert result is True
+    assert len(submitted) == 1
+    ref, params = submitted[0]
+    assert ref == gate_emission.RUN_STEP_SCHEMA_REF
+    assert params["name"] == f"{RUN_DOC['run_id']}/step-003"
+    assert params["run_id"] == derive_identity("run", RUN_DOC["run_id"])
+
+
+def test_emit_step_record_missing_consolidated_file_raises(monkeypatch, tmp_path):
+    """A legacy-output store never writes steps/step-NNN.yaml — the caller
+    (engine.py) is responsible for swallowing this, not this function."""
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(tmp_path / "prod.db"))
+    run_dir = tmp_path / "empty-run"
+    run_dir.mkdir()
+    store = _FakeStore(run_dir)
+
+    with pytest.raises(GateEmissionError, match="Expected consolidated file missing"):
+        emit_step_record(store=store, run_id="run-x", step_n=1, job_id="aip-1")
+
+
 # ---------------------------------------------------------------------------
 # Emission wiring (faked gate + faked verification)
 # ---------------------------------------------------------------------------
@@ -213,6 +367,13 @@ def test_emit_run_records_submits_all_and_verifies(consolidated_run, monkeypatch
         gate_emission, "_submit_object",
         lambda ref, params: submitted.append((ref, params)),
     )
+    # The run row goes through _submit_run_supersede (t019-04 D(b)), not
+    # _submit_object — record it the same way so the assertions below stay
+    # ref-ordered exactly like before this split.
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede",
+        lambda params, *, run_id: submitted.append((gate_emission.RUN_SCHEMA_REF, params)),
+    )
     monkeypatch.setattr(
         gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
     )
@@ -238,8 +399,41 @@ def test_emit_run_records_submits_all_and_verifies(consolidated_run, monkeypatch
     assert result.run_identity == derive_identity("run", RUN_DOC["run_id"])
 
 
+def test_emit_run_records_run_row_never_gated_behind_row_exists(consolidated_run, monkeypatch):
+    """t019-04 D(b): the run row always supersedes — _row_exists is never
+    consulted for it, unlike run_step/run_report below."""
+    row_exists_calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        gate_emission, "_row_exists",
+        lambda db, table, kind, name: row_exists_calls.append((kind, name)) or False,
+    )
+    monkeypatch.setattr(gate_emission, "_submit_object", lambda ref, params: None)
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede", lambda params, *, run_id: None
+    )
+    monkeypatch.setattr(
+        gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
+    )
+    monkeypatch.setattr(gate_emission, "_verify_rows", lambda db, table, names: 3)
+
+    emit_run_records(
+        store=_FakeStore(consolidated_run),
+        run_id=RUN_DOC["run_id"],
+        prod_db=Path("/nonexistent"),
+    )
+
+    kinds_checked = {kind for kind, _ in row_exists_calls}
+    assert "run" not in kinds_checked
+    assert "run_step" in kinds_checked
+    assert "run_report" in kinds_checked
+
+
 def test_emit_run_records_gate_refusal_raises(consolidated_run, monkeypatch):
     """Gate refusal surfaces as GateEmissionError — never swallowed."""
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede", lambda params, *, run_id: None
+    )
 
     def _refuse(ref, params):
         raise GateEmissionError("severity=error: unknown_kind")
@@ -250,6 +444,22 @@ def test_emit_run_records_gate_refusal_raises(consolidated_run, monkeypatch):
     )
 
     with pytest.raises(GateEmissionError, match="severity=error"):
+        emit_run_records(
+            store=_FakeStore(consolidated_run),
+            run_id=RUN_DOC["run_id"],
+            prod_db=Path("/nonexistent"),
+        )
+
+
+def test_emit_run_records_run_supersede_refusal_raises(consolidated_run, monkeypatch):
+    """The run row's terminal supersede is ALSO never swallowed."""
+
+    def _refuse(params, *, run_id):
+        raise GateEmissionError("severity=error: run refused")
+
+    monkeypatch.setattr(gate_emission, "_submit_run_supersede", _refuse)
+
+    with pytest.raises(GateEmissionError, match="run refused"):
         emit_run_records(
             store=_FakeStore(consolidated_run),
             run_id=RUN_DOC["run_id"],
