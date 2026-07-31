@@ -107,7 +107,9 @@ def get_governor_root() -> Path:
 def get_epic_path(epic_id: str) -> Path:
     """Get the path to an epic directory.
 
-    Resolves category-based paths from the epic ID prefix:
+    t018-04: checks the new canon/initiatives/<initiative>/epics/<epic_id>/
+    root first (most epics moved there) via a real existence scan, then
+    falls back to the old epics/ root's existing resolution:
     - t004-foo -> epics/t-tooling/t004-foo/
     - e012-bar -> epics/e-epics/e012-bar/
     - unknown  -> epics/unknown/ (fallback for legacy/uncategorized)
@@ -118,7 +120,20 @@ def get_epic_path(epic_id: str) -> Path:
     Returns:
         Path to the epic directory within governor.
     """
-    epics_root = get_governor_root() / "epics"
+    root = get_governor_root()
+
+    # New root first (t018-04): most epics now live under
+    # canon/initiatives/<initiative>/epics/<epic_id>/. Unlike the old
+    # root's category guess below, this is a real existence scan -- no
+    # initiative name is known here, so the path can't be guessed.
+    initiatives_root = root / "canon" / "initiatives"
+    if initiatives_root.exists():
+        for epic_yaml in initiatives_root.rglob("epic.yaml"):
+            if epic_yaml.parent.name == epic_id:
+                return epic_yaml.parent
+
+    # Old root fallback (unassigned epics, e.g. e007/e009) — unchanged.
+    epics_root = root / "epics"
 
     # Try to extract category from ID prefix
     category = get_category_from_id(epic_id)
@@ -258,23 +273,26 @@ def list_epics() -> list[str]:
     """List all epic IDs in the governor.
 
     Supports multiple layouts:
+    - New (t018-04): canon/initiatives/<initiative>/epics/t004-foo/epic.yaml
     - Flat: epics/t004-foo/epic.yaml
     - Category-grouped: epics/t-tooling/t004-foo/epic.yaml
 
     Returns:
         List of epic IDs (directory names containing epic.yaml).
     """
-    epics_dir = get_governor_root() / "epics"
-    if not epics_dir.exists():
-        return []
+    root = get_governor_root()
+    search_roots = [root / "canon" / "initiatives", root / "epics"]
 
     epic_ids: list[str] = []
     seen: set[str] = set()
 
-    for epic_yaml in epics_dir.rglob("epic.yaml"):
-        epic_id = epic_yaml.parent.name
-        if epic_id not in seen:
-            seen.add(epic_id)
-            epic_ids.append(epic_id)
+    for search_root in search_roots:
+        if not search_root.exists():
+            continue
+        for epic_yaml in search_root.rglob("epic.yaml"):
+            epic_id = epic_yaml.parent.name
+            if epic_id not in seen:
+                seen.add(epic_id)
+                epic_ids.append(epic_id)
 
     return sorted(epic_ids)

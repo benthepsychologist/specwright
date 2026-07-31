@@ -73,16 +73,32 @@ def _epics_dir(governor_root: Path | None = None) -> Path:
     return root / "epics"
 
 
+def _epic_roots(governor_root: Path | None = None) -> list[Path]:
+    """Both valid epic roots (t018-04).
+
+    t018-01 moved most epics from the flat epics/<series>/<epic>/ location
+    to the new canon/initiatives/<initiative>/epics/<epic>/ location;
+    epics with no initiative home (e.g. e007-ingressor,
+    e009-molt-multimodel-chatbot) deliberately stay at the old flat root
+    as a permanent fallback. Both roots are permanently valid -- an epic
+    lives in exactly one of them, never both, but callers must search
+    both since either can be true for any given epic. New root first.
+    """
+    root = governor_root or _get_governor_root()
+    return [root / "canon" / "initiatives", root / "epics"]
+
+
 def _iter_epic_dirs(epics_root: Path):
-    """Yield all epic directories under an epics/ root.
+    """Yield all epic directories under a single root.
 
     Supports multiple layouts, including:
     - Flat: epics/t004-specwright-governance/epic.yaml
     - Letter-grouped: epics/t/t004-specwright-governance/epic.yaml
     - Domain/grouped: epics/t-tooling/t005-vmctl-docker-isolation/epic.yaml
+    - Initiative-nested: canon/initiatives/<init>/epics/t018-foo/epic.yaml
 
     Implementation detail: we treat any directory containing an epic.yaml
-    anywhere under epics/ as an epic directory.
+    anywhere under the given root as an epic directory.
     """
     if not epics_root.exists():
         return
@@ -94,6 +110,20 @@ def _iter_epic_dirs(epics_root: Path):
             continue
         seen.add(epic_dir)
         yield epic_dir
+
+
+def _iter_all_epic_dirs(governor_root: Path | None = None):
+    """Yield epic directories across BOTH valid roots (t018-04), merged and
+    deduplicated by directory name. Search order is new-root-first, but
+    since a given epic renders to exactly one root, this is a union, not
+    a priority fallback between competing copies."""
+    seen_names: set[str] = set()
+    for root in _epic_roots(governor_root):
+        for d in _iter_epic_dirs(root):
+            if d.name in seen_names:
+                continue
+            seen_names.add(d.name)
+            yield d
 
 
 def resolve_epic(prefix: str, governor_root: Path | None = None) -> ResolvedEpic:
@@ -109,12 +139,8 @@ def resolve_epic(prefix: str, governor_root: Path | None = None) -> ResolvedEpic
     Raises:
         ResolveError: If no match or ambiguous.
     """
-    epics = _epics_dir(governor_root)
-    if not epics.exists():
-        raise ResolveError(prefix)
-
     candidates: list[Path] = []
-    for d in _iter_epic_dirs(epics):
+    for d in _iter_all_epic_dirs(governor_root):
         if d.name.startswith(prefix):
             candidates.append(d)
 
@@ -222,10 +248,7 @@ def list_epics(governor_root: Path | None = None) -> list[str]:
     Returns:
         Sorted list of epic directory names.
     """
-    epics = _epics_dir(governor_root)
-    if not epics.exists():
-        return []
-    return sorted(d.name for d in _iter_epic_dirs(epics))
+    return sorted({d.name for d in _iter_all_epic_dirs(governor_root)})
 
 
 def list_specs_in_epic(
