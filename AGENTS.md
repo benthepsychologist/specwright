@@ -33,7 +33,9 @@ author them (authoring lives cloud-governor-side via `life create`).
 ## Commands
 
 ```bash
-pytest tests/ -x -q                 # tests (baseline: 1065 passed / 4 skipped)
+pytest tests/ -x -q                 # tests (baseline: 1083 passed / 4 skipped,
+                                     #   1 pre-existing unrelated failure —
+                                     #   test_python_backend.py needs `governor init`)
 ruff check src/ tests/              # lint before committing
 mypy src/spec/executor/             # types, if touching schemas
 .venv/bin/spec --help               # CLI surface
@@ -45,4 +47,7 @@ mypy src/spec/executor/             # types, if touching schemas
 - `STATUS.md` — current state + recent changes
 - `HOTFIXES.md` — direct-change log
 - `docs/EXECUTOR.md` — execution model detail
-- Epics/specs: `/workspace/.projections/cloud-governor/epics/`
+- Epics/specs (cloud-governor side, dual-root since t018-01/t018-04): most
+  render at `canon/initiatives/<initiative>/epics/<epic>/` (70 of 72); the
+  2 genuinely unassigned ones stay at the old flat `epics/e/<epic>/`. This
+  repo's own `resolver.py`/`loader.py` search both roots.
