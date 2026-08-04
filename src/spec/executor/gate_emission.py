@@ -623,3 +623,59 @@ def emit_run_records(
         emitted_names=emitted,
         verified_rows=verified,
     )
+
+
+EMISSION_FAILURE_PREFIX = "Gated emission FAILED (no tree-writing fallback)"
+
+
+def record_emission_failure(*, run_dir: Path, error: str) -> bool:
+    """Record a failed gated emission in the already-written run_report.yaml.
+
+    finalize serializes run_report.yaml (engine._generate_run_report) BEFORE
+    emit_run_records above ever runs, and derives its `issues` list SOLELY
+    from step outcomes — so a run whose every step completed leaves a clean
+    `issues: []` on disk even when the gate then refuses that very report's
+    row. Nothing threaded the second failure back into the first's output.
+    This re-opens the artifact and stamps the refusal into `issues`, so the
+    surviving report can't read clean beside a demonstrated GateEmissionError
+    (sw-01-02 D(a)).
+
+    Only `issues` is touched. `status` still describes how the run's STEPS
+    ended (they really did complete — it is emission that failed), and the
+    summary/assessment prose is left exactly as authored.
+
+    Returns True if the report was amended; False when there is nothing to
+    amend — no run_report.yaml (a --legacy-output store never writes one, and
+    report generation is itself best-effort), an unreadable/non-mapping
+    document, or this same failure already recorded, so re-running a failing
+    emission doesn't stack duplicate issues.
+
+    Raises OSError / yaml.YAMLError rather than swallowing them, keeping this
+    module's uniform never-swallow contract; the CLI caller surfaces those
+    alongside the emission error it is already reporting.
+    """
+    from spec.executor.run_writers import _to_yaml
+
+    report_path = run_dir / "run_report.yaml"
+    if not report_path.exists():
+        return False
+
+    report_doc = yaml.safe_load(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report_doc, dict):
+        return False
+
+    issues = report_doc.get("issues")
+    if not isinstance(issues, list):
+        issues = []
+
+    description = f"{EMISSION_FAILURE_PREFIX}: {error}"
+    if any(
+        isinstance(issue, dict) and issue.get("description") == description
+        for issue in issues
+    ):
+        return False
+
+    issues.append({"description": description, "severity": "error"})
+    report_doc["issues"] = issues
+    report_path.write_text(_to_yaml(report_doc), encoding="utf-8")
+    return True

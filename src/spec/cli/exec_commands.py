@@ -1164,13 +1164,32 @@ def _emit_gated_run_records(*, store: Any, run_id: str) -> None:
 
     Wrapper so tests can monkeypatch emission without a live gate/DB.
     """
-    from spec.executor.gate_emission import GateEmissionError, emit_run_records
+    from spec.executor.gate_emission import (
+        GateEmissionError,
+        emit_run_records,
+        record_emission_failure,
+    )
 
     try:
         emission = emit_run_records(store=store, run_id=run_id)
     except GateEmissionError as e:
+        run_dir = store.get_run_path(run_id)
         _echo_error(f"Gated emission FAILED (no tree-writing fallback): {e}")
-        _echo_error(f"Local scratch evidence remains at: {store.get_run_path(run_id)}")
+        _echo_error(f"Local scratch evidence remains at: {run_dir}")
+        # The run report was serialized before emission ran, with `issues`
+        # derived from step outcomes alone — so a clean run leaves issues: []
+        # standing next to this failure. Record the refusal there rather than
+        # let a claimed-clean report survive it (sw-01-02 D(a)).
+        try:
+            amended = record_emission_failure(run_dir=run_dir, error=str(e))
+        except (OSError, yaml.YAMLError) as report_error:
+            _echo_error(
+                "Additionally, the run report could not be amended to record "
+                f"this failure: {report_error}"
+            )
+        else:
+            if amended:
+                _echo_error("Recorded this failure in the run report's issues.")
         raise typer.Exit(1)
 
     typer.echo(

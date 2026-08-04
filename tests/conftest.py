@@ -21,10 +21,26 @@ makes that gate a no-op regardless of the invoking shell's own env.
 import pytest
 
 
+class _EmissionCalls(list):
+    """Recorded CLI emission calls.
+
+    A plain list of call kwargs (existing tests assert on it as one), plus
+    the un-stubbed wrapper: a test that needs the REAL
+    _emit_gated_run_records path — sw-01-02's emission-failure report
+    amendment — can restore it, since the autouse stub below has already
+    replaced the module attribute by the time any test body runs.
+    """
+
+    real_emit_gated_run_records = None
+
+
 @pytest.fixture(autouse=True)
 def gate_emission_calls(monkeypatch, tmp_path):
     """Stub CLI gate emission + redirect scratch root; record calls."""
-    calls: list[dict] = []
+    from spec.cli import exec_commands
+
+    calls = _EmissionCalls()
+    calls.real_emit_gated_run_records = exec_commands._emit_gated_run_records
 
     def _fake_emit(*, store, run_id):
         calls.append({"store": store, "run_id": run_id})

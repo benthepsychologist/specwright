@@ -71,3 +71,9 @@
 
 (No acceptance criteria section found in spec)
 <!-- END SYNCED: SPEC: t019-04-specwright-claim-row -->
+
+<!-- BEGIN SYNCED: SPEC: sw-01-02-execution-surface-honesty -->
+## Current Spec: sw-01-02-execution-surface-honesty
+
+(No acceptance criteria section found in spec)
+<!-- END SYNCED: SPEC: sw-01-02-execution-surface-honesty -->

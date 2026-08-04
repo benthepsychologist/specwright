@@ -10,12 +10,36 @@ from spec.governance.sync_refs import (
     AGENT_REF_TARGETS,
     AGENT_SKILLS_PATHS,
     _extract_context,
+    _extract_spec_stub,
     _format_consumers,
     _format_content,
     _format_markdown,
     _get_markers,
     _merge_content,
     sync_refs,
+)
+
+PLACEHOLDER = "(No acceptance criteria section found in spec)"
+
+# A flat 2-1-0 spec object as refs.sync actually receives it: top-level keys,
+# no markdown headers anywhere, criteria in an `acceptance_criteria:` list.
+# Trimmed from canon/initiatives/specwright/.../sw-01-02-execution-surface-honesty.yaml.
+FLAT_SPEC_YAML = dedent(
+    """\
+    spec_id: 1f85d36b-4d24-5bbe-b7e4-23ce20a9e2a1
+    object_schema_ref: iglu:io.lifeos/spec_object/jsonschema/2-1-0
+    kind: spec
+    name: sw-01-02-execution-surface-honesty
+    tier: A
+    goal: A specwright run's own report can no longer claim a clean issues.
+    acceptance_criteria:
+    - text: 'A run whose gated emission fails never leaves the surviving run-report
+        artifact claiming issues: [] — the failure appears in issues.'
+    - text: Running refs.sync against a real flat 2-1-0 YAML spec renders those
+        criteria's real text into the target repo's CLAUDE.md stub.
+    repo:
+      name: specwright
+    """
 )
 
 
@@ -1181,3 +1205,70 @@ class TestSyncRefsRegistration:
         fn = get_callable("agent.sync_refs")
         assert fn is not None
         assert callable(fn)
+
+
+class TestFlatSpecAcceptanceCriteria:
+    """Flat 2-1-0 spec objects render real criteria, not the placeholder.
+
+    refs.sync hands `_extract_spec_stub` the RAW spec file text, so a .yaml
+    spec arrives as literal `acceptance_criteria:` lines that never contain a
+    "## Acceptance Criteria" markdown header — the stub used to fall through
+    to the placeholder even though the criteria were right there (sw-01-02
+    D(b)).
+    """
+
+    def test_flat_yaml_criteria_replace_placeholder(self) -> None:
+        stub = _extract_spec_stub(FLAT_SPEC_YAML, "sw-01-02")
+
+        assert PLACEHOLDER not in stub
+        assert "## Acceptance Criteria" in stub
+        assert "never leaves the surviving run-report" in stub
+        assert "renders those criteria's real text" in stub
+
+    def test_flat_yaml_criteria_render_as_one_bullet_each(self) -> None:
+        """Folded/continued YAML text must not break bullet structure."""
+        stub = _extract_spec_stub(FLAT_SPEC_YAML, "sw-01-02")
+        assert len([line for line in stub.split("\n") if line.startswith("- ")]) == 2
+
+    def test_markdown_path_unchanged_by_flat_yaml_support(self) -> None:
+        """The legacy markdown extraction still wins and is untouched."""
+        spec_md = "---\ngoal: test\n---\n\n## Acceptance Criteria\n- done\n"
+        stub = _extract_spec_stub(spec_md, "s-1")
+
+        assert PLACEHOLDER not in stub
+        assert "## Acceptance Criteria" in stub
+        assert "- done" in stub
+        assert "**Goal:** test" in stub
+
+    def test_placeholder_survives_for_a_spec_with_no_criteria(self) -> None:
+        """A spec carrying neither form still says so — no silent invention."""
+        assert PLACEHOLDER in _extract_spec_stub("tier: C\ngoal: nothing here\n", "s-2")
+        assert PLACEHOLDER in _extract_spec_stub("# Just a title\n\nProse.\n", "s-3")
+
+    def test_sync_refs_writes_real_criteria_into_claude_md(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end (AC2): the target repo's CLAUDE.md carries real text."""
+        gov_root = tmp_path / "governor"
+        (gov_root / "skills").mkdir(parents=True)
+        monkeypatch.setattr(
+            "spec.governance.sync_refs._governor_root", lambda: gov_root
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        result = sync_refs(
+            payload={
+                "agents": ["claude-code"],
+                "project": "specwright",
+                "spec_id": "sw-01-02-execution-surface-honesty",
+                "spec_md": FLAT_SPEC_YAML,
+            },
+            repo_path=repo,
+        )
+
+        assert result["passed"] is True
+        content = (repo / "CLAUDE.md").read_text()
+        assert PLACEHOLDER not in content
+        assert "never leaves the surviving run-report" in content
+        assert "renders those criteria's real text" in content

@@ -530,3 +530,94 @@ def test_verify_rows_unstamped_row_fails(tmp_path):
     db = _make_ops_db(tmp_path, [("run@1.0.0", "run-x", "[]")])
     with pytest.raises(GateEmissionError, match="[Ss]tamp"):
         gate_emission._verify_rows(db, "ops__base", {"run": ["run-x"]})
+
+
+# ---------------------------------------------------------------------------
+# record_emission_failure (sw-01-02 D(a))
+# ---------------------------------------------------------------------------
+
+
+def test_record_emission_failure_stamps_issues(consolidated_run):
+    """A refused emission lands in the already-written report's issues."""
+    assert yaml.safe_load(
+        (consolidated_run / "run_report.yaml").read_text()
+    )["issues"] == []
+
+    assert gate_emission.record_emission_failure(
+        run_dir=consolidated_run, error="gate refused run rows"
+    ) is True
+
+    report = yaml.safe_load((consolidated_run / "run_report.yaml").read_text())
+    assert report["issues"] != []
+    assert report["issues"][0]["severity"] == "error"
+    assert "gate refused run rows" in report["issues"][0]["description"]
+    assert gate_emission.EMISSION_FAILURE_PREFIX in report["issues"][0]["description"]
+
+
+def test_record_emission_failure_preserves_the_rest_of_the_report(consolidated_run):
+    """Only `issues` moves: status describes how the run's STEPS ended, and
+    the authored prose is left alone."""
+    gate_emission.record_emission_failure(run_dir=consolidated_run, error="boom")
+
+    report = yaml.safe_load((consolidated_run / "run_report.yaml").read_text())
+    for key in ("kind", "artifact_id", "name", "run_id", "generated_at"):
+        assert report[key] == REPORT_DOC[key]
+    assert report["status"] == "completed"
+    assert report["summary"] == "It worked."
+    assert report["assessment"] == "Good."
+    assert report["recommendation"] == "Ship it."
+
+
+def test_record_emission_failure_is_idempotent(consolidated_run):
+    """Re-running a failing emission must not stack duplicate issues."""
+    assert gate_emission.record_emission_failure(
+        run_dir=consolidated_run, error="boom"
+    ) is True
+    assert gate_emission.record_emission_failure(
+        run_dir=consolidated_run, error="boom"
+    ) is False
+
+    report = yaml.safe_load((consolidated_run / "run_report.yaml").read_text())
+    assert len(report["issues"]) == 1
+
+    # A genuinely different refusal is still worth recording.
+    assert gate_emission.record_emission_failure(
+        run_dir=consolidated_run, error="different refusal"
+    ) is True
+    assert len(
+        yaml.safe_load((consolidated_run / "run_report.yaml").read_text())["issues"]
+    ) == 2
+
+
+def test_record_emission_failure_keeps_existing_step_issues(consolidated_run):
+    """Step-derived issues survive; the emission failure is appended."""
+    report_path = consolidated_run / "run_report.yaml"
+    doc = dict(REPORT_DOC)
+    doc["issues"] = [{"description": "Step 3 (build) failed", "severity": "warning"}]
+    report_path.write_text(yaml.dump(doc))
+
+    gate_emission.record_emission_failure(run_dir=consolidated_run, error="boom")
+
+    issues = yaml.safe_load(report_path.read_text())["issues"]
+    assert len(issues) == 2
+    assert issues[0]["description"] == "Step 3 (build) failed"
+    assert gate_emission.EMISSION_FAILURE_PREFIX in issues[1]["description"]
+
+
+def test_record_emission_failure_no_report_is_a_no_op(tmp_path):
+    """A --legacy-output store never writes run_report.yaml — nothing to amend."""
+    run_dir = tmp_path / "run-without-report"
+    run_dir.mkdir()
+    assert gate_emission.record_emission_failure(run_dir=run_dir, error="boom") is False
+
+
+def test_record_emission_failure_amended_report_rides_into_the_row(consolidated_run):
+    """emit_run_records re-reads the report from disk, so a later retry
+    carries the recorded failure into the governed row's metadata."""
+    gate_emission.record_emission_failure(run_dir=consolidated_run, error="boom")
+
+    report_doc = yaml.safe_load((consolidated_run / "run_report.yaml").read_text())
+    params = build_report_object_params(
+        report_doc, RUN_DOC["run_id"], "identity", "aip-1"
+    )
+    assert params["metadata"]["issues"][0]["severity"] == "error"

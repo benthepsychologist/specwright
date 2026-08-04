@@ -672,6 +672,115 @@ class TestRunCommand:
         assert execute_calls == []
         assert gate_emission_calls == []
 
+    def test_run_emission_failure_lands_in_run_report_issues(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """A run whose gated emission fails must not leave a run report
+        claiming issues: [] (sw-01-02 D(a)).
+
+        The report is serialized at finalize with `issues` derived from step
+        outcomes alone, strictly BEFORE emission runs — so a run whose every
+        step completed used to leave a clean report standing next to a loud
+        GateEmissionError. Exercises the REAL _emit_gated_run_records wrapper
+        (restored over conftest's autouse stub); only the underlying
+        gate_emission.emit_run_records is faked, mirroring the
+        emit_claim_record-refusal test above.
+        """
+        import yaml as yaml_module
+
+        from spec.executor import gate_emission as gate_emission_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        monkeypatch.setattr(
+            exec_commands,
+            "_emit_gated_run_records",
+            gate_emission_calls.real_emit_gated_run_records,
+        )
+
+        def _refuse_emission(*, store, run_id):
+            raise gate_emission_module.GateEmissionError("gate refused run rows")
+
+        monkeypatch.setattr(gate_emission_module, "emit_run_records", _refuse_emission)
+
+        result = runner.invoke(
+            app,
+            ["run", "test-simple", str(spec_file), "--repo", str(git_repo)],
+        )
+
+        assert result.exit_code == 1
+        assert "Gated emission FAILED" in result.output
+
+        reports = list((tmp_path / "specwright-scratch").rglob("run_report.yaml"))
+        assert len(reports) == 1, f"expected exactly one run report, got {reports}"
+        report = yaml_module.safe_load(reports[0].read_text())
+
+        # The whole point: the surviving artifact no longer reads issues: [].
+        assert report["issues"] != []
+        descriptions = [issue["description"] for issue in report["issues"]]
+        assert any("gate refused run rows" in d for d in descriptions), descriptions
+        assert any(
+            gate_emission_module.EMISSION_FAILURE_PREFIX in d for d in descriptions
+        ), descriptions
+        assert [issue["severity"] for issue in report["issues"]] == ["error"]
+
+    def test_run_successful_emission_leaves_report_issues_untouched(
+        self,
+        spec_file,
+        git_repo,
+        simple_job,
+        tmp_path,
+        monkeypatch,
+        jobdefs_installed,
+        gate_emission_calls,
+    ):
+        """The amendment is scoped to real failures: a clean run whose
+        emission succeeds still reports issues: [] (sw-01-02 D(a) guard)."""
+        import yaml as yaml_module
+
+        from spec.executor import gate_emission as gate_emission_module
+
+        jobdefs_dir = jobdefs_installed / "jobdefs" / "specwright"
+        with open(jobdefs_dir / "test-simple.yaml", "w") as f:
+            yaml_module.dump(simple_job.model_dump(mode="json"), f)
+
+        monkeypatch.setattr(
+            exec_commands,
+            "_emit_gated_run_records",
+            gate_emission_calls.real_emit_gated_run_records,
+        )
+
+        def _succeed(*, store, run_id):
+            return gate_emission_module.EmissionResult(
+                run_id=run_id,
+                run_identity="identity",
+                dataset="ops",
+                table="ops__base",
+                emitted_names={"run": ["r"], "run_step": [], "run_report": ["rep"]},
+                verified_rows=2,
+            )
+
+        monkeypatch.setattr(gate_emission_module, "emit_run_records", _succeed)
+
+        result = runner.invoke(
+            app,
+            ["run", "test-simple", str(spec_file), "--repo", str(git_repo)],
+        )
+
+        assert "Gated emission FAILED" not in result.output
+        reports = list((tmp_path / "specwright-scratch").rglob("run_report.yaml"))
+        assert len(reports) == 1
+        assert yaml_module.safe_load(reports[0].read_text())["issues"] == []
+
 
 # =============================================================================
 # spec status Tests

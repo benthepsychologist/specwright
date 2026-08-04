@@ -580,6 +580,40 @@ def _extract_context(build: dict) -> dict[str, Any]:
     }
 
 
+def _flat_yaml_acceptance_criteria(spec_md: str) -> list[str]:
+    """Pull acceptance-criteria text out of a flat 2-1-0 spec object (YAML).
+
+    A flat spec object carries a top-level ``acceptance_criteria:`` list of
+    ``{text: ...}`` entries and no markdown headers at all, so the
+    "## Acceptance Criteria" scan in _extract_spec_stub never fires for one
+    and the placeholder lands in the target repo's CLAUDE.md instead of the
+    real criteria (sw-01-02 D(b)). ``spec_md`` for a .yaml spec is the raw,
+    unparsed file text (exec_commands._load_spec), so parse it here.
+
+    Returns [] — leaving the caller's existing behavior untouched — for
+    anything that isn't a YAML mapping with a populated acceptance_criteria
+    list, which includes every markdown spec (frontmatter + body is a
+    multi-document stream that safe_load refuses outright).
+    """
+    try:
+        doc = yaml.safe_load(spec_md)
+    except yaml.YAMLError:
+        return []
+    if not isinstance(doc, dict):
+        return []
+
+    entries = doc.get("acceptance_criteria")
+    if not isinstance(entries, list):
+        return []
+
+    criteria: list[str] = []
+    for entry in entries:
+        text = entry.get("text") if isinstance(entry, dict) else entry
+        if isinstance(text, str) and text.strip():
+            criteria.append(text.strip())
+    return criteria
+
+
 def _extract_spec_stub(spec_md: str, spec_id: str) -> str:
     """Extract a lightweight stub from full spec markdown.
 
@@ -617,8 +651,21 @@ def _extract_spec_stub(spec_md: str, spec_id: str) -> str:
                 break
             stub_lines.append(line)
 
+    # Only when the markdown-header path found nothing: a flat 2-1-0 spec
+    # object keeps its criteria in a top-level YAML list, not under an H2.
     if not in_ac:
-        stub_lines.append("(No acceptance criteria section found in spec)")
+        criteria = _flat_yaml_acceptance_criteria(spec_md)
+        if criteria:
+            stub_lines.append("## Acceptance Criteria")
+            stub_lines.append("")
+            for text in criteria:
+                # A literal-block scalar keeps its newlines; indent the
+                # continuations so each criterion stays one markdown bullet.
+                first, *rest = text.split("\n")
+                stub_lines.append(f"- {first}")
+                stub_lines.extend(f"  {line}" for line in rest)
+        else:
+            stub_lines.append("(No acceptance criteria section found in spec)")
 
     return "\n".join(stub_lines)
 
