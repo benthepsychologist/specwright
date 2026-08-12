@@ -77,3 +77,16 @@
 
 (No acceptance criteria section found in spec)
 <!-- END SYNCED: SPEC: sw-01-02-execution-surface-honesty -->
+
+<!-- BEGIN SYNCED: SPEC: hf-03-01-silent-completion-detection -->
+## Current Spec: hf-03-01-silent-completion-detection
+
+## Acceptance Criteria
+
+- SUBSTANTIVE-DIFF HELPER EXISTS: a reusable function computes whether a target-repo diff contains real change, correctly excluding content between BEGIN/END SYNCED marker pairs (both markdown and hash-comment marker forms) -- unit-tested directly, not just exercised indirectly.
+- STATUS REFLECTS REALITY: when an agent step exits 0 but produces no substantive change under that definition, its OutcomeStatus is NOT completed, and the overall RunStatus is NOT completed -- verified by a real test that exercises engine.py's actual status computation, not a mock of it.
+- CASCADE VERIFIED, NOT ASSUMED: when the above triggers, the generated run report's issues list is non-empty with real, accurate content, and recommendation differs from the plain-success default -- proven by an integration test through the real report-generation path, confirming whether the existing cascade already handles this or needed a direct fix (record whichever is true).
+- HISTORICAL INCIDENTS CAUGHT: replayed against frozen fixtures snapshotted from the two real incident runs named in the objective, the new logic classifies both as non-clean.
+- REAL SUCCESSES UNAFFECTED: replayed against frozen fixtures snapshotted from the two real successful runs named in the objective, the new logic does not flag either -- zero behavior change for the common case.
+- NO REGRESSION: the full existing specwright test suite passes clean after this change -- this is shared core executor logic.
+<!-- END SYNCED: SPEC: hf-03-01-silent-completion-detection -->

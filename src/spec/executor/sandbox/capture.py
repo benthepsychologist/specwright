@@ -278,6 +278,32 @@ def get_uncommitted_changed_files(repo_path: Path) -> list[ChangedFile]:
     return changed_files
 
 
+def generate_working_tree_diff(repo_path: Path, base_commit: str) -> str:
+    """
+    Generate a unified diff from `base_commit` to the current working tree.
+
+    Unlike generate_patch() (which diffs two fixed commits and misses
+    anything not yet committed), this diffs a single commit against the
+    live working tree -- so it always reflects the full accumulated change
+    since base_commit regardless of whether it has been committed yet.
+    Used to snapshot repo state immediately before and after a step
+    dispatch, so the two snapshots can be compared to isolate what that
+    step actually changed.
+
+    Args:
+        repo_path: Path to the repository
+        base_commit: The commit SHA to diff against
+
+    Returns:
+        The unified diff content
+
+    Raises:
+        GitCaptureError: If the git command fails
+    """
+    result = _run_git(["diff", "--unified=3", base_commit], repo_path)
+    return result.stdout
+
+
 def generate_patch(
     repo_path: Path,
     base_commit: str,

@@ -1,0 +1,23 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 064a129..25e86c3 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -1327,3 +1327,18 @@
+ (No acceptance criteria section found in spec)
+ <!-- END SYNCED: SPEC: e040-09-registrar-gated-row-writes -->
+ 
++<!-- BEGIN SYNCED: SPEC: e040-06-sqlite-write-gate -->
++## Current Spec: e040-06-sqlite-write-gate
++
++## Acceptance Criteria
++
++- Governed: a `trigger` kind + 30 guard-trigger seeds + `_write_gate` table seeds exist in lifeos-registry; validate-registry and validate-seeds pass; registrar create-write-gate creates them idempotently in both stores (dry-run supported).
++- BLOCKED: with the gate enabled on a test copy, raw sqlite3 INSERT/UPDATE/DELETE against every guarded table fails with the RAISE 'ungoverned write' message; reads succeed untouched.
++- SANCTIONED: storacle's gated_write_txn helper (sqlite.upsert/sync/mirror, wal.append, backfill tool) and registrar's projection/publish writes succeed through the gate; committed _write_gate.open is 0 after every write path (incl. rollback/crash simulation).
++- CONFORMANCE: the new stack-check trigger phase fails on a missing guard trigger, a drifted trigger body, an ungoverned extra trigger, or committed open=1 — and passes green on the conformant live stores.
++- MANUAL RETIREMENT: a governed gate-open mode exists (e.g. `registrar open-manual-retirement --reason "<text>"`) that opens `_write_gate` for exactly one hand-run statement, logs the reason, and auto-closes — a hand-run DELETE against a guarded table succeeds through this mode and is rejected without it; the mode is never invocable without a reason string.
++- KIND STABILITY, GOVERNED: a `kind_stability` check type exists in storacle's policy engine, in the same family as `_check_version_monotonic`, consuming the same `_prior_row` evidence-resolution machinery (`_resolve_prior_rows_batch`/`needs_prior_row`); `sqlite.upsert`'s admission demand-planning requests prior-row evidence for this check the same way it already does for `version`.
++- KIND STABILITY, ENFORCED LOCALLY: a `sqlite.upsert` admission whose object's `kind` differs from the prior row's `kind` at the same key is refused by default; it succeeds when the caller explicitly passes the documented override (agent-runnable, per the manual-retirement/local-surgery doctrine — no human click required locally); the override is visible in the calling job/spec, never a silent default.
++- KIND STABILITY, HUMAN-GATED ON BIGQUERY: `BigQueryClient.upsert`'s merge path (`_execute_merge`) refuses a batch containing a kind-changing collision unless a human-only confirmation flag is set; the automated `bq.sync-all` job path never sets or can set that flag; a human-run confirmation command applies it explicitly, scoped to the specific reported collision(s).
++- LIVE + behavioral: gate enabled on live prod.db + gov.db (after backups); a real raw-write attempt is rejected in each store; a real storacle write and a real registrar projection both succeed; a real kind-changing sqlite.upsert is refused without the override and succeeds with it; a real kind-changing BigQuery merge is refused without human confirmation; a real manual-retirement DELETE succeeds through its gate-open mode and is rejected without it; full offline stack-check green including the new phase.
++<!-- END SYNCED: SPEC: e040-06-sqlite-write-gate -->

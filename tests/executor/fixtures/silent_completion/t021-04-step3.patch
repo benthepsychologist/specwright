@@ -1,0 +1,1281 @@
+diff --git a/canon/initiatives/lorchestra-platform/STATE.md b/canon/initiatives/lorchestra-platform/STATE.md
+index b0cfe8e..a8a9d5d 100644
+--- a/canon/initiatives/lorchestra-platform/STATE.md
++++ b/canon/initiatives/lorchestra-platform/STATE.md
+@@ -14,9 +14,9 @@ project_label: lorchestra-platform
+ 
+ **Initiative:** lorchestra-platform · **Owner:** benthepsychologist · **Status:** active
+ **Epics:** e002, e004, e005, e005b, e006, e011, e012, e017, e020, e021, e024, e025, e035
+-**Last log entry: 2026-08-02**
++**Last log entry: 2026-08-03**
+ 
+-**Verified:** 2026-08-02T19:30:00Z · OI-3's two residuals read directly out of the archived incident brief and cross-checked against the adhoc run row `f3023856-098d-5b28-92a0-3212827ac0d3` in `ops__base`; the incident's own fixes not re-verified against the lorchestra repo this pass. Earlier · 2026-07-28T17:20:57Z · epic-record crawl + governor rollup; not re-verified against target repos
++**Verified:** 2026-08-03 · full roster verification sweep (t021-04): all 98 spec index entries across the 13 epics re-verified against repo git logs (lorchestra, storacle, life, registrar, finalform, projectionist, injest, inferometer, lifeos-registry), on-disk artifacts, and `ops__base` run rows — see the sweep log entry and each epic's dated `metadata.amendments` entry for per-spec citations. Earlier · 2026-08-02T19:30:00Z · OI-3's two residuals read directly out of the archived incident brief and cross-checked against the adhoc run row `f3023856-098d-5b28-92a0-3212827ac0d3` in `ops__base`. Earlier · 2026-07-28T17:20:57Z · epic-record crawl + governor rollup; not re-verified against target repos
+ 
+ ## Trust rule
+ 
+@@ -24,13 +24,14 @@ If you cannot say how a claim below was verified, it does not go in this file.
+ 
+ ## Current state
+ 
+-- **The system is live and load-bearing; this roster is mostly its
+-  pre-history.** lorchestra runs the whole stack daily (repo_sync, BQ
+-  sync, contacts sync, mail jobs — all verified live by other
+-  initiatives' passes). But of the 13 epics here, only **e035 is cleanly
+-  done** (7/7 completed, June); e017 and e020 are partially done; the
+-  other ten are majority-`planned` rosters from Jan–Apr that predate how
+-  the platform actually evolved.
++- **The system is live and load-bearing; this roster is its verified
++  pre-history since the 2026-08-03 sweep.** lorchestra runs the whole
++  stack daily (repo_sync, BQ sync, contacts sync, mail jobs — all
++  verified live by other initiatives' passes). The t021-04 sweep showed
++  the old majority-`planned` reading was false: most Jan–Apr specs were
++  DELIVERED at the time and the record never moved. Post-sweep: 66
++  entries flipped to `done`, 6 to `superseded`, 19 confirmed as
++  recorded, 7 UNVERIFIABLE (left untouched, named in the sweep log).
+ - **Recent lorchestra development happened through other initiatives'
+   lanes, not this roster** — the freeze chain (cloud_sync v6.1, pipeline
+   fan-out, pull_guard, object.update), mail-and-pm (e045 jobs),
+@@ -43,7 +44,8 @@ If you cannot say how a claim below was verified, it does not go in this file.
+   e012 performance) reference machinery that has since been dissolved or
+   rebuilt — treat every `planned` spec here as a hypothesis, not a
+   backlog commitment.
+-- Statuses not re-verified against the lorchestra repo this pass.
++- Statuses re-verified against the target repos 2026-08-03 (t021-04
++  sweep); per-spec citations live in each epic's `metadata.amendments`.
+ 
+ ## Open issues
+ 
+@@ -87,6 +89,8 @@ If you cannot say how a claim below was verified, it does not go in this file.
+ 
+ ### the mail-send incident's two residuals filed as OI-3 (2026-08-02) — arrived via cloud-governor's INBOX as a report from a lorchestra agent session on 07-31, and settled through it on 08-02 under t023-05. The **incident itself is closed**: root-caused (`TestApproveJob` approves a synthetic `mail.send` job_request; approval synchronously kicks the real `pipeline.sweeper`, which dispatched the child for real with nothing mocking egret's boundary), two fixes shipped to lorchestra `main` `3ec6ac9` — an autouse `tests/conftest.py` guard refusing any real `egret.client.submit_plan` under pytest, plus a production-path `mail_send_guard.py` wired as `mail.send.yaml`'s first step — and recorded via the adhoc lane, run `f3023856-098d-5b28-92a0-3212827ac0d3`. What that fix did **not** close is now OI-3: **(a)** `AUTHCTL_HOME` is still globally exported in `~/.bashrc`/`~/.zshrc`, so every shell on this machine holds live Gmail credentials — deliberately left as a question for Ben on 07-31 rather than changed unilaterally; **(b)** egret's idempotency key did not prevent repeat sends of identical content, since Gmail issued 96 distinct message_ids for one payload. Numbered OI-3 rather than OI-2 because OI-2 was retired by relocation on 07-29 and governor C10 correctly flagged the reuse as a stale surface. What's next: OI-1 (the empty-diff push guard) and OI-3 together, next time the lorchestra lane opens — (a) is Ben's call, not an engine change.
+ 
++### roster verification sweep, t021-04 (2026-08-03) — all 98 spec index entries across the 13 epics re-verified against commit-locatable evidence: repo git logs (lorchestra, storacle, life, registrar, finalform, projectionist, injest, inferometer, lifeos-registry), artifacts on disk, and `ops__base` run rows — the registrar-governance-style sweep this file called for at its creation. Method per t021-02's precedent: per-spec verdict from evidence, never memory or plausibility. Outcome: **19 CONFIRMED, 72 CORRECTED (66 → `done`, 6 → `superseded`), 7 UNVERIFIABLE** (left untouched: e002's `notes` pseudo-entry, which is a path-convention note not a work item; e011-01/e011-02b, whose target repo workman was dissolved and deleted; e020-02a/03/04, asserted only by the cutover merge's prose with no discrete commits and a run store that reaches back only to 2026-07-17; e020-07b, whose canonizer-side artifacts are gone and which the e033-00 audit itself could not find). Per-epic corrections: e002 3, e004 0 (confirmed never-implemented), e005 5, e005b 26, e006 5, e011 2, e012 0 (all 3 confirmed `planned` — 01/02's supersession by t016-02/e035 is recorded in the amendment, with the status flip deferred to t021-05 because their fileless index entries would read as phantom drift under any non-planned status), e017 7, e020 10, e021 4, e024 8, e025 2, e035 0 (all 8 confirmed). The headline finding: the roster's majority-`planned` reading was false — the Jan–Apr epics were largely delivered when authored, through direct-to-main commits and interactive sessions the status fields never tracked; several delivered artifacts were later dissolved (workman, canonizer, the PM lane, the BQ bootstrap) or absorbed (domain_* jobs into `repo_sync`, `sync_table` into `cloud_sync`), which the amendments record rather than erase. Every epic — corrected or not — carries one dated `metadata.amendments` entry (2026-08-03) with the full per-spec citations; all 13 epic files hand-bumped. **Roster trustworthy as of this sweep**, with the 7 named UNVERIFIABLE gaps; obsolete-but-open work orders (e004-01, e011-04, e012-01/02/03, e020-10, e005b's duplicate 09a index entry, e002's `notes`) are retirement candidates for t021-05. What's next: nothing active through this roster — new platform work still arrives via other initiatives' lanes; t021-05 owns retirement of the named candidates; OI-1 and OI-3 unchanged, next time the lorchestra lane opens.
++
+ ## Onramp
+ 
+ 1. `canon/initiatives/prod-freeze/STATE.md` — where recent platform work is actually recorded.
+diff --git a/canon/initiatives/lorchestra-platform/epics/e002-workman/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e002-workman/epic.yaml
+index a3a34ca..ac496db 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e002-workman/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e002-workman/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e002-workman
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: 'Workman: Domain Event Plan Compiler'
+@@ -48,7 +48,7 @@ specs:
+   path: specs/e002-01-workman-core.yaml
+   repo: None
+   spec_id: c3b17ee5-82ea-54d8-95bf-77747fe80ad2
+-  status: planned
++  status: done
+   title: Workman PM Plan Compiler
+ - branch: feat/storacle-gates
+   constraints:
+@@ -74,7 +74,7 @@ specs:
+   path: specs/e002-03-life-work.yaml
+   repo: None
+   spec_id: 8abd8276-93ff-5293-915e-7c26ef9f1664
+-  status: planned
++  status: done
+   title: life PM CLI (workman + storacle)
+ - branch: feat/workman-move
+   constraints:
+@@ -87,7 +87,7 @@ specs:
+   path: specs/e002-04-workman-move.yaml
+   repo: None
+   spec_id: 07636841-7217-5206-9b51-e13f34cfce62
+-  status: planned
++  status: done
+   title: Workman Move Operation + E2E Verification
+ - branch: main
+   constraints:
+@@ -104,6 +104,24 @@ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 5 index entries verified
++      against life/storacle/lorchestra git history. e002-02 CONFIRMED
++      completed (storacle 7b946bf 2026-01-10, assert handling + WalClient;
++      live today in src/storacle/rpc.py). e002-01 CORRECTED planned->done:
++      workman was really built and editable-installed at /workspace/workman
++      (life pyproject.toml pinned it), its compile chain validated via
++      lorchestra b1f2f05 2026-01-30; later dissolved (lorchestra a98d0ea
++      2026-06-24, D-17) and the repo is gone. e002-03 CORRECTED
++      planned->done (life cc61dc6 2026-01-19, pm exec + work
++      create/complete; deleted life a4d84e0 2026-02-10). e002-04 CORRECTED
++      planned->done (life 0df8832 2026-01-19, work move + 5 tests; deleted
++      in the same a4d84e0). 'notes' entry UNVERIFIABLE: not a work item —
++      a two-line path-convention note (specs/notes.yaml), its status is
++      vacuous; retirement is t021-05's call. Statuses reflect delivery;
++      later dissolutions recorded here, not erased.
+   backfilled_fields:
+   - intent.success_criteria (intent.success_criteria absent (required, minItems 1))
+   governance:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e004-storacle-basic-revision/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e004-storacle-basic-revision/epic.yaml
+index 1304a76..cba4bff 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e004-storacle-basic-revision/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e004-storacle-basic-revision/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e004-storacle-basic-revision
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: 'Storacle: Basic Revision'
+@@ -38,6 +38,17 @@ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): e004-01 CONFIRMED planned —
++      never implemented. storacle's sheets code still lives at
++      src/storacle/clients/sheets.py as SheetsWriteService, still exported
++      from storacle.clients (latest touch 5d22ca9 2026-06-15); no
++      adapters/sheets.py ever existed anywhere in history. The surrounding
++      world moved on: e020-09b deleted the lorchestra sheets jobs as dead
++      infrastructure (2026-04-06), so this alignment spec is likely
++      obsolete — retirement is t021-05's call, not this sweep's.
+   backfilled_fields:
+   - intent.success_criteria (intent.success_criteria absent (required, minItems 1))
+   governance:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e005-command-plane/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e005-command-plane/epic.yaml
+index 25f03cc..79e5d84 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e005-command-plane/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e005-command-plane/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e005-command-plane
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: 'lorchestra v2: Job Executor'
+@@ -74,7 +74,7 @@ specs:
+   path: specs/e005-01-schemas.yaml
+   repo: None
+   spec_id: 3918416e-8569-5fd9-b964-5a95e507d370
+-  status: planned
++  status: done
+   title: 'e005-01: Job Executor Schemas'
+ - branch: feat/executor
+   constraints:
+@@ -86,7 +86,7 @@ specs:
+   path: specs/e005-02-executor.yaml
+   repo: None
+   spec_id: aaea05e6-3448-5077-b08f-22be0d748b6a
+-  status: planned
++  status: done
+   title: 'e005-02: Executor (compile + execute + replay)'
+ - branch: feat/handlers
+   constraints:
+@@ -98,7 +98,7 @@ specs:
+   path: specs/e005-03-handlers.yaml
+   repo: None
+   spec_id: aab1b1b4-52db-5402-88c7-cedc7da9dfcb
+-  status: planned
++  status: done
+   title: 'e005-03: Handlers (data-plane + compute)'
+ - branch: feat/flagship-migration
+   constraints:
+@@ -109,7 +109,7 @@ specs:
+   path: specs/e005-04-flagship-migration.yaml
+   repo: None
+   spec_id: 14357d10-7a4c-514e-a0bd-4c567afaf522
+-  status: planned
++  status: superseded
+   title: 'e005-04: Flagship Job Migration'
+ - branch: feat/deprecation-flag
+   constraints:
+@@ -120,12 +120,33 @@ specs:
+   path: specs/e005-05-deprecation-flag.yaml
+   repo: None
+   spec_id: b093e8ed-b38e-50f7-bae9-8a6cd7f1b54c
+-  status: planned
++  status: superseded
+   title: 'e005-05: Legacy Processor Deprecation Flag'
+ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 5 specs re-verified
++      against lorchestra git history; none of the hinted feat/* branches
++      ever existed — the work landed on main. e005-01 CORRECTED
++      planned->done (6b5dcae 2026-01-24 "implement JobDef -> JobInstance ->
++      RunRecord model (e005-01)"; lorchestra/schemas/ live today). e005-02
++      CORRECTED planned->done (f90352e 2026-01-24 "implement e005-02
++      executor"; execute(envelope) is the live entry point driving today's
++      daily stack). e005-03 CORRECTED planned->done (handlers built 4d122c0
++      2026-01-24 + 99e4bdc 2026-01-25; the CallableHandler piece was later
++      deliberately removed by e005b-05, bcc0e22 2026-02-02 — the registry
++      and compute/orchestration handlers remain live). e005-04 CORRECTED
++      planned->superseded: no "3 flagship jobs" pilot ever ran — the full
++      migration landed instead via e005b-04b..04f (d16e4ef, 726fc8a,
++      7d08590, 214b659, b1f2f05; 2026-01-29/30). e005-05 CORRECTED
++      planned->superseded: the env-var deprecation flag was never built —
++      the V1 processors were hard-deleted outright instead (b916670 +
++      e79c2ee, 2026-02-10). Statuses reflect delivery; later removals
++      recorded, not erased.
+   backfilled_fields:
+   - intent.success_criteria (intent.success_criteria absent (required, minItems 1))
+   governance:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e005b-command-plane-and-performance/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e005b-command-plane-and-performance/epic.yaml
+index d943c47..9249c6d 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e005b-command-plane-and-performance/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e005b-command-plane-and-performance/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e005b-command-plane-and-performance
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: 'lorchestra v2: Thin Orchestration with Storacle-Only IO'
+@@ -192,7 +192,7 @@ specs:
+   path: specs/e005b-01-executor-dispatch.yaml
+   repo: lorchestra
+   spec_id: 30f9c6c5-6e13-524a-93f7-2fb73e97b7dd
+-  status: planned
++  status: done
+   title: 'e005b-01: Executor Dispatch (CallableResult → StoraclePlan → Storacle Client
+     Boundary)'
+ - branch: feat/callable-protocol
+@@ -204,7 +204,7 @@ specs:
+   path: specs/e005b-02a-injest-callable.yaml
+   repo: injest
+   spec_id: 0f78d53d-2774-503f-b8fe-9a1bd6059831
+-  status: planned
++  status: done
+   title: 'e005b-02a: injest Callable Protocol'
+ - branch: feat/callable-protocol
+   constraints:
+@@ -215,7 +215,7 @@ specs:
+   path: specs/e005b-02b-canonizer-callable.yaml
+   repo: canonizer
+   spec_id: 56e200f2-61c5-5800-9b30-193c89593c3f
+-  status: planned
++  status: done
+   title: 'e005b-02b: canonizer Callable Protocol'
+ - branch: feat/callable-protocol
+   constraints:
+@@ -226,7 +226,7 @@ specs:
+   path: specs/e005b-02c-finalform-callable.yaml
+   repo: finalform
+   spec_id: 33b25bdc-9800-54a7-b28e-d9eb2cfd1ce3
+-  status: planned
++  status: done
+   title: 'e005b-02c: finalform Callable Protocol'
+ - branch: feat/callable-protocol
+   constraints:
+@@ -237,7 +237,7 @@ specs:
+   path: specs/e005b-02d-projectionist-callable.yaml
+   repo: projectionist
+   spec_id: b940953a-b378-5648-94d5-c0242089dce8
+-  status: planned
++  status: done
+   title: 'e005b-02d: projectionist Callable Protocol'
+ - branch: feat/callable-protocol
+   constraints:
+@@ -248,7 +248,7 @@ specs:
+   path: specs/e005b-02e-workman-callable.yaml
+   repo: workman
+   spec_id: 88ec8020-b7f4-5094-825a-7b34985bdb83
+-  status: planned
++  status: done
+   title: 'e005b-02e: workman Callable Protocol'
+ - branch: feat/initial
+   constraints:
+@@ -260,7 +260,7 @@ specs:
+   path: specs/e005b-02f-inferometer-callable.yaml
+   repo: inferometer
+   spec_id: fc29d8d0-441a-5d54-99db-89a0c2f61362
+-  status: planned
++  status: done
+   title: 'e005b-02f: inferometer Callable Protocol (Multi-step LLM Plan Executor)'
+ - branch: feat/bigquery-client
+   constraints:
+@@ -271,7 +271,7 @@ specs:
+   path: specs/e005b-03a-storacle-bigquery.yaml
+   repo: storacle
+   spec_id: d09eb4e2-c9d1-5cb7-a786-b50ebe1c3e98
+-  status: planned
++  status: done
+   title: 'e005b-03a: Storacle BigQuery Client'
+ - branch: feat/handler-registration
+   constraints:
+@@ -282,7 +282,7 @@ specs:
+   path: specs/e005b-03b-lorchestra-handlers.yaml
+   repo: lorchestra
+   spec_id: fcf5888d-d118-5743-9708-449a0951bc74
+-  status: planned
++  status: done
+   title: 'e005b-03b: Lorchestra Handlers'
+ - branch: feat/e2e-testing
+   constraints:
+@@ -293,7 +293,7 @@ specs:
+   path: specs/e005b-03c-lorchestra-e2e.yaml
+   repo: lorchestra
+   spec_id: dcd6510f-e8d2-5f1b-adb4-4698dcf42ffe
+-  status: planned
++  status: done
+   title: 'e005b-03c: Lorchestra E2E Testing'
+ - branch: feat/test-datasets-smoke
+   constraints:
+@@ -305,7 +305,7 @@ specs:
+   path: specs/e005b-03d-test-datasets-smoke.yaml
+   repo: lorchestra
+   spec_id: 97fb31b0-e271-5e18-af7f-af396c8b3ab5
+-  status: planned
++  status: done
+   title: 'e005b-03d: Smoke Test Datasets + Table Prefix'
+ - branch: feat/cli-execute-envelope
+   constraints:
+@@ -317,7 +317,7 @@ specs:
+   path: specs/e005b-04a-cli-execute-envelope.yaml
+   repo: lorchestra
+   spec_id: 00b10e3b-1ee0-5fb9-b6f1-5094f2553d73
+-  status: planned
++  status: done
+   title: 'e005b-04a: CLI Execute Envelope'
+ - branch: feat/migrate-injest
+   constraints:
+@@ -329,7 +329,7 @@ specs:
+   path: specs/e005b-04b-migrate-injest.yaml
+   repo: lorchestra
+   spec_id: e94aebfb-e03e-5ff4-b93b-96839a67b0f0
+-  status: planned
++  status: done
+   title: 'e005b-04b: Migrate Ingest Jobs'
+ - branch: feat/migrate-canonizer
+   constraints:
+@@ -341,7 +341,7 @@ specs:
+   path: specs/e005b-04c-migrate-canonizer.yaml
+   repo: lorchestra
+   spec_id: 32f38e5a-e555-5e45-ae60-1fbcf9369eb9
+-  status: planned
++  status: done
+   title: 'e005b-04c: Migrate Canonize Jobs'
+ - branch: feat/migrate-finalform
+   constraints:
+@@ -353,7 +353,7 @@ specs:
+   path: specs/e005b-04d-migrate-finalform.yaml
+   repo: lorchestra
+   spec_id: f7960969-4715-58f2-bbcd-c7a673f4dfa2
+-  status: planned
++  status: done
+   title: 'e005b-04d: Migrate Final-Form Jobs'
+ - branch: feat/migrate-projectionist
+   constraints:
+@@ -365,7 +365,7 @@ specs:
+   path: specs/e005b-04e-migrate-projectionist.yaml
+   repo: lorchestra
+   spec_id: db2781e7-0c4f-568e-8723-89962623bcd9
+-  status: planned
++  status: done
+   title: 'e005b-04e: Migrate Projectionist Jobs'
+ - branch: feat/migrate-workman
+   constraints:
+@@ -377,7 +377,7 @@ specs:
+   path: specs/e005b-04f-migrate-workman.yaml
+   repo: lorchestra
+   spec_id: 4179c89e-a010-5857-ab76-6350162d2536
+-  status: planned
++  status: done
+   title: 'e005b-04f: Migrate Workman Jobs'
+ - branch: feat/collapse-handlers
+   constraints:
+@@ -389,7 +389,7 @@ specs:
+   path: specs/e005b-05-collapse-handlers.yaml
+   repo: lorchestra
+   spec_id: 1a691f41-1983-5193-a574-ad9180d33066
+-  status: planned
++  status: done
+   title: 'e005b-05: Collapse Handlers — Explicit Plan Building in Job Language'
+ - branch: feat/collapse-handlers
+   constraints:
+@@ -401,7 +401,7 @@ specs:
+   path: specs/e005b-06-pipeline-runner.yaml
+   repo: lorchestra
+   spec_id: f3a24fcd-e4f9-544b-a0e3-2b70e62e742a
+-  status: planned
++  status: done
+   title: 'e005b-06: Pipeline Runner — v2 Composite Job Execution'
+ - branch: main
+   constraints:
+@@ -414,7 +414,7 @@ specs:
+   path: specs/e005b-07-storacle-method-mapping.yaml
+   repo: local-governor
+   spec_id: 1b4614f5-9c5e-5755-8744-0b33d09ca615
+-  status: planned
++  status: done
+   title: 'e005b-07 — Storacle Method Mapping: plan.build batch wrapping for bq.upsert'
+ - branch: main
+   constraints:
+@@ -425,7 +425,7 @@ specs:
+   path: specs/e005b-08-storacle-query.yaml
+   repo: local-governor
+   spec_id: 21ce9bcd-5ba8-522f-99e8-e91b33c01127
+-  status: planned
++  status: done
+   title: 'e005b-08 — storacle.query: Read Step for Staged Pipelines'
+ - branch: feat/formation-io-purity
+   constraints:
+@@ -436,7 +436,7 @@ specs:
+   path: specs/e005b-09a-formation-io-purity-v2.md
+   repo: local-governor
+   spec_id: 8430e376-01cf-5814-b992-a3f05ab469cd
+-  status: planned
++  status: done
+   title: Formation — Storacle-Only IO + Eliminate Fat Callables
+ - branch: feat/formation-io-purity
+   constraints:
+@@ -448,7 +448,7 @@ specs:
+   path: specs/e005b-09a-formation-io-purity.yaml
+   repo: lorchestra
+   spec_id: 51112fda-7f8a-5f5a-a986-a33fa3077397
+-  status: planned
++  status: done
+   title: 'e005b-09a: Formation — Storacle-Only IO + Eliminate Fat Callables'
+ - branch: feat/projection-io-purity
+   constraints:
+@@ -460,7 +460,7 @@ specs:
+   path: specs/e005b-09b-projection-io-purity.yaml
+   repo: lorchestra
+   spec_id: 0ccd0ae6-beff-5d39-9f46-418bb371ed74
+-  status: planned
++  status: done
+   title: 'e005b-09b: Projection — Storacle-Only IO + Deprecate Projectionist'
+ - branch: feat/canonizer-derived-transforms
+   constraints:
+@@ -472,7 +472,7 @@ specs:
+   path: specs/e005b-09c-canonizer-derived-transforms.yaml
+   repo: canonizer
+   spec_id: c517ca32-ee9d-53fb-9dcf-1df1cf27e6ac
+-  status: planned
++  status: superseded
+   title: 'e005b-09c: Canonizer — Derived Schema Transforms (Formation + Projection)'
+ - branch: feat/ingest-io-purity
+   constraints:
+@@ -484,7 +484,7 @@ specs:
+   path: specs/e005b-09d-ingest-io-purity.yaml
+   repo: lorchestra
+   spec_id: c8941c04-33ec-5b78-b16e-571e559d6647
+-  status: planned
++  status: done
+   title: 'e005b-09d: Ingest IO Purity — Replace auto_since Executor Magic'
+ labels:
+ - series:e
+@@ -654,6 +654,52 @@ metadata:
+       ingestion, and projection. The concept was absorbed into the broader
+       "all IO through storacle" architecture.
+     id: AMD-006
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 26 index entries
++      re-verified against lorchestra/storacle/injest/finalform/
++      projectionist/inferometer git history. Every entry read planned
++      while this epic's own AMD-001..006 narrate the gates completing in
++      Jan-Feb 2026 — the amendments were right, the statuses never moved.
++      All CORRECTED planned->done except 09c (planned->superseded):
++      01 executor dispatch (f90352e 2026-01-24; callable/dispatch.py
++      live). 02a injest (injest 343d92b 2026-01-26). 02b canonizer (own
++      repo since dissolved; delivery evidenced by lorchestra 726fc8a
++      2026-01-29 migrating jobs onto call.canonizer; retired by e033-05a
++      d58ff0e 2026-05-20). 02c finalform (finalform f8e6710 2026-01-26).
++      02d projectionist (projectionist d2177df..bdf4e73 2026-01-26; later
++      deprecated per AMD-006). 02e workman (own repo since dissolved;
++      chain validated by lorchestra b1f2f05 2026-01-30; dissolved a98d0ea
++      2026-06-24). 02f inferometer (created e92c313 2026-01-27; lorchestra
++      dispatches to it today via inferometer_adapter.py). 03a storacle BQ
++      client (storacle 9dc5533 2026-01-27, feat/bigquery-client merged;
++      live). 03b handlers (4d122c0 + 18db922; CallableHandler deleted by
++      gate 05). 03c e2e (688942c + storacle cbf12a7 2026-01-28; gate03c
++      tests live). 03d smoke datasets (eb792d3 + storacle 689d137
++      2026-01-28; lorchestra half deleted 095fa93 2026-05-20 — the
++      capability lives on in storacle config.py + the cleanup-smoke CLI).
++      04a CLI envelope (ceaf8a1 2026-01-29; cli.py calls execute(envelope)
++      today). 04b ingest (d16e4ef 2026-01-29). 04c canonize (726fc8a).
++      04d finalform (7d08590). 04e projectionist (214b659). 04f workman
++      (b1f2f05 2026-01-30). 05 collapse handlers (bcc0e22 2026-02-02).
++      06 pipeline runner (same bcc0e22, per AMD-002; run_pipeline live in
++      the CLI and sweeper flow). 07 method mapping (f4d9561 + 472c0ad
++      2026-02-02; AMD-003's prerequisite 88328e0 verified to exist with
++      exactly the files it names). 08 storacle.query (929e57f 2026-02-03;
++      today the first step of the live ingest jobs). 09a formation IO
++      purity (fd41085 2026-02-06 deleted the measurement/observation
++      projectors; formation since rebuilt by e035 — and note the second
++      09a index entry, path e005b-09a-formation-io-purity-v2.md, has no
++      file behind it: a duplicate entry, t021-05 candidate). 09b
++      projection IO purity (c35fba5 2026-02-06; processors/projectionist.py
++      gone; bq_reader survives as dead code in dispatch's internal list).
++      09c canonizer derived transforms SUPERSEDED: never built in
++      canonizer — the named transforms exist today as governed
++      transform_bundle rows via e033-05a's schema_transformer (d58ff0e
++      2026-05-20; canonizer retired per e042, 2026-07-27). 09d ingest IO
++      purity (e423f3c 2026-02-09, branch merged; jobs use explicit cursor
++      steps today; _resolve_auto_since remains as dead code in executor.py
++      despite the completion doc's deletion claim).
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e006-life-thinning/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e006-life-thinning/epic.yaml
+index a43a6e7..981c21f 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e006-life-thinning/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e006-life-thinning/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e006-life-thinning
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: 'Life Thinning: CLI as Cockpit via Library Import'
+@@ -58,7 +58,7 @@ specs:
+   path: specs/e006-01-life-audit.yaml
+   repo: local-governor
+   spec_id: 0d5848b8-cd6e-5769-98fd-954e1f60aca8
+-  status: planned
++  status: done
+   title: Life Command Audit — Categorize and Document
+ - branch: feat/lorchestra-integration
+   constraints:
+@@ -69,7 +69,7 @@ specs:
+   path: specs/e006-02-lorchestra-import.yaml
+   repo: local-governor
+   spec_id: 4c2747cb-e4ea-5eff-bddc-ef100096983c
+-  status: planned
++  status: done
+   title: Library Import — Replace Subprocess with execute()
+ - branch: feat/lorchestra-integration
+   constraints:
+@@ -80,7 +80,7 @@ specs:
+   path: specs/e006-03-pm-stub.yaml
+   repo: local-governor
+   spec_id: 086d1b52-66c1-557a-a1b6-c20580ce1d60
+-  status: planned
++  status: done
+   title: PM Stub — Strip to Skeleton, Document Future Pattern
+ - branch: feat/life-peek
+   constraints:
+@@ -91,7 +91,7 @@ specs:
+   path: specs/e006-04-peek.yaml
+   repo: local-governor
+   spec_id: 345ce0e8-1b68-519d-8cb9-02eb21a7e5ea
+-  status: planned
++  status: done
+   title: Peek — Cockpit Read/Explore Commands via Lorchestra Read Jobs
+ - branch: None
+   constraints:
+@@ -102,7 +102,7 @@ specs:
+   path: specs/e006-05-life-gutting.yaml
+   repo: life
+   spec_id: e68c7536-e4c9-5d7a-b452-97c798e7909a
+-  status: planned
++  status: done
+   title: Life Gutting — YAML Job Definitions, Delete Everything Else
+ labels:
+ - series:e
+@@ -171,6 +171,24 @@ metadata:
+       Added: CHECK-e006-peek for the new peek spec.
+       Removed: storacle as direct target (peek goes through lorchestra).
+     id: AMD-002
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 5 CORRECTED
++      planned->done against life/lorchestra git history. e006-01 audit
++      (life 34aef7b 2026-02-10; docs/COMMAND_AUDIT.md exists, since
++      relabeled a historical snapshot). e006-02 library import (same
++      34aef7b; life executor.py imports lorchestra directly today, no
++      subprocess path remains). e006-03 pm stub (same 34aef7b shrank
++      pm.py/work.py to stubs; the stubs themselves were deleted 2026-07-19,
++      life e4fbea9). e006-04 peek (lorchestra 96be4ad + 9ef62f9 2026-02-10;
++      ADR-001 verified at lorchestra/docs/DECISIONS.md; live today as the
++      generic peek.table/peek.raw_query jobs — 25 peek.raw_query runs,
++      latest 2026-07-23). e006-05 gutting: the deletion half delivered
++      (life_jobs/ and the legacy command files are gone; YAML job defs +
++      thin executor are the live shape) but the ~130-line acceptance target
++      was never met — ~2.2k lines today, with the compiler and
++      quarantined-script subsystems deliberately retained per
++      ARCHITECTURE.md; recorded as delivered-with-deviation, not erased.
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e011-pm-system/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e011-pm-system/epic.yaml
+index bfb2610..2eb4a7b 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e011-pm-system/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e011-pm-system/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e011-pm-system
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: AKM Foundation + PM System + OpsStream
+@@ -279,7 +279,7 @@ specs:
+   path: specs/e011-02-lorchestra-pm-jobs.yaml
+   repo: lorchestra
+   spec_id: bad84697-3744-5fc7-9a56-7f424301f060
+-  status: planned
++  status: done
+   title: Lorchestra PM Orchestration — Plan, Apply, Exec Jobs
+ - branch: None
+   constraints:
+@@ -305,7 +305,7 @@ specs:
+   path: specs/e011-03-life-pm-jobs.yaml
+   repo: life
+   spec_id: f660699a-0ba7-5eb2-a66c-958b16c3f19c
+-  status: planned
++  status: done
+   title: Life PM Jobs — Operation Routing with Envelope Generation
+ - branch: None
+   constraints:
+@@ -438,6 +438,27 @@ metadata:
+       higher. Cross-intent enforcement (entity already in BQ) deferred — requires
+       read-before-write.
+     id: AMD-007
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04). e011-02 CORRECTED
++      planned->done (lorchestra 6a28c0f + 10ff4a0 2026-02-13 built
++      pm.plan/apply/exec + the 628-line test_pm_acceptance.py; deleted in
++      the workman dissolution a98d0ea 2026-06-24; zero pm.* runs ever
++      recorded in ops__base). e011-03 CORRECTED planned->done (life
++      476851a 2026-02-17; the three wrappers are named file-by-file in
++      their deletion commit e4fbea9 2026-07-19 — "wrappers failed at
++      dispatch" once the backing jobs died). e011-04 CONFIRMED
++      in_progress: the view-SQL half was built (600ef7a 2026-02-18;
++      lorchestra/sql/pm_projections.py live and still imported into
++      PROJECTIONS today) but the pm.sheets consumer job never existed at
++      any point in history — started, never finished, and the PM lane has
++      since been dissolved; dormant, t021-05 candidate. e011-01 and
++      e011-02b UNVERIFIABLE: their target repo (workman) was dissolved and
++      deleted — consuming-side evidence proves PM compile work existed in
++      Feb 2026, but the specific AKM/PMIntent/compile_intent deliverables
++      cannot be located, and AMD-004's cited contracts/op-catalog.md was
++      not found anywhere. Statuses left untouched where evidence is
++      absent.
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e012-lorchestra-performance-update/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e012-lorchestra-performance-update/epic.yaml
+index ebcf505..4308c17 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e012-lorchestra-performance-update/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e012-lorchestra-performance-update/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e012-lorchestra-performance-update
+-version: 0.2.1
++version: 0.2.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: Lorchestra Performance Update
+@@ -115,3 +115,27 @@ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 3 CONFIRMED planned —
++      none of this epic's work was ever executed as specced — but 01 and
++      02 are dead work orders, flagged for t021-05 retirement. e012-01:
++      parallel stage execution was delivered by ANOTHER spec,
++      t016-02-parallel-stage-jobs (lorchestra b67480a 2026-04-08;
++      ThreadPoolExecutor live in pipeline.py today), and not in this
++      spec's shape (no max_workers YAML field exists anywhere). e012-02:
++      the six target form_* YAMLs were archived by e020-07 (5129f73
++      2026-04-03) still carrying mode: left_anti, and formation was
++      rebuilt by e035 (ebc35af 2026-05-30; 334706c/092ffa2 2026-06-02)
++      which deliberately KEEPS anti-join as the correctness mechanism
++      with watermarks as a performance hint — the opposite resolution to
++      this spec's not_exists proposal. e012-03: never implemented —
++      step_timings is absent from the live RunRecord schema, no pytest
++      perf marker exists anywhere, and the design lives only inside the
++      spec .md. Statuses stay planned rather than flipping 01/02 to
++      superseded because these spec files were never drafted into this
++      repo (the .md bodies live in /workspace/lorchestra/specs/;
++      governor reads undrafted=3) and a non-planned fileless entry
++      manufactures phantom index drift — the supersession flip rides
++      with t021-05's retirement machinery instead.
+diff --git a/canon/initiatives/lorchestra-platform/epics/e017-domain-projection-jobs/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e017-domain-projection-jobs/epic.yaml
+index 7cd006f..97574c5 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e017-domain-projection-jobs/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e017-domain-projection-jobs/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e017-domain-projection-jobs
+-version: 0.3.1
++version: 0.3.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: Domain WAL Bidirectional Projection via Lorchestra Jobs
+@@ -251,7 +251,7 @@ specs:
+   path: specs/e017-03-projectionist-library.yaml
+   repo: projectionist
+   spec_id: 84d14f85-0546-546a-98f8-c7a3ed682f30
+-  status: planned
++  status: done
+   title: Projectionist Library — Projection DSL Encode/Decode + Plan Builder
+ - branch: None
+   constraints:
+@@ -263,7 +263,7 @@ specs:
+   path: specs/e017-04-domain-sync-job.yaml
+   repo: lorchestra
+   spec_id: be0e8b8d-a8b4-56fe-ae75-7eb5e4f01fce
+-  status: planned
++  status: done
+   title: Domain Sync Job — Git Diff to domain.wal Write-back
+ - branch: None
+   constraints:
+@@ -274,7 +274,7 @@ specs:
+   path: specs/e017-05-local-object-creation.yaml
+   repo: lorchestra
+   spec_id: c6ec7b78-2df6-5630-bcbc-f181eb4757b8
+-  status: planned
++  status: done
+   title: Local-First Object Creation via Projection Stubs
+ - branch: None
+   constraints:
+@@ -285,7 +285,7 @@ specs:
+   path: specs/e017-06-life-cli-domain-commands.yaml
+   repo: life
+   spec_id: 2802862f-b57e-5213-8c8c-b3cf1deb5b6e
+-  status: planned
++  status: done
+   title: Life CLI Domain Commands
+ - branch: None
+   constraints:
+@@ -297,7 +297,7 @@ specs:
+   path: specs/e017-07a-projectionist-config-generator.yaml
+   repo: projectionist
+   spec_id: fd84456c-d784-5291-9f69-e377e40f660a
+-  status: planned
++  status: done
+   title: Projectionist Config Generator
+ - branch: None
+   constraints:
+@@ -309,7 +309,7 @@ specs:
+   path: specs/e017-07b-lorchestra-projection-init-job.yaml
+   repo: lorchestra
+   spec_id: 9c887cd2-843c-5b39-b1de-fb0ed2713388
+-  status: planned
++  status: done
+   title: Lorchestra Projection Init Job
+ - branch: None
+   constraints:
+@@ -320,7 +320,7 @@ specs:
+   path: specs/e017-07c-life-projection-init-wrapper.yaml
+   repo: life
+   spec_id: a9e694e7-9166-5726-a3df-7e5dc2f29d7c
+-  status: planned
++  status: done
+   title: Life CLI Projection Init Wrapper
+ labels:
+ - track:domain
+@@ -381,6 +381,32 @@ metadata:
+     description: |
+       Hotfix: move hardcoded BQ view from domain_project.yaml SQL into .projection.yaml as top-level `view` field. domain_project query step now reads `SELECT * FROM @run.config.result.view`. Added include-filter scope check to projectionist.sync decode path — files whose front matter doesn't match the source's include filters are skipped (not synced back). domain_create already handles this via projectionist.project include filtering in encode.py.
+     id: AMD-005
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): 3 CONFIRMED done, 7
++      CORRECTED planned->done, against storacle/lorchestra/projectionist/
++      life git history. CONFIRMED: 01a file.read (storacle b13aa97 +
++      e46aa39 2026-03-06; live in rpc.py), 01b domain_project (lorchestra
++      60111f2 2026-03-06; the job was later absorbed into repo_sync by
++      8d5df36 2026-04-06), 02 git.diff (storacle fcaf1ef + b949b5a
++      2026-03-10; live). CORRECTED planned->done: 03 projectionist library
++      (1f2842a..764126a 2026-03-10 through revision-3 verification; the
++      live runtime dependency of repo_sync today — lorchestra executor.py
++      imports project/parse_items; the push-side API is parse_items, not a
++      literal sync()), 04 domain_sync (41d23c0 + cb64ce4 2026-03-10;
++      absorbed into repo_sync's push branch — its storacle.diff native op
++      and sync_errors callable are live today), 05 local object creation
++      (2d39730 2026-03-10; domain_create deleted in the 8d5df36
++      consolidation with no direct successor — today's analogues are
++      object.create/life create and the July projection_bootstrap from
++      e040-07c), 06 life domain commands (life 7be8ca9 2026-03-12; all
++      three wrappers deleted e4fbea9 2026-07-19 after their backing jobs
++      died), 07a config generator (projectionist 5fecd3e 2026-03-13;
++      generate() live), 07b projection_init (cf18c78 + ad32263 + 068883f
++      2026-03-13 through verification; artifacts live today but zero runs
++      ever recorded), 07c life wrapper (life 60020f0 2026-03-16; live,
++      never exercised). This epic's descendants are load-bearing:
++      repo_sync — 639 runs, latest 2026-08-03 — is this machinery.
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e020-prod-stabilization/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e020-prod-stabilization/epic.yaml
+index 5a4a14b..311100a 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e020-prod-stabilization/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e020-prod-stabilization/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e020-prod-stabilization
+-version: 0.3.1
++version: 0.3.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: Prod Stabilization — Lorchestra v2 Migration
+@@ -150,7 +150,7 @@ specs:
+   path: specs/e020-00-validation-findings.yaml
+   repo: local-governor
+   spec_id: e739b96d-a9fd-56b4-ad56-3475a527e775
+-  status: planned
++  status: done
+   title: Spec Validation Findings
+ - branch: spec/e020-01-config-and-routing
+   constraints:
+@@ -162,7 +162,7 @@ specs:
+   path: specs/e020-01-config-and-routing.yaml
+   repo: lorchestra
+   spec_id: 1a112f0c-b1e0-56ee-9371-1918ebe3a675
+-  status: planned
++  status: done
+   title: Config Rewrite + Dataset Routing + Plan Builder v2
+ - branch: spec/e020-02a-sqlite-schema-migration
+   constraints:
+@@ -186,7 +186,7 @@ specs:
+   path: specs/e020-02b-life-sync-presets.yaml
+   repo: life
+   spec_id: 0b926c29-bf82-50f8-9ef8-0c21f478119d
+-  status: planned
++  status: done
+   title: Life CLI Sync Preset Rewrite
+ - branch: spec/e020-03-push-to-bq-prod
+   constraints:
+@@ -222,7 +222,7 @@ specs:
+   path: specs/e020-05-ingest-yaml.yaml
+   repo: lorchestra
+   spec_id: 985417a3-289d-59ca-b0fa-e026ee089657
+-  status: planned
++  status: done
+   title: Ingest Job YAML Migration
+ - branch: spec/e020-06-canonize-yaml
+   constraints:
+@@ -234,7 +234,7 @@ specs:
+   path: specs/e020-06-canonize-yaml.yaml
+   repo: lorchestra
+   spec_id: 94d5fc36-e97f-596f-b24a-419560f0a0c3
+-  status: planned
++  status: done
+   title: Canonize Job YAML Migration
+ - branch: spec/e020-07-formation-yaml
+   constraints:
+@@ -246,7 +246,7 @@ specs:
+   path: specs/e020-07-formation-yaml.yaml
+   repo: lorchestra
+   spec_id: 8d0cd6a3-f3c1-5d52-96eb-ce81b86db57a
+-  status: planned
++  status: done
+   title: Formation Job YAML Migration
+ - branch: main
+   constraints:
+@@ -272,7 +272,7 @@ specs:
+   path: specs/e020-08a-wal-append-sqlite.yaml
+   repo: storacle
+   spec_id: d4663b12-f73c-53d2-b972-b9ab514b51c1
+-  status: planned
++  status: done
+   title: wal.append SQLite Write Path
+ - branch: spec/e020-08b-llm-wal-yaml
+   constraints:
+@@ -284,7 +284,7 @@ specs:
+   path: specs/e020-08b-llm-wal-yaml.yaml
+   repo: lorchestra
+   spec_id: 71ab22c8-ec85-52d8-ac8a-d03da1399766
+-  status: planned
++  status: done
+   title: LLM + WAL-Writing Job YAML Migration
+ - branch: main
+   constraints:
+@@ -310,7 +310,7 @@ specs:
+   path: specs/e020-09b-projection-sqlite.yaml
+   repo: lorchestra
+   spec_id: eb7f82db-a0d4-5c31-9027-72b415d7d742
+-  status: planned
++  status: done
+   title: Projection Job Consolidation — Two Sync Jobs
+ - branch: spec/e020-10-projection-health
+   constraints:
+@@ -334,7 +334,7 @@ specs:
+   path: specs/e020-11-cutover.yaml
+   repo: lorchestra
+   spec_id: d7752466-dc00-5adc-9db0-7128dd53fad5
+-  status: planned
++  status: done
+   title: Prod Cutover + Container Image Freeze
+ labels:
+ - track:platform
+@@ -347,6 +347,46 @@ metadata:
+   - at: '2026-04-08T00:00:00Z'
+     description: Amendment 1
+     id: AMD-001
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): 16 entries — 2 CONFIRMED,
++      10 CORRECTED planned->done, 4 UNVERIFIABLE. The v2 cutover merge is
++      real: lorchestra 1a3b732 2026-04-08 "e020: Prod stabilization — v2
++      migration complete" (41 commits, merged from develop, v0.1.0
++      rollback tag), and zero local-orchestration/events_dev references
++      remain in lorchestra today. CORRECTED planned->done: 00 validation
++      findings (the 29-finding artifact exists as the spec body, dated
++      2026-03-27, corroborated by shipped fixes), 01 config/routing
++      (9fe842b + aaacdfe 2026-04-02; domain routing live in config.py),
++      02b life sync presets (life 6e5b063 + 244227b 2026-04-02; later
++      rewritten by e024-03b 0329ec7, finally deleted e9370d7 2026-07-20),
++      05 ingest YAMLs (47f93da + 52f5cb0 2026-04-02; live SQLite-first
++      today), 06 canonize YAMLs (6908c9e + 362d77c + eddd9a7 2026-04-02;
++      canonizer since replaced by schema_transformer, d58ff0e), 07
++      formation YAMLs (5129f73 + 03d0b11 + ab34f0f 2026-04-03;
++      formation/archived/ exists as specced; the whole set later rebuilt
++      by e035), 08a wal.append SQLite (storacle d080465..95049fc
++      2026-04-05; _wal_append_sqlite live, maintained through b9997a1
++      2026-07-18), 08b LLM/WAL YAMLs (nine llm_*.yaml live today writing
++      wal.append SQLite-first), 09b projection consolidation (8d5df36 +
++      life dcf8a0d 2026-04-06; cloud_sync + repo_sync ARE today's live
++      sync mechanism), 11 cutover (the 1a3b732 merge; deviations recorded:
++      source branch was develop, not feat/e020-v2-cutover, and no
++      container image was frozen at cutover — the lifeos-stack-v* tags are
++      July, another lane). CONFIRMED: 09a sqlite.execute view bootstrap
++      done (storacle b7740c9 2026-04-06; delivered, then retired 5e8b095
++      2026-06-30 + 0c2ebb7 2026-07-21 under the freeze architecture after
++      sqlite.execute was caught corrupting governed rows), 10 projection
++      health planned (no delivery evidence; view_creator/molt_projector
++      since deleted, 450682e — obsolete as written, t021-05 candidate).
++      UNVERIFIABLE, statuses left untouched: 02a sqlite migration, 03 BQ
++      push, 04 seeding validation (no discrete commits or artifacts;
++      ops__base reaches back only to 2026-07-17; only the cutover merge's
++      prose asserts them; 02a's target local.db no longer exists,
++      superseded by e024-05 798237a), and 07b formation WAL transform
++      (recorded done; its repo — canonizer — is dissolved, and the e033-00
++      audit of May 2026 explicitly logged wal_event as "Not found in
++      codebase"; cannot confirm or refute).
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e021-sqlite-hotpath/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e021-sqlite-hotpath/epic.yaml
+index f33497c..5206ca9 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e021-sqlite-hotpath/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e021-sqlite-hotpath/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e021-sqlite-hotpath
+-version: 0.3.1
++version: 0.3.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: SQLite Hotpath — Reuse Projection Machinery for Exact Mirror + Sync-back
+@@ -92,7 +92,7 @@ specs:
+   path: specs/e021-01-adjust-sqlite-sync-full-table-mirror.yaml
+   repo: storacle
+   spec_id: 4202f4e9-fce0-5aa5-b8b1-53a0aac8fe38
+-  status: planned
++  status: done
+   title: Adjust sqlite.sync for Exact Full-Table Mirror
+ - branch: spec/e021-02-incremental-mirror-sync
+   constraints:
+@@ -104,7 +104,7 @@ specs:
+   path: specs/e021-02-incremental-mirror-sync.yaml
+   repo: storacle
+   spec_id: 35787d1b-b85e-577c-b383-bb45bdb50e61
+-  status: planned
++  status: done
+   title: Incremental Mirror Sync via Watermark + Upsert
+ - branch: spec/e021-03-lorchestra-incremental-sync-jobs
+   constraints:
+@@ -116,7 +116,7 @@ specs:
+   path: specs/e021-03-lorchestra-incremental-sync-jobs.yaml
+   repo: lorchestra
+   spec_id: a6620b8d-0c00-5306-8f73-be66ecfc1bca
+-  status: planned
++  status: done
+   title: Lorchestra Generic Sync Job
+ - branch: spec/e021-04-life-sync-job
+   constraints:
+@@ -128,7 +128,7 @@ specs:
+   path: specs/e021-04-life-sync-job.yaml
+   repo: life
+   spec_id: 6bdc486c-1cd1-5bcf-a2f9-55dd019bdc4f
+-  status: planned
++  status: done
+   title: Life Sync Job YAML
+ labels:
+ - track:platform
+@@ -168,6 +168,23 @@ metadata:
+     description: |
+       The old non-mirror sqlite.sync / local projection behavior is now explicitly obsolete. Compatibility is not required; the primitive is being repurposed as mirror-only behavior.
+     id: AMD-005
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 4 CORRECTED
++      planned->done. e021-01 (storacle f9aab69 + 371c08b 2026-03-30;
++      full-table mirror live as _sync_rows_replace in adapters/sqlite.py;
++      op renamed sqlite.sync->sqlite.mirror by 60a0ac6 2026-04-25).
++      e021-02 (storacle c69a59b 2026-03-31, "sqlite.query handler +
++      sync_rows primary_key upsert"; live, hardened by fca7562
++      2026-04-25). e021-03 (lorchestra 7e199d0 + 723b142 2026-03-31
++      created the single parameterised sync_table.yaml; renamed to
++      cloud_sync.yaml by e020-09b 8d5df36 2026-04-06 — today's live daily
++      workhorse, v6.1 per 4436410, 103 cloud_sync runs). e021-04 (life
++      23c1080 + 4e43c49 2026-04-01 built sync.yaml + the sync.resolve op;
++      deleted e9370d7 2026-07-20 with "zero remaining users", replaced by
++      the thin bq.sync* wrappers routing straight to cloud_sync). Statuses
++      reflect delivery; renames and later replacements recorded, not
++      erased.
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e024-object-relations/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e024-object-relations/epic.yaml
+index bfb35ec..5ef5864 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e024-object-relations/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e024-object-relations/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e024-object-relations
+-version: 0.3.1
++version: 0.3.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: Object Relations + Data Architecture v3 Migration
+@@ -153,7 +153,7 @@ specs:
+   path: specs/e024-01-registrar-schema-overhaul.yaml
+   repo: registrar
+   spec_id: 7d40fb9e-e300-5f67-bc3d-de8312b21770
+-  status: planned
++  status: done
+   title: Registrar Schema Overhaul — v3 Architecture
+ - branch: spec/e024-02a-local-sqlite-bootstrap
+   constraints:
+@@ -165,7 +165,7 @@ specs:
+   path: specs/e024-02a-local-sqlite-bootstrap.yaml
+   repo: registrar
+   spec_id: 8912491d-f2b6-5959-8ac3-fd8f17d039f6
+-  status: planned
++  status: done
+   title: Local SQLite Bootstrap
+ - branch: spec/e024-02b-object-migration
+   constraints:
+@@ -177,7 +177,7 @@ specs:
+   path: specs/e024-02b-object-migration.yaml
+   repo: registrar
+   spec_id: 6d7567f0-41d0-5f72-9b26-72d8baa92cea
+-  status: planned
++  status: done
+   title: Object Migration into Fresh SQLite
+ - branch: spec/e024-03a-bq-bootstrap-and-seed
+   constraints:
+@@ -189,7 +189,7 @@ specs:
+   path: specs/e024-03a-bq-bootstrap-and-seed.yaml
+   repo: registrar
+   spec_id: 2cfaa73c-e60a-5a2f-bc7e-39518f919ff3
+-  status: planned
++  status: done
+   title: BigQuery Bootstrap and Seed
+ - branch: spec/e024-03b-bq-sync-and-verify
+   constraints:
+@@ -201,7 +201,7 @@ specs:
+   path: specs/e024-03b-bq-sync-and-verify.yaml
+   repo: lorchestra
+   spec_id: a5fd3d09-4de4-5bd8-8318-f541e70d1f1c
+-  status: planned
++  status: done
+   title: BQ Sync and Verify
+ - branch: spec/e024-04-reference-enforcement
+   constraints:
+@@ -213,7 +213,7 @@ specs:
+   path: specs/e024-04-reference-enforcement.yaml
+   repo: storacle
+   spec_id: a116b8b5-b69a-5a95-a902-eebac4ed87a9
+-  status: planned
++  status: done
+   title: Reference Enforcement
+ - branch: spec/e024-05-lorchestra-job-migration
+   constraints:
+@@ -225,7 +225,7 @@ specs:
+   path: specs/e024-05-lorchestra-job-migration.yaml
+   repo: lorchestra
+   spec_id: 2e731ad1-afbf-52ce-bef3-cb0e62985af1
+-  status: planned
++  status: done
+   title: Lorchestra Job Migration to the New Local Buffer
+ - branch: spec/e024-06-object-expansion-and-write-surface
+   constraints:
+@@ -237,7 +237,7 @@ specs:
+   path: specs/e024-06-object-expansion-and-write-surface.yaml
+   repo: lorchestra
+   spec_id: dcdda43e-3a9c-5276-8464-d99c012b856e
+-  status: planned
++  status: superseded
+   title: Object Expansion and Write Surface
+ labels:
+ - track:tooling
+@@ -249,6 +249,42 @@ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): 7 CORRECTED planned->done,
++      1 CORRECTED planned->superseded; every spec/e024-* branch found
++      merged to main in its repo. 01 registrar v3 overhaul (80e0474 +
++      bea07d5..830ec41, 2026-04-13..25; kind_group/foreign_keys live in
++      registry.py today; the "114 tests" claim could not be matched
++      exactly — nearby counts 106/162). 02a local sqlite bootstrap
++      (294f0eb + c41c208 2026-04-15 — first appearance of the
++      lifeos-cloud-prod/gov.db names; both files exist today, prod at
++      13.25 GB written 2026-08-03; the original raw/canonical/wal shape
++      was later consolidated to *__base by e030-04, 30917d9 2026-05-05).
++      02b object migration (d6c7e71 2026-04-15 sqlite_migrate.py + 71209dd
++      2026-04-17 sqlite_verify_all.py, both still in-tree; delivery
++      corroborated by the stack cutting over to the migrated DB on
++      2026-04-17, 798237a — but the "0 invalid across 79,149 rows"
++      validation RESULT is uncorroborated anywhere in history). 03a BQ
++      bootstrap (71209dd + 237f945 2026-04-17, "88 seeds verified";
++      retired outright 4b29f70 2026-07-01 as dead/non-functional,
++      superseded by the e040-01 freeze design — registrar emits DDL, never
++      executes it). 03b BQ sync (lorchestra 12d8682 + life 0329ec7
++      2026-04-17; the cloud_sync family is live — 103/12/10 runs, latest
++      2026-07-24). 04 reference enforcement (storacle 290ddd1 2026-04-18;
++      reference_exists/reference_not_exists live in policy.py today — the
++      cleanest delivered-and-still-live case; e024-06's own body affirms
++      it). 05 lorchestra job migration (798237a + f1c935c + 1150e92
++      2026-04-17; the local.db->lifeos-cloud-prod.db half is load-bearing;
++      the 11-projection-views half was reversed by the freeze cleanup
++      5e8b095 2026-06-30). 06 SUPERSEDED: the commits bearing its label
++      (registrar 98542ce/d52f560, storacle 653e0fb policy v2, lorchestra
++      7abd984 sweeper/HITL gate, 2026-04-18..22, merged) delivered
++      adjacent machinery, not the spec's stated object-expansion write
++      surface — that surface arrived later via e027-06 (d6af5c5 2026-06-05
++      object.create, 394 runs latest 2026-08-03), e033-01's object_creator
++      helper, and object.update (937c3a4 2026-07-18).
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e025-runl-wal-kinds/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e025-runl-wal-kinds/epic.yaml
+index 72b25ab..6738da8 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e025-runl-wal-kinds/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e025-runl-wal-kinds/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e025-runl-wal-kinds
+-version: 0.3.1
++version: 0.3.2
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: RunL WAL Kinds — Append-Only Run Logging
+@@ -80,7 +80,7 @@ specs:
+   path: specs/e025-01-schema-and-table.yaml
+   repo: '[''registrar'', ''storacle'']'
+   spec_id: 8e549d89-89fe-5f91-aabe-abf37d8edfff
+-  status: planned
++  status: superseded
+   title: RunL WAL Kind Registration + SQLite Table
+ - branch: feat/e025-executor-wal
+   constraints:
+@@ -92,7 +92,7 @@ specs:
+   path: specs/e025-02-executor-wiring.yaml
+   repo: lorchestra
+   spec_id: 894d6b6c-22ed-5d55-9d68-89e35ef909a4
+-  status: planned
++  status: superseded
+   title: Lorchestra Executor WAL Emission
+ labels:
+ - track:platform
+@@ -101,6 +101,24 @@ labels:
+ - series:e
+ metadata:
+   project_label: lorchestra-platform
++  amendments:
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): both specs CORRECTED
++      planned->superseded. The literal deliverables — a runl_wal_entry
++      kind, a dedicated runl_wal SQLite table, storacle
++      append_runl_entry() — never existed in any reachable repo (zero
++      grep/history hits; no jobs__runl table in the prod DB). What ships
++      today arrived through other lanes with a different design: the
++      run/run_step/run_report kind family was registered by e030-01
++      (registrar 00683ab 2026-05-04), storing in ops__base (2,901 run +
++      1,480 run_step + 92 run_report rows as of this sweep); the executor
++      emits claim+terminal run rows (e045-02b D3) plus per-step run_step
++      rows since t019-03 (lorchestra merge 9afc21e 2026-07-31) — not
++      e025's four-artifact derived-status model. e025's RunL/D-30 vision
++      (status derived purely from entry presence) remains undelivered;
++      per this initiative's own 2026-07-29 log, t019 owns that thread
++      now.
+   governance:
+     enabled: true
+     include:
+diff --git a/canon/initiatives/lorchestra-platform/epics/e035-governed-reform-contract-and-finalform-thin-engine/epic.yaml b/canon/initiatives/lorchestra-platform/epics/e035-governed-reform-contract-and-finalform-thin-engine/epic.yaml
+index e9fd0e9..f692310 100644
+--- a/canon/initiatives/lorchestra-platform/epics/e035-governed-reform-contract-and-finalform-thin-engine/epic.yaml
++++ b/canon/initiatives/lorchestra-platform/epics/e035-governed-reform-contract-and-finalform-thin-engine/epic.yaml
+@@ -3,7 +3,7 @@ object_schema_ref: iglu:io.lifeos/epic_object/jsonschema/0-3-0
+ wal_target: development_artifact
+ kind: epic
+ name: e035-governed-reform-contract-and-finalform-thin-engine
+-version: 0.1.2
++version: 0.1.3
+ epic_series: e
+ epic_initiative: lorchestra-platform
+ title: Governed Reform Contract and Finalform Thin Engine
+@@ -276,6 +276,31 @@ metadata:
+       indexed, and its split into 05a/05b was never recorded here. Now indexed as
+       superseded: its scope was delivered by the two completed children. File kept
+       as history.'
++  - date: '2026-08-03'
++    note: |-
++      Verification sweep 2026-08-03 (t021-04): all 8 statuses CONFIRMED —
++      the one epic here whose record matched the evidence. 01 completed
++      (ce216f4 2026-05-25 — but in lifeos-registry, NOT the recorded repo
++      registrar, which holds no schema tree; binding expansion,
++      measure/2-0-0, questionnaire_measure/2-0-0, process_profile,
++      emit_profile all live). 02 completed (lifeos-registry d4d8913
++      2026-05-27; 21 files — 13 measure seeds, 5 binding seeds, the
++      migration script). 03 completed (finalform 8785333 2026-05-28,
++      thin_engine.py + 611-line test file; two divergences from the
++      recorded stage list: no literal extract/normalize stages exist, and
++      post_compute_reshape runs BEFORE derive in the shipped code). 03b
++      completed (finalform ba88476 2026-05-29, runtime.py stepwise
++      processor). 04 completed (lorchestra ebc35af 2026-05-30,
++      measurement-first formation pipeline archiving the four
++      form_scored_me_* jobs — no commit carries a literal e035-04 tag;
++      correspondence is by content and date). 05 superseded CONFIRMED (no
++      standalone delivery; only the 05a/05b children carry commits; the
++      label survives as a DESIGN.md anchor). 05a completed (finalform
++      77b4248 + f495ccd 2026-06-01). 05b completed (lorchestra 334706c +
++      092ffa2 2026-06-02; pipeline.formation.yaml live today with all four
++      questionnaire payloads; run rows match the record: formation_score
++      16, formation_recode 16, formation_measurement 2, latest
++      2026-07-23).
+   governance:
+     enabled: false
+     include: []

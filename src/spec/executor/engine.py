@@ -24,8 +24,9 @@ from typing import Any
 import yaml
 
 from spec.executor.backends import BackendError, get_backend
+from spec.executor.diff_substantive import diff_has_substantive_change, incremental_diff_text
 from spec.executor.gate_emission import emit_step_record
-from spec.executor.sandbox.capture import generate_patch
+from spec.executor.sandbox.capture import generate_patch, generate_working_tree_diff
 from spec.executor.schemas import (
     AttemptRecord,
     Backend,
@@ -1350,6 +1351,18 @@ def _run_steps(
         total_steps = len(job_instance.steps)
         print(f"[{step.step_n}/{total_steps}] {step.step_id} ... started", flush=True)
 
+        # Best-effort pre-dispatch diff snapshot, used after dispatch to detect a
+        # substantively-empty agent step (exits 0 but changed nothing real). Only
+        # steps that capture a patch are candidates for this check.
+        pre_dispatch_diff: str | None = None
+        if step.capture_patch and not step.interactive:
+            try:
+                pre_dispatch_diff = generate_working_tree_diff(
+                    step.common.repo_path, step.common.base_commit
+                )
+            except Exception:
+                pre_dispatch_diff = None
+
         # Dispatch to backend
         capture = None
         backend_error = None
@@ -1403,6 +1416,7 @@ def _run_steps(
 
         # Determine outcome status from capture
         assert capture is not None
+        no_change_reason: str | None = None
         if step.interactive:
             # Interactive steps always complete — exit code is telemetry only.
             # The human was present and knows whether work was done.
@@ -1413,8 +1427,37 @@ def _run_steps(
             outcome_status = OutcomeStatus.failed
         else:
             outcome_status = OutcomeStatus.completed
+            # Exit code alone says nothing about whether the step actually did
+            # anything — refs.sync appends a BEGIN/END SYNCED block to CLAUDE.md
+            # on every run, so a do-nothing agent pass never sees a literally
+            # empty diff. Compare a fresh post-dispatch snapshot against the
+            # pre-dispatch one and check whether what changed is real, non-synced
+            # content.
+            if step.capture_patch and pre_dispatch_diff is not None:
+                try:
+                    post_dispatch_diff = generate_working_tree_diff(
+                        step.common.repo_path, step.common.base_commit
+                    )
+                except Exception:
+                    post_dispatch_diff = None
+                if post_dispatch_diff is not None:
+                    changed_this_step = incremental_diff_text(pre_dispatch_diff, post_dispatch_diff)
+                    if not diff_has_substantive_change(changed_this_step):
+                        outcome_status = OutcomeStatus.no_change
+                        no_change_reason = (
+                            "Step exited 0 but produced no substantive change to the "
+                            "target repo (diff was empty or contained only synced "
+                            "reference content between BEGIN/END SYNCED markers)."
+                        )
 
         # Create outcome
+        if outcome_status == OutcomeStatus.completed:
+            error = None
+        elif no_change_reason is not None:
+            error = no_change_reason
+        else:
+            error = f"Exit code: {capture.agent.exit_code if capture.agent else 'unknown'}"
+
         outcome = StepOutcome(
             step_n=step.step_n,
             step_id=step.step_id,
@@ -1422,7 +1465,7 @@ def _run_steps(
             duration_ms=duration_ms,
             manifest_ref=f"steps/step-{step.step_n:03d}/manifest.yaml",
             capture_ref=f"steps/step-{step.step_n:03d}/capture.yaml",
-            error=None if outcome_status == OutcomeStatus.completed else f"Exit code: {capture.agent.exit_code if capture.agent else 'unknown'}",
+            error=error,
         )
 
         # Write capture and outcome

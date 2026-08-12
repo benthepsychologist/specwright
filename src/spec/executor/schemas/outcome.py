@@ -15,6 +15,18 @@ class OutcomeStatus(str, Enum):
     timeout = "timeout"
     cancelled = "cancelled"
     skipped = "skipped"
+    # A step's subprocess exited 0 but produced no substantive change to the
+    # target repo (see diff_substantive.diff_has_substantive_change). Deliberately
+    # a minimal addition to *this* enum rather than wiring in the separate,
+    # currently-unused StepContract/AgentResponse machinery in contract.py
+    # (AgentStatus.needs_human / TerminationReason.ESCALATE_NEEDS_HUMAN) -- that
+    # belongs to an unconnected autonomous-step-execution design only referenced
+    # by its own tests, and adopting it here would be the "parallel status
+    # system" this fix is explicitly meant to avoid. Any value other than
+    # `completed` already drives the existing any_step_failed ->
+    # RunStatus.completed_with_errors cascade (engine.py _run_steps), so this
+    # is the smallest change that reaches it.
+    no_change = "no_change"
 
 
 class StepOutcome(BaseModel):

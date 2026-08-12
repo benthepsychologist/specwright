@@ -1,0 +1,38 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index f6b49e0..4bea962 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -5267,3 +5267,14 @@ these are more naturally run as separate job invocations.
+ 
+ (No acceptance criteria section found in spec)
+ <!-- END SYNCED: SPEC: t019-03-lorchestra-step-emission -->
++
++<!-- BEGIN SYNCED: SPEC: hf-02-01-object-create-name-leak -->
++## Current Spec: hf-02-01-object-create-name-leak
++
++## Acceptance Criteria
++
++- LEAK FIXED: calling object_create_prepare.execute() with a clinical_document-shaped payload (kind=clinical_document, params={"name": "doc-abc123", ...other required fields...}) returns resolved_params with id correctly populated and NO name key -- the result validates clean against the live clinical_document schema.
++- NO REGRESSION: calling object_create_prepare.execute() with an epic- or spec-shaped payload (name IS a declared schema property) returns resolved_params with name present, unchanged from current behavior -- a regression test proves this explicitly, not just absence of a new failure.
++- REAL SCHEMA VALIDATION: the clinical_document regression test validates the actual resolved_params against the live clinical_document@2-1-0 schema file (Draft202012Validator or equivalent) -- not a mocked or hand-written expectation of what should be true.
++- NO OTHER KIND REGRESSES: a quick sweep (existing lorchestra test suite, plus any object.create smoke path) is re-run and stays green -- this is a shared code path used by every kind.
++<!-- END SYNCED: SPEC: hf-02-01-object-create-name-leak -->
+diff --git a/lorchestra/callable/object_create_prepare.py b/lorchestra/callable/object_create_prepare.py
+index 5e38d96..c60b488 100644
+--- a/lorchestra/callable/object_create_prepare.py
++++ b/lorchestra/callable/object_create_prepare.py
+@@ -210,6 +210,14 @@ def execute(params: dict[str, Any]) -> dict[str, Any]:
+             resolved_params[identity_field] = _derive_identity(
+                 resolved_kind, name_value, schema_ref
+             )
++            # The 'name' value was only ever an input to identity
++            # derivation. If the schema doesn't itself declare a 'name'
++            # property, leaving it in resolved_params is an illegal
++            # leftover key under unevaluatedProperties: false.
++            if identity_field != "name" and "name" not in schema.get(
++                "properties", {}
++            ):
++                resolved_params.pop("name", None)
+ 
+     # Step 4: Determine WAL target dataset
+     dataset = schema.get("default_data_domain", "development")

@@ -1,0 +1,36 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index a0bb1d5..a4e1509 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -229,3 +229,15 @@
+ 
+ (No acceptance criteria section found in spec)
+ <!-- END SYNCED: SPEC: t018-01-view-epic-initiative-column -->
++
++<!-- BEGIN SYNCED: SPEC: hf-01-01-identity-and-enum-fix -->
++## Current Spec: hf-01-01-identity-and-enum-fix
++
++## Acceptance Criteria
++
++- IDENTITY FIXED: the published clinical_document schema declares identity_field as id (or another property that is actually declared under properties/required) -- clinical_document_id no longer appears as identity_field with no backing property.
++- ENUM EXTENDED: docType enum includes initial-assessment; existing values (soap-note, client-summary, progress-report, treatment-plan, intake-note, discharge-summary, other) are unchanged.
++- REGRESSION TEST: a new or updated test creates a minimal schema-valid clinical_document object (using the corrected identity property, no name field) and asserts it validates; a second case exercises docType=initial-assessment.
++- REGISTRY GREEN: registrar validate-registry and registrar validate-seeds pass clean against the new schema version.
++- NO DATA MIGRATION IN SCOPE: no existing clinical_document row is modified, reclassified, or backfilled by this spec -- confirmed by the diff touching only the registry schema file and its regression test, nothing under a data/backfill path.
++<!-- END SYNCED: SPEC: hf-01-01-identity-and-enum-fix -->
+diff --git a/registry/index.yaml b/registry/index.yaml
+index 16ffb94..f6a6a17 100644
+--- a/registry/index.yaml
++++ b/registry/index.yaml
+@@ -192,6 +192,11 @@ kinds:
+     iglu_id: iglu:io.lifeos/clinical_document_object/jsonschema/2-0-0
+     family: object
+     parent_kind_ref: canonical_object@1.0.0
++  - kind: clinical_document
++    path: registry/io.lifeos/kind/object/canonical_object/clinical_document/2-1-0.json
++    iglu_id: iglu:io.lifeos/clinical_document_object/jsonschema/2-1-0
++    family: object
++    parent_kind_ref: canonical_object@1.0.0
+   - kind: clinical_session
+     path: registry/io.lifeos/kind/object/canonical_object/clinical_session/2-0-0.json
+     iglu_id: iglu:io.lifeos/clinical_session_object/jsonschema/2-0-0
