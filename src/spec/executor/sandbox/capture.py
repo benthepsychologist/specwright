@@ -300,6 +300,19 @@ def generate_working_tree_diff(repo_path: Path, base_commit: str) -> str:
     Raises:
         GitCaptureError: If the git command fails
     """
+    # `git diff` is blind to untracked files, so a step whose entire
+    # contribution is NEW files produced an empty diff — the outcome logic
+    # then scored it `no_change`, the pipeline skipped its commit, and the
+    # work was left uncommitted while the run reported that nothing happened
+    # (specwright OI-5, hit twice on 2026-08-21). Recording intent-to-add
+    # first makes those files register as additions. It stages intent only,
+    # never content, and the commit step's own `git add -A` supersedes it.
+    try:
+        _run_git(["add", "--intent-to-add", "--", "."], repo_path)
+    except Exception:
+        # Never let snapshotting break a run; a missed untracked file degrades
+        # to the old behaviour rather than failing the step.
+        pass
     result = _run_git(["diff", "--unified=3", base_commit], repo_path)
     return result.stdout
 
