@@ -3,6 +3,7 @@ Tests for execution backends.
 """
 
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -497,6 +498,60 @@ class TestClaudeCodeBackend:
         assert "opus-4" in cmd
         assert "--" in cmd
         assert "Do the task" in cmd
+
+    def test_resolve_model_defaults_to_sonnet(self, backend):
+        """No model/models set -> DEFAULT_MODEL, never the ambient CLI default.
+
+        Regression test for the 2026-08-24 bug: the aip-1 JobDef set payload
+        "models" (plural) while dispatch() read payload["model"] (singular),
+        so model was always None and every headless run silently fell through
+        to whichever model the invoking session's own settings.json named.
+        """
+        assert backend._resolve_model({}) == "sonnet"
+
+    def test_resolve_model_uses_first_of_models_list(self, backend):
+        """payload["models"] (priority-ordered list) -> first entry used."""
+        assert backend._resolve_model({"models": ["opus", "sonnet"]}) == "opus"
+
+    def test_resolve_model_singular_takes_precedence(self, backend):
+        """An explicit payload["model"] wins over payload["models"]."""
+        assert backend._resolve_model({"model": "haiku", "models": ["opus"]}) == "haiku"
+
+    def test_resolve_model_empty_models_list_falls_back_to_default(self, backend):
+        """An empty models list is falsy -> DEFAULT_MODEL, not an IndexError."""
+        assert backend._resolve_model({"models": []}) == "sonnet"
+
+    def test_build_command_with_effort(self, backend, policy):
+        """Headless command includes --effort when payload sets it."""
+        cmd = backend._build_command(
+            prompt="Do the task",
+            repo_path=Path("/tmp/repo"),
+            allowed_tools=None,
+            model="sonnet",
+            effort="high",
+            max_turns=None,
+            policy=policy,
+        )
+        assert "--effort" in cmd
+        assert cmd[cmd.index("--effort") + 1] == "high"
+
+    def test_build_command_no_effort_omits_flag(self, backend, policy):
+        """No --effort flag added when effort is not set (session default applies)."""
+        cmd = backend._build_command(
+            prompt="Do the task",
+            repo_path=Path("/tmp/repo"),
+            allowed_tools=None,
+            model="sonnet",
+            effort=None,
+            max_turns=None,
+            policy=policy,
+        )
+        assert "--effort" not in cmd
+
+    def test_build_interactive_command_effort(self, backend):
+        """Interactive command with effort."""
+        cmd = backend._build_interactive_command(prompt="Do the task", effort="high")
+        assert cmd == ["claude", "--effort", "high", "--", "Do the task"]
 
     def test_build_interactive_command_no_print(self, backend):
         """Interactive command must NOT have --print (it's interactive, not headless)."""

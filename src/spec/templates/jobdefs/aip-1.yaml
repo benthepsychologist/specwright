@@ -11,7 +11,7 @@
 #   - Commits after each successful Claude run
 
 job_id: aip-1
-version: "0.3"
+version: "0.4"
 kind: jobdef
 artifact_id: 84deda0d-ff64-5ffc-a5d2-a5dea2c6d7d6
 name: aip-1
@@ -53,6 +53,7 @@ steps:
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       models: "@payload.models"
+      effort: high
       capture_git: true
     timeout_s: 1800
     on_failure_skip_to: capture.bundle
@@ -77,6 +78,7 @@ steps:
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       models: "@payload.models"
+      effort: high
       capture_git: true
     timeout_s: 1800
     continue_on_failure: true
@@ -101,6 +103,7 @@ steps:
       epic_spec: "@payload.epic_spec"
       repo_path: "@payload.repo_path"
       models: "@payload.models"
+      effort: high
       capture_git: true
     timeout_s: 1800
     continue_on_failure: true

@@ -31,6 +31,13 @@ from spec.executor.sandbox.capture import capture_git_state, capture_pre_step_st
 if TYPE_CHECKING:
     from spec.executor.schemas import Policy, StepCapture, StepManifest
 
+# Mirrors copilot.py's DEFAULT_MODEL fallback (payload.get("models") or [DEFAULT_MODEL]).
+# Uses the "sonnet" alias rather than a pinned version string on purpose: a pinned
+# string (copilot.py's "claude-sonnet-4.5") goes stale the moment a newer Sonnet
+# ships, which is exactly what happened there. The `claude` CLI resolves an alias
+# to the current latest model for that tier, so this stays correct without upkeep.
+DEFAULT_MODEL = "sonnet"
+
 
 class ClaudeCodeBackend(BackendBase):
     """
@@ -43,11 +50,20 @@ class ClaudeCodeBackend(BackendBase):
         aip_path: str | None - Path to AIP YAML file (alternative to prompt)
         repo_path: str | None - Repository path (default: common.repo_path)
         allowed_tools: list[str] | None - Tool allowlist (default: all)
-        model: str | None - Model to use
+        models: list[str] | None - Ordered model preference list; first entry is used
+        model: str | None - Model to use; takes precedence over `models` if both are set
+        effort: str | None - Reasoning effort (low, medium, high, xhigh, max); omitted
+            from the CLI invocation (session default applies) unless set
         max_turns: int | None - Maximum conversation turns
         capture_git: bool - Whether to capture git state (default True)
         interactive: bool - If True, launch TUI instead of headless (default False)
         resume: bool - If True, pass --resume to claude CLI (default False)
+
+    Model resolution: `model`, else the first entry of `models`, else DEFAULT_MODEL
+    ("sonnet"). Never falls through silently to the invoking session's own ambient
+    `claude` CLI default — that gap (fixed 2026-08-24) meant every headless run
+    picked up whatever `~/.claude/settings.json` said, regardless of what the
+    JobDef or `spec run --models` asked for.
     """
 
     @property
@@ -102,7 +118,8 @@ class ClaudeCodeBackend(BackendBase):
 
         repo_path = Path(payload.get("repo_path", common.repo_path))
         allowed_tools = payload.get("allowed_tools")
-        model = payload.get("model")
+        model = self._resolve_model(payload)
+        effort = payload.get("effort")
         max_turns = payload.get("max_turns")
         capture_git = payload.get("capture_git", True)
         resume = payload.get("resume", False)
@@ -138,6 +155,7 @@ class ClaudeCodeBackend(BackendBase):
             cmd = self._build_interactive_command(
                 prompt=prompt,
                 model=model,
+                effort=effort,
                 resume=resume,
             )
             try:
@@ -160,6 +178,7 @@ class ClaudeCodeBackend(BackendBase):
                 repo_path=repo_path,
                 allowed_tools=allowed_tools,
                 model=model,
+                effort=effort,
                 max_turns=max_turns,
                 policy=policy,
             )
@@ -251,12 +270,24 @@ class ClaudeCodeBackend(BackendBase):
                 backend=self.name,
             )
 
+    def _resolve_model(self, payload: dict) -> str:
+        """Resolve which model to pass to the claude CLI.
+
+        Precedence: payload["model"], then the first entry of payload["models"],
+        then DEFAULT_MODEL. Always returns a real value — never falls through to
+        the invoking session's own ambient `claude` CLI default, which is what
+        every headless run did before this method existed (2026-08-24).
+        """
+        models = payload.get("models")
+        return payload.get("model") or (models[0] if models else None) or DEFAULT_MODEL
+
     def _build_command(
         self,
         prompt: str,
         repo_path: Path,
         allowed_tools: list[str] | None,
         model: str | None,
+        effort: str | None,
         max_turns: int | None,
         policy: Policy,
     ) -> list[str]:
@@ -281,6 +312,10 @@ class ClaudeCodeBackend(BackendBase):
         if model:
             cmd.extend(["--model", model])
 
+        # Add effort if specified
+        if effort:
+            cmd.extend(["--effort", effort])
+
         # Add max turns if specified
         if max_turns:
             cmd.extend(["--max-turns", str(max_turns)])
@@ -291,6 +326,7 @@ class ClaudeCodeBackend(BackendBase):
         self,
         prompt: str,
         model: str | None = None,
+        effort: str | None = None,
         resume: bool = False,
     ) -> list[str]:
         """Build the claude CLI command for interactive TUI mode.
@@ -302,6 +338,7 @@ class ClaudeCodeBackend(BackendBase):
         Args:
             prompt: Initial prompt to start the session with
             model: Optional model override
+            effort: Optional reasoning effort override
             resume: If True, pass --resume to continue previous session
         """
         cmd = ["claude"]
@@ -311,6 +348,9 @@ class ClaudeCodeBackend(BackendBase):
 
         if model:
             cmd.extend(["--model", model])
+
+        if effort:
+            cmd.extend(["--effort", effort])
 
         # Use -- to signal end of options, then add prompt as positional argument
         # This prevents prompts starting with - or --- from being parsed as options
