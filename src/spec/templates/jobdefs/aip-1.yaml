@@ -208,16 +208,24 @@ steps:
     backend: cmd
     description: Stage improvement suggestions for human review
     payload:
+      # The previous step's output is model prose. It is delivered through the
+      # environment, never interpolated into `command`: the command string is
+      # executed AND scanned by the sandbox, so prose containing e.g. a
+      # backticked git checkout would be read as a command and blocked.
+      env:
+        IMPROVEMENTS_BODY: "@run.steps.analyze.suggest_improvements.stdout"
       command: |
         mkdir -p ~/.local/local-governor/improvements/pending
-        cat > ~/.local/local-governor/improvements/pending/@payload.spec_id"".md << 'EOF'
+        {
+          cat << 'EOF'
         # Improvement Suggestions: @payload.spec_id
         # Run: @run.run_id
         # Branch: @run.branch
         # Status: PENDING REVIEW
 
-        @run.steps.analyze.suggest_improvements.stdout
         EOF
+          printf '%s\n' "$IMPROVEMENTS_BODY"
+        } > ~/.local/local-governor/improvements/pending/@payload.spec_id"".md
         echo "Staged at: ~/.local/local-governor/improvements/pending/@payload.spec_id"".md"
       capture_git: false
     continue_on_failure: true

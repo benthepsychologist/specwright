@@ -55,6 +55,10 @@ Structured markdown report with for each suggestion:
 - Writes improvement suggestions to `~/.local/local-governor/improvements/pending/`
 - File format: `{spec_id}.md`
 - Includes full suggestion content (not just pointers)
+- The previous step's output reaches the file through the step's environment
+  (`IMPROVEMENTS_BODY`), never interpolated into the shell command: the command
+  is executed and scanned by the sandbox, and model prose containing a
+  backticked git command would otherwise be blocked as one
 
 **Output Location:**
 ```
@@ -141,11 +145,11 @@ The improvement analysis is controlled via the aip-1 JobDef:
 - step_id: stage.improvements
   backend: cmd
   payload:
+    env:
+      IMPROVEMENTS_BODY: "@run.steps.analyze.suggest_improvements.stdout"
     command: |
       mkdir -p ~/.local/local-governor/improvements/pending
-      cat > ~/.local/local-governor/improvements/pending/@payload.spec_id"".md << 'EOF'
-      [Writes full suggestions]
-      EOF
+      { [writes the header]; printf '%s\n' "$IMPROVEMENTS_BODY"; } > ~/.local/local-governor/improvements/pending/@payload.spec_id"".md
   continue_on_failure: true
 ```
 

@@ -1166,12 +1166,21 @@ def _emit_gated_run_records(*, store: Any, run_id: str) -> None:
     """
     from spec.executor.gate_emission import (
         GateEmissionError,
+        _lifeos_db_path,
         emit_run_records,
         record_emission_failure,
     )
 
+    # The rows are written to the database LIFEOS_CLOUD_DB names, so they must
+    # be verified there too — not at emit_run_records' hard-coded production
+    # default. Unset keeps that default (nothing passed) exactly as before.
+    emit_kwargs: dict[str, Any] = {}
+    db_path = _lifeos_db_path()
+    if db_path:
+        emit_kwargs["prod_db"] = Path(db_path)
+
     try:
-        emission = emit_run_records(store=store, run_id=run_id)
+        emission = emit_run_records(store=store, run_id=run_id, **emit_kwargs)
     except GateEmissionError as e:
         run_dir = store.get_run_path(run_id)
         _echo_error(f"Gated emission FAILED (no tree-writing fallback): {e}")
