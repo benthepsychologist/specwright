@@ -621,3 +621,201 @@ def test_record_emission_failure_amended_report_rides_into_the_row(consolidated_
         report_doc, RUN_DOC["run_id"], "identity", "aip-1"
     )
     assert params["metadata"]["issues"][0]["severity"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Which database is read (hf-11-01) — the shapes production actually uses
+# ---------------------------------------------------------------------------
+#
+# Every test above hands emit_run_records its database by hand, so none could
+# notice that the one production call site (exec_commands._emit_gated_run_
+# records) passed nothing: rows went to the database LIFEOS_CLOUD_DB names and
+# were then verified at the hard-coded production default.
+
+
+def _make_rows_db(path: Path) -> None:
+    import sqlite3
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "CREATE TABLE ops__base (kind TEXT, object TEXT, policy_stamp TEXT)"
+        )
+
+
+def _insert_stamped_row(db: Path, kind: str, name: str) -> None:
+    import json
+    import sqlite3
+
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO ops__base VALUES (?, ?, ?)",
+            (f"{kind}@1-0-0", json.dumps({"name": name}), json.dumps(["stamp"])),
+        )
+
+
+def _count_rows(db: Path) -> int:
+    import sqlite3
+
+    with sqlite3.connect(db) as conn:
+        return conn.execute("SELECT COUNT(*) FROM ops__base").fetchone()[0]
+
+
+def _kind_of(schema_ref: str) -> str:
+    return {
+        gate_emission.RUN_STEP_SCHEMA_REF: "run_step",
+        gate_emission.RUN_REPORT_SCHEMA_REF: "run_report",
+        gate_emission.RUN_SCHEMA_REF: "run",
+    }[schema_ref]
+
+
+@pytest.fixture
+def writes_into_env_db(monkeypatch):
+    """Fake the gate the way the real one behaves: submissions land in
+    whichever database LIFEOS_CLOUD_DB names at that moment (lorchestra reads
+    it itself), or nowhere when it is unset. _row_exists / _verify_rows stay
+    REAL, so what they read is what the assertions observe."""
+
+    def _write(kind: str, name: str) -> None:
+        db = gate_emission._lifeos_db_path()
+        if db:
+            _insert_stamped_row(Path(db), kind, name)
+
+    monkeypatch.setattr(
+        gate_emission, "_submit_object",
+        lambda ref, params: _write(_kind_of(ref), params["name"]),
+    )
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede",
+        lambda params, *, run_id: _write("run", params["name"]),
+    )
+    monkeypatch.setattr(
+        gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
+    )
+
+
+def test_emit_run_records_env_unset_no_db_reads_default_path(
+    consolidated_run, monkeypatch, tmp_path
+):
+    """Unchanged behaviour: with LIFEOS_CLOUD_DB unset and no database passed,
+    emit_run_records reads DEFAULT_PROD_DB — the path it read before hf-11-01."""
+    default_db = tmp_path / "default-prod.db"
+    monkeypatch.setattr(gate_emission, "DEFAULT_PROD_DB", default_db)
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
+
+    seen: list[Path] = []
+    monkeypatch.setattr(
+        gate_emission, "_row_exists",
+        lambda db, table, kind, name: seen.append(db) or False,
+    )
+    monkeypatch.setattr(gate_emission, "_submit_object", lambda ref, params: None)
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede", lambda params, *, run_id: None
+    )
+    monkeypatch.setattr(
+        gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
+    )
+
+    def _verify(db, table, names):
+        seen.append(db)
+        return 3
+
+    monkeypatch.setattr(gate_emission, "_verify_rows", _verify)
+
+    emit_run_records(store=_FakeStore(consolidated_run), run_id=RUN_DOC["run_id"])
+
+    assert seen and set(seen) == {default_db}
+
+
+def test_default_prod_db_is_the_historical_path():
+    """The hard-coded default itself must not drift."""
+    assert gate_emission.DEFAULT_PROD_DB == Path("~/lifeos/lifeos-cloud-prod.db").expanduser()
+
+
+def test_production_call_site_verifies_the_database_the_rows_were_written_to(
+    consolidated_run, monkeypatch, tmp_path, gate_emission_calls, writes_into_env_db, capsys
+):
+    """The production call shape: _emit_gated_run_records passes no database
+    of its own. With the environment naming a scratch database, the rows are
+    written there, verification finds them there, the run ends with no
+    emission error, and the production default path never receives them."""
+    scratch_db = tmp_path / "scratch.db"
+    _make_rows_db(scratch_db)
+    default_db = tmp_path / "default-prod.db"
+    _make_rows_db(default_db)
+    monkeypatch.setattr(gate_emission, "DEFAULT_PROD_DB", default_db)
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(scratch_db))
+
+    # conftest stubbed the wrapper for every test; restore the real one.
+    gate_emission_calls.real_emit_gated_run_records(
+        store=_FakeStore(consolidated_run), run_id=RUN_DOC["run_id"]
+    )
+
+    assert _count_rows(scratch_db) == 3  # run + run_step + run_report
+    assert _count_rows(default_db) == 0  # proves the two are different places
+    assert "3 rows verified in ops__base" in capsys.readouterr().out
+
+
+def test_production_call_site_fails_when_rows_are_not_where_the_env_points(
+    consolidated_run, monkeypatch, tmp_path, gate_emission_calls
+):
+    """Guard against the original fault: rows sit in the DEFAULT database, the
+    environment names another, and verification must read the env one — so it
+    fails, rather than passing by peeking at the hard-coded path."""
+    import typer
+
+    scratch_db = tmp_path / "scratch.db"
+    _make_rows_db(scratch_db)
+    default_db = tmp_path / "default-prod.db"
+    _make_rows_db(default_db)
+    monkeypatch.setattr(gate_emission, "DEFAULT_PROD_DB", default_db)
+    monkeypatch.setenv("LIFEOS_CLOUD_DB", str(scratch_db))
+
+    def _write_to_default(kind, name):
+        _insert_stamped_row(default_db, kind, name)
+
+    monkeypatch.setattr(
+        gate_emission, "_submit_object",
+        lambda ref, params: _write_to_default(_kind_of(ref), params["name"]),
+    )
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede",
+        lambda params, *, run_id: _write_to_default("run", params["name"]),
+    )
+    monkeypatch.setattr(
+        gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
+    )
+
+    with pytest.raises(typer.Exit):
+        gate_emission_calls.real_emit_gated_run_records(
+            store=_FakeStore(consolidated_run), run_id=RUN_DOC["run_id"]
+        )
+
+
+def test_production_call_site_env_unset_still_reads_default_path(
+    consolidated_run, monkeypatch, tmp_path, gate_emission_calls
+):
+    """Unset environment through the real call site: nothing is passed, so
+    the hard-coded default is what gets read — exactly as before."""
+    default_db = tmp_path / "default-prod.db"
+    _make_rows_db(default_db)
+    monkeypatch.setattr(gate_emission, "DEFAULT_PROD_DB", default_db)
+    monkeypatch.delenv("LIFEOS_CLOUD_DB", raising=False)
+
+    for kind, name in (
+        ("run", RUN_DOC["name"]),
+        ("run_step", STEP_DOC["name"]),
+        ("run_report", REPORT_DOC["name"]),
+    ):
+        _insert_stamped_row(default_db, kind, name)
+
+    monkeypatch.setattr(gate_emission, "_submit_object", lambda ref, params: None)
+    monkeypatch.setattr(
+        gate_emission, "_submit_run_supersede", lambda params, *, run_id: None
+    )
+    monkeypatch.setattr(
+        gate_emission, "_resolve_target", lambda ref: ("ops", "ops__base")
+    )
+
+    gate_emission_calls.real_emit_gated_run_records(
+        store=_FakeStore(consolidated_run), run_id=RUN_DOC["run_id"]
+    )

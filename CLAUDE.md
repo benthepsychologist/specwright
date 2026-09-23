@@ -84,3 +84,16 @@
 - REAL SUCCESSES UNAFFECTED: replayed against frozen fixtures snapshotted from the two real successful runs named in the objective, the new logic does not flag either -- zero behavior change for the common case.
 - NO REGRESSION: the full existing specwright test suite passes clean after this change -- this is shared core executor logic.
 <!-- END SYNCED: SPEC: hf-03-01-silent-completion-detection -->
+
+<!-- BEGIN SYNCED: SPEC: hf-11-01-specwright-emission-verifier -->
+## Current Spec: hf-11-01-specwright-emission-verifier
+
+## Acceptance Criteria
+
+- The verification reads the database the rows were written to. VERIFIED: with the environment naming a scratch database, a run's record rows are written there and the verification finds them there, and the run ends with no emission error; the rows are also absent from the hard-coded production path, which proves the two were previously different places.
+- Behaviour with the environment unset is unchanged, and a test proves it. VERIFIED: a test calls the run-record emission with no database passed and the environment variable unset, and asserts it reads the same default path it reads today. This is a NEW test: no existing one reaches that line, because every current test passes the path by hand, so 'the suite still passes' would be true whether or not the fallback survived. The existing suite must also pass unmodified, including the fixture that clears the variable for every test.
+- A test exercises the call shape production uses. VERIFIED: a test calls the run-record emission the way the production call site calls it, passing no database explicitly, and fails if the resolved environment path is not what gets read. Today no test does this: every unit test passes the path by hand and the command-level test replaces the function wholesale.
+- The staging step survives a model writing a git command in prose. VERIFIED: a run whose previous step produced output containing the words git checkout inside backticks completes the staging step and writes its file; the same fixture fails before the change with the sandbox's branch-switching refusal and its hard-coded exit code.
+- Model output is no longer part of an executed, scanned command string. VERIFIED: the staging step's definition no longer interpolates the previous step's output into the command it runs, read directly from the job definition; combined with the previous criterion this is the structural half, so that no future prose can trip any scanner rule rather than only this one.
+- Nothing else regresses. VERIFIED: specwright's suite passes with no new failures against a baseline captured on develop before the change, and one real headless run against a disposable repository completes with no failed steps and its rows present in the database the environment names.
+<!-- END SYNCED: SPEC: hf-11-01-specwright-emission-verifier -->
